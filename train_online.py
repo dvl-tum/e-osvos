@@ -5,23 +5,22 @@ import os
 import socket
 import timeit
 from datetime import datetime
-from tensorboardX import SummaryWriter
 
+import imageio
+import networks.vgg_osvos as vo
 # PyTorch includes
 import torch
 import torch.optim as optim
-from torchvision import transforms
-from torch.utils.data import DataLoader
-
 # Custom includes
-from dataloaders import davis_2016 as db
 from dataloaders import custom_transforms as tr
-from util import visualize as viz
-import scipy.misc as sm
-import networks.vgg_osvos as vo
-from layers.osvos_layers import class_balanced_cross_entropy_loss
+from dataloaders import davis_2016 as db
 from dataloaders.helpers import *
+from layers.osvos_layers import class_balanced_cross_entropy_loss
 from mypath import Path
+from tensorboardX import SummaryWriter
+from torch.utils.data import DataLoader
+from torchvision import transforms
+from util import visualize as viz
 
 # Setting of parameters
 if 'SEQ_NAME' not in os.environ.keys():
@@ -35,8 +34,8 @@ save_dir = Path.save_root_dir()
 if not os.path.exists(save_dir):
     os.makedirs(os.path.join(save_dir))
 
-vis_net = 0  # Visualize the network?
-vis_res = 0  # Visualize the results?
+vis_net = False  # Visualize the network?
+vis_res = False  # Visualize the results?
 nAveGrad = 5  # Average the gradient every nAveGrad iterations
 nEpochs = 2000 * nAveGrad  # Number of epochs for training
 snapshot = nEpochs  # Store a model every snapshot epochs
@@ -62,7 +61,7 @@ net.load_state_dict(torch.load(os.path.join(save_dir, parentModelName+'_epoch-'+
 log_dir = os.path.join(save_dir, 'runs', datetime.now().strftime('%b%d_%H-%M-%S') + '_' + socket.gethostname()+'-'+seq_name)
 writer = SummaryWriter(log_dir=log_dir)
 
-net.to(device)  # PyTorch 0.4.0 style
+net.to(device)
 
 # Visualize the network
 if vis_net:
@@ -125,7 +124,7 @@ for epoch in range(0, nEpochs):
 
         # Compute the fuse loss
         loss = class_balanced_cross_entropy_loss(outputs[-1], gts, size_average=False)
-        running_loss_tr += loss.item()  # PyTorch 0.4.0 style
+        running_loss_tr += loss.item()
 
         # Print stuff
         if epoch % (nEpochs//20) == (nEpochs//20 - 1):
@@ -169,7 +168,7 @@ if not os.path.exists(save_dir_res):
 
 
 print('Testing Network')
-with torch.no_grad():  # PyTorch 0.4.0 style
+with torch.no_grad():
     # Main Testing Loop
     for ii, sample_batched in enumerate(testloader):
 
@@ -186,7 +185,8 @@ with torch.no_grad():  # PyTorch 0.4.0 style
             pred = np.squeeze(pred)
 
             # Save the result, attention to the index jj
-            sm.imsave(os.path.join(save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
+            imageio.imsave(os.path.join(
+                save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
 
             if vis_res:
                 img_ = np.transpose(img.numpy()[jj, :, :, :], (1, 2, 0))

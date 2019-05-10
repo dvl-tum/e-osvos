@@ -34,7 +34,6 @@ class DAVIS2016(Dataset):
             fname = 'val_seqs'
 
         if self.seq_name is None:
-
             # Initialize the original DAVIS splits for training the parent network
             with open(os.path.join(db_root_dir, fname + '.txt')) as f:
                 seqs = f.readlines()
@@ -48,13 +47,13 @@ class DAVIS2016(Dataset):
                     lab_path = list(map(lambda x: os.path.join('Annotations/480p/', seq.strip(), x), lab))
                     labels.extend(lab_path)
         else:
-
             # Initialize the per sequence images for online training
             names_img = np.sort(os.listdir(os.path.join(db_root_dir, 'JPEGImages/480p/', str(seq_name))))
             img_list = list(map(lambda x: os.path.join('JPEGImages/480p/', str(seq_name), x), names_img))
-            name_label = np.sort(os.listdir(os.path.join(db_root_dir, 'Annotations/480p/', str(seq_name))))
-            labels = [os.path.join('Annotations/480p/', str(seq_name), name_label[0])]
-            labels.extend([None]*(len(names_img)-1))
+            names_label = np.sort(os.listdir(os.path.join(db_root_dir, 'Annotations/480p/', str(seq_name))))
+            # labels = [os.path.join('Annotations/480p/', str(seq_name), names_label[0])]
+            # labels.extend([None]*(len(names_img)-1))
+            labels = list(map(lambda x: os.path.join('Annotations/480p/', str(seq_name), x), names_label))
             if self.train:
                 img_list = [img_list[0]]
                 labels = [labels[0]]
@@ -63,8 +62,6 @@ class DAVIS2016(Dataset):
 
         self.img_list = img_list
         self.labels = labels
-
-        print('Done initializing ' + fname + ' Dataset')
 
     def __len__(self):
         return len(self.img_list)

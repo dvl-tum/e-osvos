@@ -1,0 +1,19 @@
+seed: 1
+vis_interval: 1
+save_dir: './models'
+num_bptt_steps: 5
+num_meta_runs: 1000
+meta_optim_lr: 0.01
+meta_optim_grad_clip: 1
+meta_optimizer_cfg:
+    num_layers: 2
+    hidden_size: 10
+    init_lr_range: [0.0000000001, 0.000001]
+    lr_mom_logit_init: 3.2
+num_epochs: 20
+num_ave_grad: 5                         # Average the gradient every num_ave_grad iterations
+data_cfg:
+    seq_name: 'blackswan'
+    shuffles:
+        train: True
+        test: True

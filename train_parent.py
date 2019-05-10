@@ -5,21 +5,20 @@ import os
 import socket
 import timeit
 from datetime import datetime
-from tensorboardX import SummaryWriter
 
+import networks.vgg_osvos as vo
 # PyTorch includes
 import torch
 import torch.optim as optim
-from torchvision import transforms
-from torch.utils.data import DataLoader
-
-# Custom includes
-from util import visualize as viz
-from dataloaders import davis_2016 as db
 from dataloaders import custom_transforms as tr
-import networks.vgg_osvos as vo
+from dataloaders import davis_2016 as db
 from layers.osvos_layers import class_balanced_cross_entropy_loss
 from mypath import Path
+from tensorboardX import SummaryWriter
+from torch.utils.data import DataLoader
+from torchvision import transforms
+# Custom includes
+from util import visualize as viz
 
 # Select which GPU, -1 if CPU
 gpu_id = 0
@@ -41,7 +40,7 @@ useTest = True  # See evolution of the test set when training?
 testBatch = 1  # Testing Batch
 nTestInterval = 5  # Run on test set every nTestInterval epochs
 db_root_dir = Path.db_root_dir()
-vis_net = 0  # Visualize the network?
+vis_net = False  # Visualize the network?
 snapshot = 40  # Store a model every snapshot epochs
 nAveGrad = 10
 load_caffe_vgg = True
@@ -51,7 +50,7 @@ if not os.path.exists(save_dir):
 
 # Network definition
 modelName = 'parent'
-if resume_epoch == 0:
+if not resume_epoch:
     if load_caffe_vgg:
         net = vo.OSVOS(pretrained=2)
     else:
@@ -69,7 +68,7 @@ else:
 log_dir = os.path.join(save_dir, 'runs', datetime.now().strftime('%b%d_%H-%M-%S') + '_' + socket.gethostname())
 writer = SummaryWriter(log_dir=log_dir, comment='-parent')
 
-net.to(device)  # PyTorch 0.4.0 style
+net.to(device)
 
 # Visualize the network
 if vis_net:

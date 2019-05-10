@@ -23,12 +23,11 @@ class OSVOS(nn.Module):
                     ['M', 512, 512, 512]]
         in_channels = [3, 64, 128, 256, 512]
 
-        print("Constructing OSVOS architecture..")
         stages = modules.ModuleList()
         side_prep = modules.ModuleList()
-        score_dsn = modules.ModuleList()
+        # score_dsn = modules.ModuleList()
         upscale = modules.ModuleList()
-        upscale_ = modules.ModuleList()
+        # upscale_ = modules.ModuleList()
 
         # Construct the network
         for i in range(0, len(lay_list)):
@@ -41,19 +40,18 @@ class OSVOS(nn.Module):
                 side_prep.append(nn.Conv2d(lay_list[i][-1], 16, kernel_size=3, padding=1))
 
                 # Make the layers of the score_dsn step
-                score_dsn.append(nn.Conv2d(16, 1, kernel_size=1, padding=0))
-                upscale_.append(nn.ConvTranspose2d(1, 1, kernel_size=2 ** (1 + i), stride=2 ** i, bias=False))
+                # score_dsn.append(nn.Conv2d(16, 1, kernel_size=1, padding=0))
+                # upscale_.append(nn.ConvTranspose2d(1, 1, kernel_size=2 ** (1 + i), stride=2 ** i, bias=False))
                 upscale.append(nn.ConvTranspose2d(16, 16, kernel_size=2 ** (1 + i), stride=2 ** i, bias=False))
 
         self.upscale = upscale
-        self.upscale_ = upscale_
+        # self.upscale_ = upscale_
         self.stages = stages
         self.side_prep = side_prep
-        self.score_dsn = score_dsn
+        # self.score_dsn = score_dsn
 
         self.fuse = nn.Conv2d(64, 1, kernel_size=1, padding=0)
 
-        print("Initializing weights..")
         self._initialize_weights(pretrained)
 
     def forward(self, x):
@@ -66,7 +64,7 @@ class OSVOS(nn.Module):
             x = self.stages[i](x)
             side_temp = self.side_prep[i - 1](x)
             side.append(center_crop(self.upscale[i - 1](side_temp), crop_h, crop_w))
-            side_out.append(center_crop(self.upscale_[i - 1](self.score_dsn[i - 1](side_temp)), crop_h, crop_w))
+            # side_out.append(center_crop(self.upscale_[i - 1](self.score_dsn[i - 1](side_temp)), crop_h, crop_w))
 
         out = torch.cat(side[:], dim=1)
         out = self.fuse(out)
