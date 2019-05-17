@@ -1,19 +1,24 @@
 seed: 1
 vis_interval: 1
 save_dir: './models'
-num_bptt_steps: 5
-num_meta_runs: 1000
-meta_optim_lr: 0.01
+num_bptt_steps: 10
+num_meta_runs: 10000
+meta_optim_lr: 0.001
 meta_optim_grad_clip: 1
+run_non_meta_baseline: True
 meta_optimizer_cfg:
     num_layers: 2
-    hidden_size: 10
-    init_lr_range: [0.0000000001, 0.000001]
+    hidden_size: 20
+    lr_range: [0.00000000001, 0.00001]              # [1e-10, 1e-5]
     lr_mom_logit_init: 3.2
-num_epochs: 20
-num_ave_grad: 5                         # Average the gradient every num_ave_grad iterations
+    optim_func: SGD
+num_epochs: 200
+num_ave_grad: 1                                     # Average the gradient every num_ave_grad iterations
 data_cfg:
     seq_name: 'blackswan'
+    batch_sizes:
+        train: 5
+        test: 10
     shuffles:
         train: True
         test: True
