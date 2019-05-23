@@ -2,12 +2,15 @@
 from __future__ import division
 
 import os
+import random
 import socket
 import timeit
 from datetime import datetime
 
 import networks.vgg_osvos as vo
-# PyTorch includes
+from networks.drn_seg import DRNSeg
+import numpy as np
+
 import torch
 import torch.optim as optim
 from dataloaders import custom_transforms as tr
@@ -17,7 +20,7 @@ from mypath import Path
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
-# Custom includes
+
 from util import visualize as viz
 
 # Select which GPU, -1 if CPU
@@ -30,43 +33,68 @@ if torch.cuda.is_available():
 # Setting of parameters
 # Parameters in p are used for the name of the model
 p = {
-    'trainBatch': 1,  # Number of Images in each mini-batch
+    'trainBatch': 5,  # Number of Images in each mini-batch
 }
 
 # # Setting other parameters
 resume_epoch = 0  # Default is 0, change if want to resume
-nEpochs = 240  # Number of epochs for training (500.000/2079)
+nEpochs = 240  # Number of epochs for training (nAveGrad * (50000)/(2079/trainBatch))
 useTest = True  # See evolution of the test set when training?
-testBatch = 1  # Testing Batch
+testBatch = 5  # Testing Batch
 nTestInterval = 5  # Run on test set every nTestInterval epochs
 db_root_dir = Path.db_root_dir()
 vis_net = False  # Visualize the network?
-snapshot = 40  # Store a model every snapshot epochs
-nAveGrad = 10
+snapshot = 5  # Store a model every snapshot epochs
+nAveGrad = 2
 load_caffe_vgg = True
+seed = 123
 save_dir = Path.save_root_dir()
 if not os.path.exists(save_dir):
     os.makedirs(os.path.join(save_dir))
 
-# Network definition
-modelName = 'parent'
-if not resume_epoch:
-    if load_caffe_vgg:
-        net = vo.OSVOS(pretrained=2)
-    else:
-        net = vo.OSVOS(pretrained=1)
-else:
-    net = vo.OSVOS(pretrained=0)
-    print("Updating weights from: {}".format(
-        os.path.join(save_dir, modelName + '_epoch-' + str(resume_epoch - 1) + '.pth')))
-    net.load_state_dict(
-        torch.load(os.path.join(save_dir, modelName + '_epoch-' + str(resume_epoch - 1) + '.pth'),
-                   map_location=lambda storage, loc: storage))
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
 
+# Network definition
+# model_name = 'vgg'
+model_name = 'DRN_D_22'
+if model_name == 'vgg':
+    num_losses = 5
+    lr = 1e-8
+
+    if not resume_epoch:
+        if load_caffe_vgg:
+            net = vo.OSVOS(pretrained=2)
+        else:
+            net = vo.OSVOS(pretrained=1)
+    else:
+        net = vo.OSVOS(pretrained=0)
+        file_name = f'{model_name}_epoch-{resume_epoch - 1}.pth'
+        print("Updating weights from: {}".format(os.path.join(save_dir, file_name)))
+        net.load_state_dict(torch.load(os.path.join(save_dir, file_name),
+                            map_location=lambda storage, loc: storage))
+else:
+    num_losses = 1
+    lr = 1e-6
+
+    net = DRNSeg(model_name, 1, pretrained=True, use_torch_up=True)
+
+if not os.path.exists(os.path.join(save_dir, model_name)):
+    os.makedirs(os.path.join(save_dir, model_name))
+
+# parentModelName = 'parent'
+# parentEpoch = 240
+# net = vo.OSVOS(pretrained=0)
+# net.load_state_dict(torch.load(os.path.join(save_dir, parentModelName+'_epoch-'+str(parentEpoch-1)+'.pth'),
+#                                 map_location=lambda storage, loc: storage))
+
+print(
+    f'NUM MODEL PARAMS - {model_name}: {sum([p.numel() for p in net.parameters()])}')
 
 # Logging into Tensorboard
-log_dir = os.path.join(save_dir, 'runs', datetime.now().strftime('%b%d_%H-%M-%S') + '_' + socket.gethostname())
-writer = SummaryWriter(log_dir=log_dir, comment='-parent')
+log_dir = os.path.join(save_dir, 'runs', model_name)
+writer = SummaryWriter(log_dir=log_dir)
 
 net.to(device)
 
@@ -81,26 +109,28 @@ if vis_net:
 
 
 # Use the following optimizer
-lr = 1e-8
 wd = 0.0002
-optimizer = optim.SGD([
-    {'params': [pr[1] for pr in net.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd,
-     'initial_lr': lr},
-    {'params': [pr[1] for pr in net.stages.named_parameters() if 'bias' in pr[0]], 'lr': 2 * lr, 'initial_lr': 2 * lr},
-    {'params': [pr[1] for pr in net.side_prep.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd,
-     'initial_lr': lr},
-    {'params': [pr[1] for pr in net.side_prep.named_parameters() if 'bias' in pr[0]], 'lr': 2 * lr,
-     'initial_lr': 2 * lr},
-    {'params': [pr[1] for pr in net.score_dsn.named_parameters() if 'weight' in pr[0]], 'lr': lr / 10,
-     'weight_decay': wd, 'initial_lr': lr / 10},
-    {'params': [pr[1] for pr in net.score_dsn.named_parameters() if 'bias' in pr[0]], 'lr': 2 * lr / 10,
-     'initial_lr': 2 * lr / 10},
-    {'params': [pr[1] for pr in net.upscale.named_parameters() if 'weight' in pr[0]], 'lr': 0, 'initial_lr': 0},
-    {'params': [pr[1] for pr in net.upscale_.named_parameters() if 'weight' in pr[0]], 'lr': 0, 'initial_lr': 0},
-    {'params': net.fuse.weight, 'lr': lr / 100, 'initial_lr': lr / 100, 'weight_decay': wd},
-    {'params': net.fuse.bias, 'lr': 2 * lr / 100, 'initial_lr': 2 * lr / 100},
-], lr=lr, momentum=0.9)
 
+if model_name == 'vgg':
+    optimizer = optim.SGD([
+        {'params': [pr[1] for pr in net.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd,
+         'initial_lr': lr},
+        {'params': [pr[1] for pr in net.stages.named_parameters() if 'bias' in pr[0]], 'lr': 2 * lr, 'initial_lr': 2 * lr},
+        {'params': [pr[1] for pr in net.side_prep.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd,
+         'initial_lr': lr},
+        {'params': [pr[1] for pr in net.side_prep.named_parameters() if 'bias' in pr[0]], 'lr': 2 * lr,
+         'initial_lr': 2 * lr},
+        {'params': [pr[1] for pr in net.score_dsn.named_parameters() if 'weight' in pr[0]], 'lr': lr / 10,
+         'weight_decay': wd, 'initial_lr': lr / 10},
+        {'params': [pr[1] for pr in net.score_dsn.named_parameters() if 'bias' in pr[0]], 'lr': 2 * lr / 10,
+         'initial_lr': 2 * lr / 10},
+        {'params': [pr[1] for pr in net.upscale.named_parameters() if 'weight' in pr[0]], 'lr': 0, 'initial_lr': 0},
+        {'params': [pr[1] for pr in net.upscale_.named_parameters() if 'weight' in pr[0]], 'lr': 0, 'initial_lr': 0},
+        {'params': net.fuse.weight, 'lr': lr / 100, 'initial_lr': lr / 100, 'weight_decay': wd},
+        {'params': net.fuse.bias, 'lr': 2 * lr / 100, 'initial_lr': 2 * lr / 100},
+    ], lr=lr, momentum=0.9)
+else:
+    optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9)
 
 # Preparation of the data loaders
 # Define augmentation transformations as a composition
@@ -108,17 +138,17 @@ composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
                                           tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
                                           tr.ToTensor()])
 # Training dataset and its iterator
-db_train = db.DAVIS2016(train=True, inputRes=None, db_root_dir=db_root_dir, transform=composed_transforms)
+db_train = db.DAVIS2016(seqs='train', inputRes=None, db_root_dir=db_root_dir, transform=composed_transforms)
 trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num_workers=2)
 
 # Testing dataset and its iterator
-db_test = db.DAVIS2016(train=False, db_root_dir=db_root_dir, transform=tr.ToTensor())
+db_test = db.DAVIS2016(seqs='test', db_root_dir=db_root_dir, transform=tr.ToTensor())
 testloader = DataLoader(db_test, batch_size=testBatch, shuffle=False, num_workers=2)
 
 num_img_tr = len(trainloader)
 num_img_ts = len(testloader)
-running_loss_tr = [0] * 5
-running_loss_ts = [0] * 5
+running_loss_tr = [0] * num_losses
+running_loss_ts = [0] * num_losses
 loss_tr = []
 loss_ts = []
 aveGrad = 0
@@ -129,7 +159,6 @@ for epoch in range(resume_epoch, nEpochs):
     start_time = timeit.default_timer()
     # One training epoch
     for ii, sample_batched in enumerate(trainloader):
-
         inputs, gts = sample_batched['image'], sample_batched['gt']
 
         # Forward-Backward of the mini-batch
@@ -138,25 +167,29 @@ for epoch in range(resume_epoch, nEpochs):
 
         outputs = net.forward(inputs)
 
-        # Compute the losses, side outputs and fuse
-        losses = [0] * len(outputs)
-        for i in range(0, len(outputs)):
+        # Compute the losses
+        losses = [0] * num_losses
+        for i in range(num_losses):
             losses[i] = class_balanced_cross_entropy_loss(outputs[i], gts, size_average=False)
             running_loss_tr[i] += losses[i].item()
         loss = (1 - epoch / nEpochs)*sum(losses[:-1]) + losses[-1]
 
         # Print stuff
-        if ii % num_img_tr == num_img_tr - 1:
+
+        # if ii % num_img_tr == num_img_tr - 1:
+        if (ii + 1) % 25 == 0:
             running_loss_tr = [x / num_img_tr for x in running_loss_tr]
             loss_tr.append(running_loss_tr[-1])
-            writer.add_scalar('data/total_loss_epoch', running_loss_tr[-1], epoch)
-            print('[Epoch: %d, numImages: %5d]' % (epoch, ii + 1))
-            for l in range(0, len(running_loss_tr)):
-                print('Loss %d: %f' % (l, running_loss_tr[l]))
-                running_loss_tr[l] = 0
+            # writer.add_scalar('data/total_loss_epoch', running_loss_tr[-1], epoch)
+            writer.add_scalar('total_loss_epoch', loss,
+                              (ii + 1) + num_img_tr * epoch)
+            print(f'[EPOCH {epoch + 1} ITER {ii + 1} LOSS {loss:.2f}]')
+            # for l in range(0, len(running_loss_tr)):
+            #     print(f'LOSS {l}: {running_loss_tr[l]:.2f}')
+            #     running_loss_tr[l] = 0
 
-            stop_time = timeit.default_timer()
-            print("Execution time: " + str(stop_time - start_time))
+            # stop_time = timeit.default_timer()
+            # print("Execution time: " + str(stop_time - start_time))
 
         # Backward the averaged gradient
         loss /= nAveGrad
@@ -165,14 +198,18 @@ for epoch in range(resume_epoch, nEpochs):
 
         # Update the weights once in nAveGrad forward passes
         if aveGrad % nAveGrad == 0:
-            writer.add_scalar('data/total_loss_iter', loss.item(), ii + num_img_tr * epoch)
+            # writer.add_scalar('data/total_loss_iter', loss.item(), ii + num_img_tr * epoch)
             optimizer.step()
             optimizer.zero_grad()
             aveGrad = 0
 
+        # if ii + 1 == 100:
+        #     break
+
     # Save the model
     if (epoch % snapshot) == snapshot - 1 and epoch != 0:
-        torch.save(net.state_dict(), os.path.join(save_dir, modelName + '_epoch-' + str(epoch) + '.pth'))
+        torch.save(net.state_dict(), os.path.join(
+            save_dir, model_name, model_name + '_epoch-' + str(epoch) + '.pth'))
 
     # One testing epoch
     if useTest and epoch % nTestInterval == (nTestInterval - 1):
@@ -186,8 +223,8 @@ for epoch in range(resume_epoch, nEpochs):
                 outputs = net.forward(inputs)
 
                 # Compute the losses, side outputs and fuse
-                losses = [0] * len(outputs)
-                for i in range(0, len(outputs)):
+                losses = [0] * num_losses
+                for i in range(num_losses):
                     losses[i] = class_balanced_cross_entropy_loss(outputs[i], gts, size_average=False)
                     running_loss_ts[i] += losses[i].item()
                 loss = (1 - epoch / nEpochs) * sum(losses[:-1]) + losses[-1]
@@ -197,10 +234,10 @@ for epoch in range(resume_epoch, nEpochs):
                     running_loss_ts = [x / num_img_ts for x in running_loss_ts]
                     loss_ts.append(running_loss_ts[-1])
 
-                    print('[Epoch: %d, numImages: %5d]' % (epoch, ii + 1))
-                    writer.add_scalar('data/test_loss_epoch', running_loss_ts[-1], epoch)
-                    for l in range(0, len(running_loss_ts)):
-                        print('***Testing *** Loss %d: %f' % (l, running_loss_ts[l]))
-                        running_loss_ts[l] = 0
+                    print(f'[TEST LOSS {loss:.2f}]')
+                    writer.add_scalar('test_loss_epoch', loss, epoch)
+                    # for l in range(0, len(running_loss_ts)):
+                    #     print('***Testing *** Loss %d: %f' % (l, running_loss_ts[l]))
+                    #     running_loss_ts[l] = 0
 
 writer.close()
