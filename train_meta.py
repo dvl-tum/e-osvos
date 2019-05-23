@@ -106,25 +106,24 @@ def test(model, test_loader, save_dir, data_cfg, _log):
         _log.info('Testing Network')
     with torch.no_grad():
         for j, sample_batched in enumerate(test_loader):
-            if j + 1 == len(test_loader):
-                img, gt, fname = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
-                inputs, gts = img.to(device), gt.to(device)
-                outputs = model.forward(inputs)
+            img, gt, fname = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
+            inputs, gts = img.to(device), gt.to(device)
+            outputs = model.forward(inputs)
 
-                loss = class_balanced_cross_entropy_loss(
-                    outputs[-1], gts, size_average=False)
-                run_loss.append(loss.item())
+            loss = class_balanced_cross_entropy_loss(
+                outputs[-1], gts, size_average=False)
+            run_loss.append(loss.item())
 
-                if save_dir is not None:
-                    for jj in range(int(inputs.size()[0])):
-                        pred = np.transpose(
-                            outputs[-1].cpu().data.numpy()[jj, :, :, :], (1, 2, 0))
-                        pred = 1 / (1 + np.exp(-pred))
-                        pred = 255 * np.squeeze(pred)
-                        pred = pred.astype(np.uint8)
+            if save_dir is not None:
+                for jj in range(int(inputs.size()[0])):
+                    pred = np.transpose(
+                        outputs[-1].cpu().data.numpy()[jj, :, :, :], (1, 2, 0))
+                    pred = 1 / (1 + np.exp(-pred))
+                    pred = 255 * np.squeeze(pred)
+                    pred = pred.astype(np.uint8)
 
-                        imageio.imsave(os.path.join(
-                            save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
+                    imageio.imsave(os.path.join(
+                        save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
 
     test_loss = torch.tensor(run_loss).mean()
     if _log is not  None:
@@ -164,7 +163,9 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
     if not os.path.exists(save_dir):
         os.makedirs(os.path.join(save_dir))
 
+    #
     # Model
+    #
     parent_state_dict = torch.load(os.path.join(save_dir, 'DRN_D_22', f"DRN_D_22_epoch-59.pth"),
                                    map_location=lambda storage, loc: storage)
 
@@ -172,7 +173,9 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
     model.load_state_dict(parent_state_dict)
     model.to(device)
 
+    #
     # Data
+    #
     train_transforms = []
     if data_cfg['random_train_transform']:
         train_transforms.extend([custom_transforms.RandomHorizontalFlip(),
@@ -181,27 +184,31 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
     train_transforms.append(custom_transforms.ToTensor())
     composed_transforms = transforms.Compose(train_transforms)
 
-    db_train = db.DAVIS2016(seqs=data_cfg['seq_name'], one_shot=True,
+    db_train = db.DAVIS2016(seqs=data_cfg['seq_name'],
+                            frame_id=0,
                             transform=composed_transforms)
     batch_sampler = EpochSampler(db_train,
                                  data_cfg['shuffles']['train'],
                                  data_cfg['batch_sizes']['train'])
     train_loader = DataLoader(db_train, batch_sampler=batch_sampler, num_workers=2)
 
-    db_test = db.DAVIS2016(
-        seqs=data_cfg['seq_name'], transform=custom_transforms.ToTensor())
+    db_test = db.DAVIS2016(seqs=data_cfg['seq_name'],
+                           frame_id=-1,
+                           transform=custom_transforms.ToTensor())
     test_loader = DataLoader(
         db_test,
         batch_size=data_cfg['batch_sizes']['test'],
         shuffle=False,
         num_workers=2)
-    # dataloader for meta test loss
     meta_loader = DataLoader(
         db_test,
         batch_size=data_cfg['batch_sizes']['meta'],
         shuffle=False,
         num_workers=2)
 
+    #
+    # non-meta baseline
+    #
     if run_non_meta_baseline:
         train_online(model, train_loader, test_loader)  # pylint: disable=E1120
         test(model, test_loader, save_dir=None)  # pylint: disable=E1120
@@ -209,7 +216,9 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
         model.to(device)
         model.zero_grad()
 
+    #
     # Meta model
+    #
     meta_model = DRNSeg('DRN_D_22', 1, pretrained=True)
     meta_model.load_state_dict(parent_state_dict)
     meta_model.to(meta_device)
@@ -270,20 +279,15 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                     model.zero_grad()
 
                     bptt_iter_loss = 0.0
-                    for j, test_batch in enumerate(meta_loader):
-                        # fist frame of sequence, i.e., train frame
-                        # if j == 0:
-                        # last frame of sequence
-                        if j + 1 == len(meta_loader):
-                            test_inputs, test_gts = test_batch['image'], test_batch['gt']
-                            test_inputs, test_gts = test_inputs.to(
-                                meta_device), test_gts.to(meta_device)
+                    for meta_batch in meta_loader:
+                        meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
+                        meta_inputs, meta_gts = meta_inputs.to(
+                            meta_device), meta_gts.to(meta_device)
 
-                            test_outputs = meta_model(test_inputs)
+                        meta_outputs = meta_model(meta_inputs)
 
-                            bptt_iter_loss = class_balanced_cross_entropy_loss(
-                                test_outputs[-1], test_gts, size_average=False)
-                            break
+                        bptt_iter_loss = class_balanced_cross_entropy_loss(
+                            meta_outputs[-1], meta_gts, size_average=False)
 
                     run_bptt_iter_loss.append(bptt_iter_loss.item())
                     lr  = meta_optim.state['log_lr'].exp()

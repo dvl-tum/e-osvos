@@ -16,7 +16,7 @@ class DAVIS2016(Dataset):
 
     def __init__(self,
                  seqs='train_seqs',  # ['train_seqs', 'test_seqs', 'blackswan', ...]
-                 one_shot=False,
+                 frame_id=None,
                  input_res=None,
                  db_root_dir='./data/DAVIS-2016',
                  transform=None,
@@ -29,7 +29,7 @@ class DAVIS2016(Dataset):
         self.transform = transform
         self.meanval = meanval
         self.seqs = seqs
-        self.one_shot = one_shot
+        self.frame_id = frame_id
 
         seqs_dict = OrderedDict()
         img_list = []
@@ -50,9 +50,9 @@ class DAVIS2016(Dataset):
                     seqs_dict[seq]['img_list'] = img_list_seq
                     seqs_dict[seq]['labels'] = labels_seq
 
-                    if one_shot:
-                        img_list_seq = [img_list_seq[0]]
-                        labels_seq = [labels_seq[0]]
+                    if frame_id is not None:
+                        img_list_seq = [img_list_seq[frame_id]]
+                        labels_seq = [labels_seq[frame_id]]
 
                     img_list.extend(img_list_seq)
                     labels.extend(labels_seq)
@@ -67,9 +67,9 @@ class DAVIS2016(Dataset):
             seqs_dict[seqs]['img_list'] = img_list_seq
             seqs_dict[seqs]['labels'] = labels_seq
 
-            if one_shot:
-                img_list_seq = [img_list_seq[0]]
-                labels_seq = [labels_seq[0]]
+            if frame_id is not None:
+                img_list_seq = [img_list_seq[frame_id]]
+                labels_seq = [labels_seq[frame_id]]
 
             img_list.extend(img_list_seq)
             labels.extend(labels_seq)
@@ -102,9 +102,9 @@ class DAVIS2016(Dataset):
         img_list = self.seqs_dict[seq_name]['img_list']
         labels = self.seqs_dict[seq_name]['labels']
 
-        if self.one_shot:
-            img_list = [img_list[0]]
-            labels = [labels[0]]
+        if self.frame_id is not None:
+            img_list = [img_list[frame_id]]
+            labels = [labels[frame_id]]
 
         self.img_list = img_list
         self.labels = labels
