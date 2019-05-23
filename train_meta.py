@@ -11,12 +11,12 @@ from networks.drn import model_zoo, model_urls
 import sacred
 import torch
 import torch.optim as optim
-from dataloaders import custom_transforms as tr
+from dataloaders import custom_transforms
 from dataloaders import davis_2016 as db
 from dataloaders.helpers import *
 from layers.osvos_layers import class_balanced_cross_entropy_loss
 from meta_stopping.data import init_data_loaders
-from meta_stopping.meta_optim import MetaOptimizer
+from meta_stopping.meta_optim import MetaOptimizer, SGDFixed
 from meta_stopping.model import Model
 from meta_stopping.utils import (compute_loss,
                                  flat_grads_from_model,
@@ -39,74 +39,37 @@ ex.add_config('config.yaml')
 
 
 @ex.capture
-def train_online(model, train_loader, num_epochs, num_ave_grad, save_dir,
+def train_online(model, train_loader, test_loader, num_epochs, num_ave_grad, save_dir,
                  meta_optimizer_cfg, data_cfg, _log, seed):
 
     device = get_device()
-    num_epochs = num_epochs * num_ave_grad
 
     # Use the following optimizer
-    # lr = 1e-8
-    # momentum = 0.9
-    # wd = 0.0002
     wd = 0.0
     momentum = 0.0
-    # optimizer = optim.SGD([
-    #     {'params': [pr for na, pr in model.stages.named_parameters(
-    #     ) if 'weight' in na], 'weight_decay': wd},
-    #     # {'params': [pr for na, pr in model.stages.named_parameters()
-    #     #             if 'bias' in na], 'lr': lr * 2},
-    #     {'params': [pr for na, pr in model.stages.named_parameters()
-    #                 if 'bias' in na], 'lr': lr},
-    #     {'params': [pr for na, pr in model.side_prep.named_parameters(
-    #     ) if 'weight' in na], 'weight_decay': wd},
-    #     # {'params': [pr for na, pr in model.side_prep.named_parameters()
-    #     #             if 'bias' in na], 'lr': lr*2},
-    #     {'params': [pr for na, pr in model.side_prep.named_parameters()
-    #                 if 'bias' in na], 'lr': lr},
-    #     {'params': [pr for na, pr in model.upscale.named_parameters()
-    #                 if 'weight' in na], 'lr': 0},
-    #     {'params': [pr for na, pr in model.upscale_.named_parameters()
-    #                 if 'weight' in na], 'lr': 0},
-    #     # {'params': model.fuse.weight, 'lr': lr/100, 'weight_decay': wd},
-    #     # {'params': model.fuse.bias, 'lr': 2*lr/100},
-    #     {'params': model.fuse.weight, 'lr': lr, 'weight_decay': wd},
-    #     # {'params': model.fuse.bias, 'lr': 2*lr},
-    #     {'params': model.fuse.bias, 'lr': lr},
-    # ], lr=lr, momentum=momentum)
+    optimizer = SGDFixed(model.parameters(),
+                         lr=meta_optimizer_cfg['lr_range'][1],
+                         momentum=momentum)
 
-    optimizer = optim.SGD(model.parameters(),
-                          lr=meta_optimizer_cfg['lr_range'][1],
-                          momentum=momentum)
-
-    loss_tr = []
+    test_losses = []
+    run_train_loss = []
     ave_grad = 0
 
     # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=num_epochs / 2, gamma=0.1)
 
     _log.info(f"Train regular OSVOS - SEQUENCE: {data_cfg['seq_name']}")
-    # start_time = timeit.default_timer()
-    for epoch in range(0, num_epochs):
-        # One training epoch
-        running_loss_tr = 0
+    for epoch in range(0, num_epochs * num_ave_grad):
         set_random_seeds(seed + epoch)
         for _, sample_batched in enumerate(train_loader):
             inputs, gts = sample_batched['image'], sample_batched['gt']
             inputs, gts = inputs.to(device), gts.to(device)
 
-            outputs = model.forward(inputs)
+            outputs = model(inputs)
 
             # Compute the fuse loss
             loss = class_balanced_cross_entropy_loss(
                 outputs[-1], gts, size_average=False)
-            running_loss_tr += loss.item()
-
-            # log
-            if epoch % (num_epochs // 20) == (num_epochs // 20 - 1):
-                running_loss_tr /= len(train_loader)
-                loss_tr.append(running_loss_tr)
-
-                _log.info(f'[epoch: {epoch + 1} loss: {running_loss_tr:.2f}]')
+            run_train_loss.append(loss.item())
 
             loss /= num_ave_grad
             loss.backward()
@@ -118,7 +81,16 @@ def train_online(model, train_loader, num_epochs, num_ave_grad, save_dir,
                 optimizer.zero_grad()
                 ave_grad = 0
 
+                test_loss = test(model, test_loader, save_dir=None, _log=None)  # pylint: disable=E1120
+                test_losses.append(test_loss.item())
                 # scheduler.step()
+
+    _log.info(
+        f'RUN TRAIN loss: {torch.tensor(run_train_loss).mean().item():.2f}]')
+    best_test_epoch = torch.tensor(test_losses).argmin()
+    best_test_loss = torch.tensor(test_losses)[best_test_epoch]
+    _log.info(
+        f'BEST TEST loss/epoch: {best_test_loss:.2f}/{best_test_epoch + 1}]')
 
 
 @ex.capture
@@ -129,44 +101,42 @@ def test(model, test_loader, save_dir, data_cfg, _log):
             os.makedirs(save_dir_res)
 
     device = get_device()
+    run_loss = []
     if _log is not  None:
         _log.info('Testing Network')
     with torch.no_grad():
-        # Main Testing Loop
-        running_loss_tr = 0
-        for _, sample_batched in enumerate(test_loader):
+        for j, sample_batched in enumerate(test_loader):
+            if j + 1 == len(test_loader):
+                img, gt, fname = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
+                inputs, gts = img.to(device), gt.to(device)
+                outputs = model.forward(inputs)
 
-            img, gt, fname = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
-            inputs, gts = img.to(device), gt.to(device)
-            outputs = model.forward(inputs)
+                loss = class_balanced_cross_entropy_loss(
+                    outputs[-1], gts, size_average=False)
+                run_loss.append(loss.item())
 
-            loss = class_balanced_cross_entropy_loss(
-                outputs[-1], gts, size_average=False)
-            running_loss_tr += loss.item()
+                if save_dir is not None:
+                    for jj in range(int(inputs.size()[0])):
+                        pred = np.transpose(
+                            outputs[-1].cpu().data.numpy()[jj, :, :, :], (1, 2, 0))
+                        pred = 1 / (1 + np.exp(-pred))
+                        pred = 255 * np.squeeze(pred)
+                        pred = pred.astype(np.uint8)
 
-            if save_dir is not None:
-                for jj in range(int(inputs.size()[0])):
-                    pred = np.transpose(
-                        outputs[-1].cpu().data.numpy()[jj, :, :, :], (1, 2, 0))
-                    pred = 1 / (1 + np.exp(-pred))
-                    pred = 255 * np.squeeze(pred)
-                    pred = pred.astype(np.uint8)
+                        imageio.imsave(os.path.join(
+                            save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
 
-                    # Save the result, attention to the index jj
-                    imageio.imsave(os.path.join(
-                        save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
-
-    test_loss = running_loss_tr / len(test_loader)
+    test_loss = torch.tensor(run_loss).mean()
     if _log is not  None:
-        _log.info(f"Mean test loss: {test_loss:.2f}")
+        _log.info(f"MEAN TEST loss: {test_loss}")
     return test_loss
 
 
 @ex.automain
 def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
          num_ave_grad, meta_optim_grad_clip, meta_optimizer_cfg, save_dir,
-         run_non_meta_baseline,
-         vis_interval, data_cfg, torch_cfg, _run, seed, _log):
+         run_non_meta_baseline, vis_interval, data_cfg, torch_cfg, _run, seed,
+         _log):
     device = get_device()
     meta_device = torch.device('cuda:1')
     set_random_seeds(seed)
@@ -195,58 +165,53 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
         os.makedirs(os.path.join(save_dir))
 
     # Model
-    # parent_state_dict = torch.load(os.path.join(save_dir, f"parent_epoch-239.pth"),
-    #                                map_location=lambda storage, loc: storage)
     parent_state_dict = torch.load(os.path.join(save_dir, 'DRN_D_22', f"DRN_D_22_epoch-59.pth"),
                                    map_location=lambda storage, loc: storage)
 
     model = DRNSeg('DRN_D_22', 1, pretrained=True)
-    # model = vo.OSVOS(pretrained=0)
     model.load_state_dict(parent_state_dict)
-    # no_grad_param_iter = chain(model.upscale.parameters(),
-    #                            model.upscale_.parameters(),
-    #                            model.score_dsn.parameters())
-    # for p in no_grad_param_iter:
-    #     p.requires_grad_(False)
     model.to(device)
 
     # Data
-    composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
-                                              tr.ScaleNRotate(
-                                                rots=(-30, 30), scales=(.75, 1.25)),
-                                              tr.ToTensor()])
+    train_transforms = []
+    if data_cfg['random_train_transform']:
+        train_transforms.extend([custom_transforms.RandomHorizontalFlip(),
+                                 custom_transforms.ScaleNRotate(rots=(-30, 30),
+                                                                scales=(.75, 1.25))])
+    train_transforms.append(custom_transforms.ToTensor())
+    composed_transforms = transforms.Compose(train_transforms)
 
-    db_train = db.DAVIS2016(train=True, db_root_dir='./data/DAVIS-2016',
-                            transform=composed_transforms, seq_name=data_cfg['seq_name'])
-    batch_sampler = EpochSampler(db_train, data_cfg['shuffles']['train'], data_cfg['batch_sizes']['train'])
+    db_train = db.DAVIS2016(seqs=data_cfg['seq_name'], one_shot=True,
+                            transform=composed_transforms)
+    batch_sampler = EpochSampler(db_train,
+                                 data_cfg['shuffles']['train'],
+                                 data_cfg['batch_sizes']['train'])
     train_loader = DataLoader(db_train, batch_sampler=batch_sampler, num_workers=2)
 
-    db_test = db.DAVIS2016(train=False, db_root_dir='./data/DAVIS-2016',
-                           transform=tr.ToTensor(), seq_name=data_cfg['seq_name'])
+    db_test = db.DAVIS2016(
+        seqs=data_cfg['seq_name'], transform=custom_transforms.ToTensor())
     test_loader = DataLoader(
         db_test,
         batch_size=data_cfg['batch_sizes']['test'],
         shuffle=False,
         num_workers=2)
     # dataloader for meta test loss
-    test_train_loader = DataLoader(db_test, batch_size=1, shuffle=False, num_workers=2)
+    meta_loader = DataLoader(
+        db_test,
+        batch_size=data_cfg['batch_sizes']['meta'],
+        shuffle=False,
+        num_workers=2)
 
     if run_non_meta_baseline:
-        train_online(model, train_loader)  # pylint: disable=E1120
-        test(model, test_loader)  # pylint: disable=E1120
+        train_online(model, train_loader, test_loader)  # pylint: disable=E1120
+        test(model, test_loader, save_dir=None)  # pylint: disable=E1120
         model.load_state_dict(parent_state_dict)
         model.to(device)
         model.zero_grad()
 
     # Meta model
     meta_model = DRNSeg('DRN_D_22', 1, pretrained=True)
-    # meta_model = vo.OSVOS(pretrained=0)
     meta_model.load_state_dict(parent_state_dict)
-    # no_grad_param_iter = chain(meta_model.upscale.parameters(),
-    #                            meta_model.upscale_.parameters(),
-    #                            meta_model.score_dsn.parameters())
-    # for p in no_grad_param_iter:
-    #     p.requires_grad_(False)
     meta_model.to(meta_device)
 
     meta_optim = MetaOptimizer(meta_model, **meta_optimizer_cfg)
@@ -254,17 +219,15 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
 
     meta_optim_optim = torch.optim.Adam(meta_optim.parameters(), lr=meta_optim_lr)
 
-    num_epochs = num_epochs * num_ave_grad
-
+    test_loss_seqs = {}
     for i in range(num_meta_runs):
         start_time = timeit.default_timer()
-        # model = vo.OSVOS(pretrained=0)
+
+        # db_train.set_random_seq()
+        db_train.set_next_seq()
+        db_test.set_seq(db_train.seqs)
+
         model.load_state_dict(parent_state_dict)
-        # no_grad_param_iter = chain(model.upscale.parameters(),
-        #                         model.upscale_.parameters(),
-        #                         model.score_dsn.parameters())
-        # for p in no_grad_param_iter:
-        #     p.requires_grad_(False)
         model.to(device)
         model.zero_grad()
         model_metrics_vis.reset()
@@ -278,10 +241,9 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
         run_train_loss = []
         run_bptt_iter_loss = []
         run_bptt_loss = []
-        for epoch in range(0, num_epochs):
-            set_random_seeds(seed + epoch)# + num_meta_runs)
+        for epoch in range(0, num_epochs * num_ave_grad):
+            set_random_seeds(seed + epoch)
             for train_batch in train_loader:
-                # train
                 train_inputs, train_gts = train_batch['image'], train_batch['gt']
                 train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
 
@@ -308,23 +270,20 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                     model.zero_grad()
 
                     bptt_iter_loss = 0.0
-                    # for test_batch in test_train_loader:
-                    for test_batch in reversed(test_train_loader):
-                        test_inputs, test_gts = test_batch['image'], test_batch['gt']
-                        test_inputs, test_gts = test_inputs.to(
-                            meta_device), test_gts.to(meta_device)
+                    for j, test_batch in enumerate(meta_loader):
+                        # fist frame of sequence, i.e., train frame
+                        # if j == 0:
+                        # last frame of sequence
+                        if j + 1 == len(meta_loader):
+                            test_inputs, test_gts = test_batch['image'], test_batch['gt']
+                            test_inputs, test_gts = test_inputs.to(
+                                meta_device), test_gts.to(meta_device)
 
-                        test_outputs = meta_model(test_inputs)
+                            test_outputs = meta_model(test_inputs)
 
-                        bptt_iter_loss = class_balanced_cross_entropy_loss(
-                            test_outputs[-1], test_gts, size_average=False)
-                        break
-
-                    # train_inputs, train_gts = train_inputs.to(
-                    #     meta_device), train_gts.to(meta_device)
-                    # test_outputs = meta_model(train_inputs)
-                    # bptt_iter_loss = class_balanced_cross_entropy_loss(
-                    #     test_outputs[-1], train_gts, size_average=False)
+                            bptt_iter_loss = class_balanced_cross_entropy_loss(
+                                test_outputs[-1], test_gts, size_average=False)
+                            break
 
                     run_bptt_iter_loss.append(bptt_iter_loss.item())
                     lr  = meta_optim.state['log_lr'].exp()
@@ -340,9 +299,9 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                         meta_optim.zero_grad()
                         bptt_loss.backward()
 
-                        for param in meta_optim.parameters():
-                            param.grad.clamp_(-1.0 * meta_optim_grad_clip,
-                                              meta_optim_grad_clip)
+                        # for param in meta_optim.parameters():
+                        #     param.grad.clamp_(-1.0 * meta_optim_grad_clip,
+                        #                       meta_optim_grad_clip)
                         meta_optim_optim.step()
 
                         meta_optim.reset_lstm(keep_state=True, model=model)
@@ -357,11 +316,12 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                 break
 
         test_loss = test(model, test_loader, save_dir=None, _log=None)  # pylint: disable=E1120
+        test_loss_seqs[db_train.seqs] = test_loss.item()
         stop_time = timeit.default_timer()
         if vis_interval is not None and not i % vis_interval:
             metrics_vis.plot([torch.tensor(run_train_loss).mean(),
                               torch.tensor(run_bptt_iter_loss).mean(),
                               torch.tensor(run_bptt_loss).mean(),
-                              test_loss,
+                            #   test_loss,
+                              torch.tensor(list(test_loss_seqs.values())).mean(),
                               stop_time - start_time], i)
-
