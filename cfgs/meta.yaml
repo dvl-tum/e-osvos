@@ -13,14 +13,14 @@ meta_optimizer_cfg:
     lr_range: [0.00000000001, 0.00001]              # [1e-10, 1e-5]
     lr_mom_logit_init: 3.2
     optim_func: SGD
-num_epochs: 100
+num_epochs: 50
 num_ave_grad: 1                                     # average the gradient every num_ave_grad iterations
 data_cfg:
     seq_name: 'bear'                                # ['train_seqs', 'test_seqs', 'blackswan', ...]
     random_train_transform: True
     batch_sizes:
-        meta: 1
         train: 1
+        meta: 1
     shuffles:
-        train: False
-        test: False
+        train: True
+        meta: False

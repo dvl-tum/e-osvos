@@ -3,7 +3,6 @@ import socket
 import timeit
 from datetime import datetime
 
-import imageio
 from itertools import chain
 import networks.vgg_osvos as vo
 from networks.drn_seg import DRNSeg
@@ -21,20 +20,19 @@ from meta_stopping.model import Model
 from meta_stopping.utils import (compute_loss,
                                  flat_grads_from_model,
                                  dict_to_html)
-from pytorch_tools.ingredients import (MONGODB_PORT, get_device,
-                                       load_model_from_db, print_config,
-                                       save_model_to_db, save_model_to_path,
-                                       set_random_seeds, torch_ingredient)
+from pytorch_tools.ingredients import (get_device,
+                                       set_random_seeds,
+                                       torch_ingredient)
 from pytorch_tools.vis import LineVis, TextVis
 from pytorch_tools.data import EpochSampler
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from util import visualize as viz
+from util.helper_func import run_loader
 
 
-ex = sacred.Experiment('osvos_meta', ingredients=[torch_ingredient])
-ex.add_config('config.yaml')
+ex = sacred.Experiment('osvos-meta', ingredients=[torch_ingredient])
+ex.add_config('cfgs/meta.yaml')
 
 
 @ex.capture
@@ -90,8 +88,7 @@ def train_test_online(model, train_loader, test_loader, num_epochs, num_ave_grad
                 ave_grad = 0
 
                 if test_loader is not None:
-                    test_loss = run_loader(  # pylint: disable=E1120
-                        model, test_loader, save_dir=None, _log=None)
+                    test_loss = run_loader(model, test_loader)
                     test_losses.append(test_loss.item())
                 # scheduler.step()
 
@@ -105,38 +102,6 @@ def train_test_online(model, train_loader, test_loader, num_epochs, num_ave_grad
                 f'BEST TEST loss/epoch: {best_test_loss:.2f}/{best_test_epoch + 1}]')
     return torch.tensor(run_train_loss).mean(), test_losses
 
-
-@ex.capture
-def run_loader(model, loader, save_dir, data_cfg, _log):
-    if save_dir is not None:
-        save_dir_res = os.path.join(save_dir, 'results', data_cfg['seq_name'])
-        if not os.path.exists(save_dir_res):
-            os.makedirs(save_dir_res)
-
-    device = get_device()
-    run_loss = []
-    with torch.no_grad():
-        for sample_batched in loader:
-            img, gt, fname = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
-            inputs, gts = img.to(device), gt.to(device)
-            outputs = model.forward(inputs)
-
-            loss = class_balanced_cross_entropy_loss(
-                outputs[-1], gts, size_average=False)
-            run_loss.append(loss.item())
-
-            if save_dir is not None:
-                for jj in range(int(inputs.size()[0])):
-                    pred = np.transpose(
-                        outputs[-1].cpu().data.numpy()[jj, :, :, :], (1, 2, 0))
-                    pred = 1 / (1 + np.exp(-pred))
-                    pred = 255 * np.squeeze(pred)
-                    pred = pred.astype(np.uint8)
-
-                    imageio.imsave(os.path.join(
-                        save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
-
-    return torch.tensor(run_loss).mean()
 
 @ex.capture
 def init_vis(db_train, env_prefix, _config, _run, torch_cfg):
@@ -226,8 +191,8 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                            transform=custom_transforms.ToTensor())
     meta_loader = DataLoader(
         db_meta,
+        shuffle=data_cfg['shuffles']['meta'],
         batch_size=data_cfg['batch_sizes']['meta'],
-        shuffle=False,
         num_workers=2)
 
     #
@@ -251,8 +216,7 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
             model.to(device)
             model.zero_grad()
 
-            init_meta_loss = run_loader(  # pylint: disable=E1120
-                model, meta_loader, save_dir=None, _log=None)
+            init_meta_loss = run_loader(model, meta_loader)
             init_meta_losses.append(init_meta_loss)
 
             run_train_loss, per_epoch_meta_losses = train_test_online(  # pylint: disable=E1120
@@ -260,8 +224,7 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
             run_train_losses.append(run_train_loss)
             meta_losses.append(per_epoch_meta_losses)
 
-            # meta_loss = run_loader(  # pylint: disable=E1120
-            #     model, meta_loader, save_dir=None, _log=None)
+            # meta_loss = run_loader(model, meta_loader)
             # meta_losses.append(meta_loss)
 
         run_train_losses = torch.tensor(run_train_losses)
@@ -397,7 +360,7 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
         run_train_loss_seqs[db_train.seqs] = torch.tensor(
             run_train_loss).mean()
 
-        meta_loss = run_loader(model, meta_loader, save_dir=None, _log=None)  # pylint: disable=E1120
+        meta_loss = run_loader(model, meta_loader)
         meta_loss_seqs[db_train.seqs] = meta_loss.item()
 
         stop_time = timeit.default_timer()
