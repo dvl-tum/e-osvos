@@ -47,12 +47,10 @@ class DAVIS2016(Dataset):
                     lab = np.sort(os.listdir(os.path.join(db_root_dir, 'Annotations/480p/', seq)))
                     labels_seq = list(map(lambda x: os.path.join('Annotations/480p/', seq, x), lab))
 
+                    assert (len(labels_seq) == len(img_list_seq)), f'failure in: {seq}'
+
                     seqs_dict[seq]['img_list'] = img_list_seq
                     seqs_dict[seq]['labels'] = labels_seq
-
-                    if frame_id is not None:
-                        img_list_seq = [img_list_seq[frame_id]]
-                        labels_seq = [labels_seq[frame_id]]
 
                     img_list.extend(img_list_seq)
                     labels.extend(labels_seq)
@@ -60,21 +58,18 @@ class DAVIS2016(Dataset):
             # Initialize the per sequence images for online training
             names_img = np.sort(os.listdir(os.path.join(db_root_dir, 'JPEGImages/480p/', seqs)))
             img_list_seq = list(map(lambda x: os.path.join('JPEGImages/480p/', seqs, x), names_img))
+
             names_label = np.sort(os.listdir(os.path.join(db_root_dir, 'Annotations/480p/', seqs)))
             labels_seq = list(map(lambda x: os.path.join('Annotations/480p/', seqs, x), names_label))
+
+            assert (len(labels_seq) == len(img_list_seq)), f'failure in: {seqs}'
 
             seqs_dict[seqs] = {}
             seqs_dict[seqs]['img_list'] = img_list_seq
             seqs_dict[seqs]['labels'] = labels_seq
 
-            if frame_id is not None:
-                img_list_seq = [img_list_seq[frame_id]]
-                labels_seq = [labels_seq[frame_id]]
-
             img_list.extend(img_list_seq)
             labels.extend(labels_seq)
-
-        assert (len(labels) == len(img_list))
 
         self.seqs_dict = seqs_dict
         self.img_list = img_list
@@ -86,11 +81,17 @@ class DAVIS2016(Dataset):
 
         self.set_seq(rnd_seq_name)
 
+    def set_random_frame_id(self):
+        self.frame_id = random.randint(0, len(self.img_list) - 1)
+
+    def get_seq_id(self):
+        return list(self.seqs_dict.keys()).index(self.seqs)
+
     def set_next_seq(self):
         if self.seqs in ['train_seqs', 'test_seqs']:
             key_idx = 0
         else:
-            key_idx = list(self.seqs_dict.keys()).index(self.seqs) + 1
+            key_idx = self.get_seq_id() + 1
             if key_idx == len(self.seqs_dict.keys()):
                 key_idx = 0
 
@@ -102,18 +103,18 @@ class DAVIS2016(Dataset):
         img_list = self.seqs_dict[seq_name]['img_list']
         labels = self.seqs_dict[seq_name]['labels']
 
-        if self.frame_id is not None:
-            img_list = [img_list[frame_id]]
-            labels = [labels[frame_id]]
-
         self.img_list = img_list
         self.labels = labels
         self.seqs = seq_name
 
     def __len__(self):
+        if self.frame_id is not None:
+            return 1
         return len(self.img_list)
 
     def __getitem__(self, idx):
+        if self.frame_id is not None:
+            idx = self.frame_id
         img, gt = self.make_img_gt_pair(idx)
 
         sample = {'image': img, 'gt': gt}
@@ -131,6 +132,7 @@ class DAVIS2016(Dataset):
         Make the image-ground-truth pair
         """
         img = cv2.imread(os.path.join(self.db_root_dir, self.img_list[idx]))
+
         if self.labels[idx] is not None:
             label = cv2.imread(os.path.join(self.db_root_dir, self.labels[idx]), 0)
         else:
@@ -145,8 +147,8 @@ class DAVIS2016(Dataset):
         img = np.subtract(img, np.array(self.meanval, dtype=np.float32))
 
         if self.labels[idx] is not None:
-                gt = np.array(label, dtype=np.float32)
-                gt = gt/np.max([gt.max(), 1e-8])
+            gt = np.array(label, dtype=np.float32)
+            gt = gt/np.max([gt.max(), 1e-8])
 
         return img, gt
 
