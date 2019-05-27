@@ -1,5 +1,5 @@
 seed: 1
-env_suffix: null
+env_prefix: null
 vis_interval: 1
 save_dir: ./models
 num_bptt_steps: 5

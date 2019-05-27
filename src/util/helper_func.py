@@ -34,12 +34,12 @@ def run_loader(model, loader, save_dir=None):
     return torch.tensor(run_loss).mean()
 
 
-def train_test(model, train_loader, test_loader, optimizer, num_epochs,
+def train_val(model, train_loader, val_loader, optimizer, num_epochs,
                num_ave_grad, seed, _log):
     device = next(model.parameters()).device
 
-    test_losses = []
     run_train_loss = []
+    val_losses = []
     ave_grad = 0
 
     if _log is not None:
@@ -68,16 +68,15 @@ def train_test(model, train_loader, test_loader, optimizer, num_epochs,
                 optimizer.zero_grad()
                 ave_grad = 0
 
-                if test_loader is not None:
-                    test_loss = run_loader(model, test_loader)
-                    test_losses.append(test_loss.item())
+                if val_loader is not None:
+                    val_loss = run_loader(model, val_loader)
+                    val_losses.append(val_loss.item())
 
     if _log is not None:
         _log.info(
             f'RUN TRAIN loss: {torch.tensor(run_train_loss).mean().item():.2f}')
-        if test_loader is not None:
-            best_test_epoch = torch.tensor(test_losses).argmin()
-            best_test_loss = torch.tensor(test_losses)[best_test_epoch]
-            _log.info(
-                f'BEST TEST loss/epoch: {best_test_loss:.2f}/{best_test_epoch + 1}')
-    return torch.tensor(run_train_loss).mean(), test_losses
+        if val_loader is not None:
+            best_val_epoch = torch.tensor(val_losses).argmin()
+            best_val_loss = torch.tensor(val_losses)[best_val_epoch]
+            _log.info(f'BEST VAL loss/epoch: {best_val_loss:.2f}/{best_val_epoch + 1}')
+    return torch.tensor(run_train_loss).mean(), val_losses

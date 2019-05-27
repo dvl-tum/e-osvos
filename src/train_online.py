@@ -8,42 +8,56 @@ from datetime import datetime
 
 import imageio
 import networks.vgg_osvos as vo
-from networks.drn_seg import DRNSeg
 import sacred
-# PyTorch includes
 import torch
 import torch.optim as optim
-# Custom includes
-from dataloaders import davis_2016 as db
 from dataloaders import custom_transforms
+from dataloaders import davis_2016 as db
 from dataloaders.helpers import *
 from layers.osvos_layers import class_balanced_cross_entropy_loss
+from meta_stopping.utils import dict_to_html
 from mypath import Path
+from networks.drn_seg import DRNSeg
+from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import (get_device, set_random_seeds,
                                        torch_ingredient)
-from pytorch_tools.data import EpochSampler
+from pytorch_tools.vis import TextVis
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from util import visualize as viz
-from util.helper_func import run_loader, train_test
-
+from util.helper_func import run_loader, train_val
 
 ex = sacred.Experiment('osvos-online', ingredients=[torch_ingredient])
 ex.add_config('cfgs/online.yaml')
 ex.add_named_config('VGG', 'cfgs/online_vgg.yaml')
-train_test = ex.capture(train_test)
+train_val = ex.capture(train_val)
+
+
+@ex.capture
+def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
+    vis_dict = {}
+    run_name = f"{_run.experiment_info['name']}_{env_suffix}"
+
+    opts = dict(title="CONFIG and RESULTS", width=300, height=1000)
+    vis_dict['config_vis'] = TextVis(opts, env=run_name, **torch_cfg['vis'])
+    vis_dict['config_vis'].plot(dict_to_html(_config))
+
+    return vis_dict
 
 
 @ex.automain
-def main(parent_model_cfg, optimizer_cfg, num_ave_grad, num_epochs, seed, save_dir, data_cfg, _log, _config):
+def main(parent_model_cfg, optimizer_cfg, num_ave_grad, num_epochs, seed,
+         validate_best_epoch, vis_interval, save_dir, data_cfg, _log, _config):
     if not os.path.exists(save_dir):
         os.makedirs(os.path.join(save_dir))
 
     device = get_device()
     set_random_seeds(seed)
 
+    #
     # model
+    #
     if parent_model_cfg['name'] == 'VGG':
         model = vo.OSVOS(pretrained=0)
     elif parent_model_cfg['name'] == 'DRN_D_22':
@@ -57,7 +71,9 @@ def main(parent_model_cfg, optimizer_cfg, num_ave_grad, num_epochs, seed, save_d
     model.load_state_dict(parent_state_dict)
     model.to(device)
 
+    #
     # optimizer
+    #
     lr = optimizer_cfg['lr']
     wd = optimizer_cfg['wd']
     mom = optimizer_cfg['mom']
@@ -76,7 +92,9 @@ def main(parent_model_cfg, optimizer_cfg, num_ave_grad, num_epochs, seed, save_d
         optimizer = optim.SGD(model.parameters(), lr=lr,
                               weight_decay=wd, momentum=mom)
 
+    #
     # data
+    #
     train_transforms = []
     if data_cfg['random_train_transform']:
         train_transforms.extend([custom_transforms.RandomHorizontalFlip(),
@@ -101,9 +119,21 @@ def main(parent_model_cfg, optimizer_cfg, num_ave_grad, num_epochs, seed, save_d
         batch_size=data_cfg['batch_sizes']['test'],
         num_workers=2)
 
-    # Train
-    # start_time = timeit.default_timer()
+    #
+    # visualization
+    #
+    if vis_interval is not None:
+        vis_dict = init_vis(db_train)  # pylint: disable=E1120
+
+    #
+    # train
+    #
+    val_loader = None
+    if validate_best_epoch:
+        val_loader = test_loader
+
     run_train_losses = []
+    val_losses = []
     test_losses = []
     for seq_name in db_train.seqs_dict.keys():
         db_train.set_seq(seq_name)
@@ -113,9 +143,10 @@ def main(parent_model_cfg, optimizer_cfg, num_ave_grad, num_epochs, seed, save_d
         model.to(device)
         model.zero_grad()
 
-        run_train_loss, _ = train_test(  # pylint: disable=E1120
-            model, train_loader, None, optimizer)
+        run_train_loss, per_epoch_val_losses = train_val(  # pylint: disable=E1120
+            model, train_loader, val_loader, optimizer)
         run_train_losses.append(run_train_loss)
+        val_losses.append(per_epoch_val_losses)
 
         with torch.no_grad():
             save_dir_res = None
@@ -129,7 +160,7 @@ def main(parent_model_cfg, optimizer_cfg, num_ave_grad, num_epochs, seed, save_d
     run_train_losses = torch.tensor(run_train_losses)
     test_losses = torch.tensor(test_losses)
 
-    non_meta_baseline_results_str = (
+    results_str = (
         "<p>RUN TRAIN loss:<br>"
         f"&nbsp;&nbsp;MIN seq: {run_train_losses.min():.2f}<br>"
         f"&nbsp;&nbsp;MAX seq: {run_train_losses.max():.2f}<br>"
@@ -140,10 +171,18 @@ def main(parent_model_cfg, optimizer_cfg, num_ave_grad, num_epochs, seed, save_d
         f"&nbsp;&nbsp;MAX seq: {test_losses.max():.2f}<br>"
         f"&nbsp;&nbsp;MEAN: {test_losses.mean():.2f}</p>")
 
-    print(non_meta_baseline_results_str)
-    # if vis_interval is None:
-    #     print(non_meta_baseline_results_str)
-    # else:
-    #     vis_dict['baseline_vis'].plot(non_meta_baseline_results_str)
+    if validate_best_epoch:
+        val_losses = torch.tensor(val_losses)
+        best_mean_val_loss_epoch = val_losses.mean(dim=0).argmin()
 
-    # stop_time = timeit.default_timer()
+        results_str += (
+            "BEST VAL loss:<br>"
+            f"&nbsp;&nbsp;EPOCH: {best_mean_val_loss_epoch + 1}<br>"
+            f"&nbsp;&nbsp;MIN seq: {val_losses[..., best_mean_val_loss_epoch].min():.2f}<br>"
+            f"&nbsp;&nbsp;MAX seq: {val_losses[..., best_mean_val_loss_epoch].max():.2f}<br>"
+            f"&nbsp;&nbsp;MEAN: {val_losses[..., best_mean_val_loss_epoch].mean():.2f}</p>")
+
+    if vis_interval is None:
+        print(results_str)
+    else:
+        vis_dict['config_vis'].plot(dict_to_html(_config) + results_str)

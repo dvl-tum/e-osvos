@@ -27,12 +27,12 @@ from pytorch_tools.data import EpochSampler
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from util.helper_func import run_loader, train_test
+from util.helper_func import run_loader, train_val
 
 
 ex = sacred.Experiment('osvos-meta', ingredients=[torch_ingredient])
 ex.add_config('cfgs/meta.yaml')
-train_test = ex.capture(train_test)
+train_val = ex.capture(train_val)
 
 
 @ex.capture
@@ -54,12 +54,9 @@ def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
                 'RUN TIME'])
     vis_dict['meta_metrics_vis'] = LineVis(opts, env=run_name, **torch_cfg['vis'])
 
-    opts = dict(title="CONFIG", width=300, height=750)
+    opts = dict(title="CONFIG and NON META BASELINE", width=300, height=1000)
     vis_dict['config_vis'] = TextVis(opts, env=run_name, **torch_cfg['vis'])
     vis_dict['config_vis'].plot(dict_to_html(_config))
-
-    opts = dict(title="NON META BASELINE", width=300, height=750)
-    vis_dict['baseline_vis'] = TextVis(opts, env=run_name, **torch_cfg['vis'])
 
     for seq_name in db_train.seqs_dict.keys():
         opts = dict(
@@ -168,14 +165,10 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                 init_meta_loss = run_loader(model, meta_loader)
                 init_meta_losses.append(init_meta_loss)
 
-            run_train_loss, per_epoch_meta_losses = train_test(  # pylint: disable=E1120
+            run_train_loss, per_epoch_meta_losses = train_val(  # pylint: disable=E1120
                 model, train_loader, meta_loader, optimizer, _log=None)
             run_train_losses.append(run_train_loss)
             meta_losses.append(per_epoch_meta_losses)
-
-            # with torch.no_grad():
-            #     meta_loss = run_loader(model, meta_loader)
-            #     meta_losses.append(meta_loss)
 
         run_train_losses = torch.tensor(run_train_losses)
         init_meta_losses = torch.tensor(init_meta_losses)
@@ -201,10 +194,12 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
             f"&nbsp;&nbsp;MIN seq: {meta_losses[..., best_mean_meta_loss_epoch].min():.2f}<br>"
             f"&nbsp;&nbsp;MAX seq: {meta_losses[..., best_mean_meta_loss_epoch].max():.2f}<br>"
             f"&nbsp;&nbsp;MEAN: {meta_losses[..., best_mean_meta_loss_epoch].mean():.2f}</p>")
+
         if vis_interval is None:
             print(non_meta_baseline_results_str)
         else:
-            vis_dict['baseline_vis'].plot(non_meta_baseline_results_str)
+            vis_dict['config_vis'].plot(dict_to_html(
+                _config) + non_meta_baseline_results_str)
 
     #
     # Meta model

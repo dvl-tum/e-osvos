@@ -1,5 +1,5 @@
 seed: 1
-env_prefix: null
+env_suffix: null
 vis_interval: 1
 save_dir: ./models
 parent_model_cfg:
@@ -9,6 +9,7 @@ optimizer_cfg:
     lr: 0.000001                                # 1e-6
     wd: 0.0
     mom: 0.0
+validate_best_epoch: False
 num_epochs: 100
 num_ave_grad: 1                                     # average the gradient every num_ave_grad iterations
 data_cfg:
