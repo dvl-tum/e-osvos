@@ -8,199 +8,142 @@ from datetime import datetime
 
 import imageio
 import networks.vgg_osvos as vo
+from networks.drn_seg import DRNSeg
+import sacred
 # PyTorch includes
 import torch
 import torch.optim as optim
 # Custom includes
-from dataloaders import custom_transforms as tr
 from dataloaders import davis_2016 as db
+from dataloaders import custom_transforms
 from dataloaders.helpers import *
 from layers.osvos_layers import class_balanced_cross_entropy_loss
 from mypath import Path
+from pytorch_tools.ingredients import (get_device, set_random_seeds,
+                                       torch_ingredient)
+from pytorch_tools.data import EpochSampler
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from util import visualize as viz
-
-# Setting of parameters
-if 'SEQ_NAME' not in os.environ.keys():
-    seq_name = 'blackswan'
-else:
-    seq_name = str(os.environ['SEQ_NAME'])
-
-db_root_dir = Path.db_root_dir()
-save_dir = Path.save_root_dir()
-
-if not os.path.exists(save_dir):
-    os.makedirs(os.path.join(save_dir))
-
-vis_net = False  # Visualize the network?
-vis_res = False  # Visualize the results?
-nAveGrad = 5  # Average the gradient every nAveGrad iterations
-nEpochs = 2000 * nAveGrad  # Number of epochs for training
-snapshot = nEpochs  # Store a model every snapshot epochs
-parentEpoch = 240
-
-# Parameters in p are used for the name of the model
-p = {
-    'trainBatch': 1,  # Number of Images in each mini-batch
-    }
-seed = 0
-
-parentModelName = 'parent'
-# Select which GPU, -1 if CPU
-gpu_id = 0
-device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu")
-
-# Network definition
-net = vo.OSVOS(pretrained=0)
-net.load_state_dict(torch.load(os.path.join(save_dir, parentModelName+'_epoch-'+str(parentEpoch-1)+'.pth'),
-                               map_location=lambda storage, loc: storage))
-
-# Logging into Tensorboard
-log_dir = os.path.join(save_dir, 'runs', datetime.now().strftime('%b%d_%H-%M-%S') + '_' + socket.gethostname()+'-'+seq_name)
-writer = SummaryWriter(log_dir=log_dir)
-
-net.to(device)
-
-# Visualize the network
-if vis_net:
-    x = torch.randn(1, 3, 480, 854)
-    x.requires_grad_()
-    x = x.to(device)
-    y = net.forward(x)
-    g = viz.make_dot(y, net.state_dict())
-    g.view()
-
-# Use the following optimizer
-lr = 1e-8
-wd = 0.0002
-optimizer = optim.SGD([
-    {'params': [pr[1] for pr in net.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd},
-    {'params': [pr[1] for pr in net.stages.named_parameters() if 'bias' in pr[0]], 'lr': lr * 2},
-    {'params': [pr[1] for pr in net.side_prep.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd},
-    {'params': [pr[1] for pr in net.side_prep.named_parameters() if 'bias' in pr[0]], 'lr': lr*2},
-    {'params': [pr[1] for pr in net.upscale.named_parameters() if 'weight' in pr[0]], 'lr': 0},
-    {'params': [pr[1] for pr in net.upscale_.named_parameters() if 'weight' in pr[0]], 'lr': 0},
-    {'params': net.fuse.weight, 'lr': lr/100, 'weight_decay': wd},
-    {'params': net.fuse.bias, 'lr': 2*lr/100},
-    ], lr=lr, momentum=0.9)
-
-# Preparation of the data loaders
-# Define augmentation transformations as a composition
-composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
-                                          tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
-                                          tr.ToTensor()])
-# Training dataset and its iterator
-db_train = db.DAVIS2016(seqs=seq_name, frame_id=0, db_root_dir=db_root_dir, transform=composed_transforms)
-trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num_workers=1)
-
-# Testing dataset and its iterator
-db_test = db.DAVIS2016(seqs=seq_name, db_root_dir=db_root_dir, transform=tr.ToTensor())
-testloader = DataLoader(db_test, batch_size=1, shuffle=False, num_workers=1)
-
-num_img_tr = len(trainloader)
-num_img_ts = len(testloader)
-loss_tr = []
-aveGrad = 0
-
-print("Start of Online Training, sequence: " + seq_name)
-start_time = timeit.default_timer()
-# Main Training and Testing Loop
-for epoch in range(0, nEpochs):
-    # One training epoch
-    running_loss_tr = 0
-    np.random.seed(seed + epoch)
-    for ii, sample_batched in enumerate(trainloader):
-
-        inputs, gts = sample_batched['image'], sample_batched['gt']
-
-        # Forward-Backward of the mini-batch
-        inputs.requires_grad_()
-        inputs, gts = inputs.to(device), gts.to(device)
-
-        outputs = net.forward(inputs)
-
-        # Compute the fuse loss
-        loss = class_balanced_cross_entropy_loss(outputs[-1], gts, size_average=False)
-        running_loss_tr += loss.item()
-
-        # Print stuff
-        if epoch % (nEpochs//20) == (nEpochs//20 - 1):
-            running_loss_tr /= num_img_tr
-            loss_tr.append(running_loss_tr)
-
-            print('[Epoch: %d, numImages: %5d]' % (epoch+1, ii + 1))
-            print('Loss: %f' % running_loss_tr)
-            writer.add_scalar('data/total_loss_epoch', running_loss_tr, epoch)
-
-        # Backward the averaged gradient
-        loss /= nAveGrad
-        loss.backward()
-        aveGrad += 1
-
-        # Update the weights once in nAveGrad forward passes
-        if aveGrad % nAveGrad == 0:
-            writer.add_scalar('data/total_loss_iter', loss.item(), ii + num_img_tr * epoch)
-            optimizer.step()
-            optimizer.zero_grad()
-            aveGrad = 0
-
-    # Save the model
-    if (epoch % snapshot) == snapshot - 1 and epoch != 0:
-        torch.save(net.state_dict(), os.path.join(save_dir, seq_name + '_epoch-'+str(epoch) + '.pth'))
-
-stop_time = timeit.default_timer()
-print('Online training time: ' + str(stop_time - start_time))
+from util.helper_func import run_loader, train_test
 
 
-# Testing Phase
-if vis_res:
-    import matplotlib.pyplot as plt
-    plt.close("all")
-    plt.ion()
-    f, ax_arr = plt.subplots(1, 3)
-
-save_dir_res = os.path.join(save_dir, 'results', seq_name)
-if not os.path.exists(save_dir_res):
-    os.makedirs(save_dir_res)
+ex = sacred.Experiment('osvos-online', ingredients=[torch_ingredient])
+ex.add_config('cfgs/online.yaml')
+ex.add_named_config('VGG', 'cfgs/online_vgg.yaml')
+train_test = ex.capture(train_test)
 
 
-print('Testing Network')
-with torch.no_grad():
-    # Main Testing Loop
-    for ii, sample_batched in enumerate(testloader):
+@ex.automain
+def main(parent_model_cfg, optimizer_cfg, num_ave_grad, num_epochs, seed, save_dir, data_cfg, _log, _config):
+    if not os.path.exists(save_dir):
+        os.makedirs(os.path.join(save_dir))
 
-        img, gt, fname = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
+    device = get_device()
+    set_random_seeds(seed)
 
-        # Forward of the mini-batch
-        inputs, gts = img.to(device), gt.to(device)
+    # model
+    if parent_model_cfg['name'] == 'VGG':
+        model = vo.OSVOS(pretrained=0)
+    elif parent_model_cfg['name'] == 'DRN_D_22':
+        model = DRNSeg('DRN_D_22', 1, pretrained=True)
 
-        outputs = net.forward(inputs)
+    parent_state_dict = torch.load(
+        os.path.join(
+            save_dir, parent_model_cfg['name'],
+            f"{parent_model_cfg['name']}_epoch-{parent_model_cfg['epoch']}.pth"),
+        map_location=lambda storage, loc: storage)
+    model.load_state_dict(parent_state_dict)
+    model.to(device)
 
-        for jj in range(int(inputs.size()[0])):
-            pred = np.transpose(outputs[-1].cpu().data.numpy()[jj, :, :, :], (1, 2, 0))
-            pred = 1 / (1 + np.exp(-pred))
-            pred = np.squeeze(pred)
+    # optimizer
+    lr = optimizer_cfg['lr']
+    wd = optimizer_cfg['wd']
+    mom = optimizer_cfg['mom']
+    if parent_model_cfg['name'] == 'VGG':
+        optimizer = optim.SGD([
+            {'params': [pr[1] for pr in model.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd},
+            {'params': [pr[1] for pr in model.stages.named_parameters() if 'bias' in pr[0]], 'lr': lr * 2},
+            {'params': [pr[1] for pr in model.side_prep.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd},
+            {'params': [pr[1] for pr in model.side_prep.named_parameters() if 'bias' in pr[0]], 'lr': lr*2},
+            {'params': [pr[1] for pr in model.upscale.named_parameters() if 'weight' in pr[0]], 'lr': 0},
+            {'params': [pr[1] for pr in model.upscale_.named_parameters() if 'weight' in pr[0]], 'lr': 0},
+            {'params': model.fuse.weight, 'lr': lr/100, 'weight_decay': wd},
+            {'params': model.fuse.bias, 'lr': 2*lr/100},
+            ], lr=lr, momentum=mom)
+    elif parent_model_cfg['name'] == 'DRN_D_22':
+        optimizer = optim.SGD(model.parameters(), lr=lr,
+                              weight_decay=wd, momentum=mom)
 
-            # Save the result, attention to the index jj
-            imageio.imsave(os.path.join(
-                save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
+    # data
+    train_transforms = []
+    if data_cfg['random_train_transform']:
+        train_transforms.extend([custom_transforms.RandomHorizontalFlip(),
+                                 custom_transforms.ScaleNRotate(rots=(-30, 30),
+                                                                scales=(.75, 1.25))])
+    train_transforms.append(custom_transforms.ToTensor())
+    composed_transforms = transforms.Compose(train_transforms)
 
-            if vis_res:
-                img_ = np.transpose(img.numpy()[jj, :, :, :], (1, 2, 0))
-                gt_ = np.transpose(gt.numpy()[jj, :, :, :], (1, 2, 0))
-                gt_ = np.squeeze(gt)
-                # Plot the particular example
-                ax_arr[0].cla()
-                ax_arr[1].cla()
-                ax_arr[2].cla()
-                ax_arr[0].set_title('Input Image')
-                ax_arr[1].set_title('Ground Truth')
-                ax_arr[2].set_title('Detection')
-                ax_arr[0].imshow(im_normalize(img_))
-                ax_arr[1].imshow(gt_)
-                ax_arr[2].imshow(im_normalize(pred))
-                plt.pause(0.001)
+    db_train = db.DAVIS2016(seqs=data_cfg['seq_name'],
+                            frame_id=0,
+                            transform=composed_transforms)
+    batch_sampler = EpochSampler(db_train,
+                                 data_cfg['shuffles']['train'],
+                                 data_cfg['batch_sizes']['train'])
+    train_loader = DataLoader(db_train, batch_sampler=batch_sampler, num_workers=2)
 
-writer.close()
+    db_test = db.DAVIS2016(seqs=data_cfg['seq_name'],
+                           transform=custom_transforms.ToTensor())
+    test_loader = DataLoader(
+        db_test,
+        shuffle=data_cfg['shuffles']['test'],
+        batch_size=data_cfg['batch_sizes']['test'],
+        num_workers=2)
+
+    # Train
+    # start_time = timeit.default_timer()
+    run_train_losses = []
+    test_losses = []
+    for seq_name in db_train.seqs_dict.keys():
+        db_train.set_seq(seq_name)
+        db_test.set_seq(seq_name)
+
+        model.load_state_dict(parent_state_dict)
+        model.to(device)
+        model.zero_grad()
+
+        run_train_loss, _ = train_test(  # pylint: disable=E1120
+            model, train_loader, None, optimizer)
+        run_train_losses.append(run_train_loss)
+
+        with torch.no_grad():
+            save_dir_res = None
+            if save_dir is not None:
+                save_dir_res = os.path.join(save_dir, parent_model_cfg['name'], 'results', seq_name)
+                if not os.path.exists(save_dir_res):
+                    os.makedirs(save_dir_res)
+            test_losses.append(run_loader(
+                model, test_loader, save_dir=save_dir_res))
+
+    run_train_losses = torch.tensor(run_train_losses)
+    test_losses = torch.tensor(test_losses)
+
+    non_meta_baseline_results_str = (
+        "<p>RUN TRAIN loss:<br>"
+        f"&nbsp;&nbsp;MIN seq: {run_train_losses.min():.2f}<br>"
+        f"&nbsp;&nbsp;MAX seq: {run_train_losses.max():.2f}<br>"
+        f"&nbsp;&nbsp;MEAN: {run_train_losses.mean():.2f}<br>"
+        "<br>"
+        "LAST TEST loss:<br>"
+        f"&nbsp;&nbsp;MIN seq: {test_losses.min():.2f}<br>"
+        f"&nbsp;&nbsp;MAX seq: {test_losses.max():.2f}<br>"
+        f"&nbsp;&nbsp;MEAN: {test_losses.mean():.2f}</p>")
+
+    print(non_meta_baseline_results_str)
+    # if vis_interval is None:
+    #     print(non_meta_baseline_results_str)
+    # else:
+    #     vis_dict['baseline_vis'].plot(non_meta_baseline_results_str)
+
+    # stop_time = timeit.default_timer()

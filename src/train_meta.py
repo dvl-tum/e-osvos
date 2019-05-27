@@ -6,7 +6,6 @@ from datetime import datetime
 from itertools import chain
 import networks.vgg_osvos as vo
 from networks.drn_seg import DRNSeg
-from networks.drn import model_zoo, model_urls
 import sacred
 import torch
 import torch.optim as optim
@@ -28,85 +27,18 @@ from pytorch_tools.data import EpochSampler
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from util.helper_func import run_loader
+from util.helper_func import run_loader, train_test
 
 
 ex = sacred.Experiment('osvos-meta', ingredients=[torch_ingredient])
 ex.add_config('cfgs/meta.yaml')
+train_test = ex.capture(train_test)
 
 
 @ex.capture
-def train_test_online(model, train_loader, test_loader, num_epochs, num_ave_grad, save_dir,
-                 meta_optimizer_cfg, data_cfg, _log, seed):
-    device = get_device()
-
-    # lr = 1e-8
-    # wd = 0.0002
-    # optimizer = optim.SGD([
-    #     {'params': [pr[1] for pr in model.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd},
-    #     {'params': [pr[1] for pr in model.stages.named_parameters() if 'bias' in pr[0]], 'lr': lr * 2},
-    #     {'params': [pr[1] for pr in model.side_prep.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd},
-    #     {'params': [pr[1] for pr in model.side_prep.named_parameters() if 'bias' in pr[0]], 'lr': lr*2},
-    #     {'params': [pr[1] for pr in model.upscale.named_parameters() if 'weight' in pr[0]], 'lr': 0},
-    #     {'params': [pr[1] for pr in model.upscale_.named_parameters() if 'weight' in pr[0]], 'lr': 0},
-    #     {'params': model.fuse.weight, 'lr': lr/100, 'weight_decay': wd},
-    #     {'params': model.fuse.bias, 'lr': 2*lr/100},
-    #     ], lr=lr, momentum=0.9)
-
-    optimizer = SGDFixed(model.parameters(),
-                         lr=meta_optimizer_cfg['lr_range'][1])
-
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=num_epochs / 2, gamma=0.1)
-
-    test_losses = []
-    run_train_loss = []
-    ave_grad = 0
-
-    if _log is not None:
-        _log.info(f"Train regular OSVOS - SEQUENCE: {data_cfg['seq_name']}")
-    for epoch in range(0, num_epochs * num_ave_grad):
-        set_random_seeds(seed + epoch)
-        for _, sample_batched in enumerate(train_loader):
-            inputs, gts = sample_batched['image'], sample_batched['gt']
-            inputs, gts = inputs.to(device), gts.to(device)
-
-            outputs = model(inputs)
-
-            # Compute the fuse loss
-            loss = class_balanced_cross_entropy_loss(
-                outputs[-1], gts, size_average=False)
-            run_train_loss.append(loss.item())
-
-            loss /= num_ave_grad
-            loss.backward()
-            ave_grad += 1
-
-            # Update the weights once in num_ave_grad forward passes
-            if ave_grad % num_ave_grad == 0:
-                optimizer.step()
-                optimizer.zero_grad()
-                ave_grad = 0
-
-                if test_loader is not None:
-                    test_loss = run_loader(model, test_loader)
-                    test_losses.append(test_loss.item())
-                # scheduler.step()
-
-    if _log is not None:
-        _log.info(
-            f'RUN TRAIN loss: {torch.tensor(run_train_loss).mean().item():.2f}]')
-        if test_loader is not None:
-            best_test_epoch = torch.tensor(test_losses).argmin()
-            best_test_loss = torch.tensor(test_losses)[best_test_epoch]
-            _log.info(
-                f'BEST TEST loss/epoch: {best_test_loss:.2f}/{best_test_epoch + 1}]')
-    return torch.tensor(run_train_loss).mean(), test_losses
-
-
-@ex.capture
-def init_vis(db_train, env_prefix, _config, _run, torch_cfg):
+def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
     vis_dict = {}
-    run_name = f"{env_prefix}_{_run.experiment_info['name']}"
+    run_name = f"{_run.experiment_info['name']}_{env_suffix}"
 
     opts = dict(
         title="OSVOS META",
@@ -162,7 +94,7 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
     model = DRNSeg('DRN_D_22', 1, pretrained=True)
     # model = vo.OSVOS(pretrained=0)
     # parent_state_dict = torch.load(
-    #     os.path.join(save_dir, 'parent_epoch-239.pth'),
+    #     os.path.join(save_dir, 'VGG_epoch-240.pth'),
     #     map_location=lambda storage, loc: storage)
     model.load_state_dict(parent_state_dict)
     model.to(device)
@@ -205,6 +137,22 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
     # non-meta baseline
     #
     if run_non_meta_baseline:
+        # lr = 1e-8
+        # wd = 0.0002
+        # optimizer = optim.SGD([
+        #     {'params': [pr[1] for pr in model.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd},
+        #     {'params': [pr[1] for pr in model.stages.named_parameters() if 'bias' in pr[0]], 'lr': lr * 2},
+        #     {'params': [pr[1] for pr in model.side_prep.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd},
+        #     {'params': [pr[1] for pr in model.side_prep.named_parameters() if 'bias' in pr[0]], 'lr': lr*2},
+        #     {'params': [pr[1] for pr in model.upscale.named_parameters() if 'weight' in pr[0]], 'lr': 0},
+        #     {'params': [pr[1] for pr in model.upscale_.named_parameters() if 'weight' in pr[0]], 'lr': 0},
+        #     {'params': model.fuse.weight, 'lr': lr/100, 'weight_decay': wd},
+        #     {'params': model.fuse.bias, 'lr': 2*lr/100},
+        #     ], lr=lr, momentum=0.9)
+
+        optimizer = SGDFixed(model.parameters(),
+                            lr=meta_optimizer_cfg['lr_range'][1])
+
         run_train_losses = []
         init_meta_losses = []
         meta_losses = []
@@ -216,16 +164,18 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
             model.to(device)
             model.zero_grad()
 
-            init_meta_loss = run_loader(model, meta_loader)
-            init_meta_losses.append(init_meta_loss)
+            with torch.no_grad():
+                init_meta_loss = run_loader(model, meta_loader)
+                init_meta_losses.append(init_meta_loss)
 
-            run_train_loss, per_epoch_meta_losses = train_test_online(  # pylint: disable=E1120
-                model, train_loader, meta_loader, _log=None)
+            run_train_loss, per_epoch_meta_losses = train_test(  # pylint: disable=E1120
+                model, train_loader, meta_loader, optimizer, _log=None)
             run_train_losses.append(run_train_loss)
             meta_losses.append(per_epoch_meta_losses)
 
-            # meta_loss = run_loader(model, meta_loader)
-            # meta_losses.append(meta_loss)
+            # with torch.no_grad():
+            #     meta_loss = run_loader(model, meta_loader)
+            #     meta_losses.append(meta_loss)
 
         run_train_losses = torch.tensor(run_train_losses)
         init_meta_losses = torch.tensor(init_meta_losses)
@@ -360,8 +310,9 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
         run_train_loss_seqs[db_train.seqs] = torch.tensor(
             run_train_loss).mean()
 
-        meta_loss = run_loader(model, meta_loader)
-        meta_loss_seqs[db_train.seqs] = meta_loss.item()
+        with torch.no_grad():
+            meta_loss = run_loader(model, meta_loader)
+            meta_loss_seqs[db_train.seqs] = meta_loss.item()
 
         stop_time = timeit.default_timer()
         if vis_interval is not None and not i % vis_interval:

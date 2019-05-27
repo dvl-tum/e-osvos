@@ -1,7 +1,7 @@
 seed: 1
-env_prefix: null
+env_suffix: null
 vis_interval: 1
-save_dir: './models'
+save_dir: ./models
 num_bptt_steps: 5
 num_meta_runs: 10000
 meta_optim_lr: 0.001
@@ -16,7 +16,7 @@ meta_optimizer_cfg:
 num_epochs: 50
 num_ave_grad: 1                                     # average the gradient every num_ave_grad iterations
 data_cfg:
-    seq_name: 'bear'                                # ['train_seqs', 'test_seqs', 'blackswan', ...]
+    seq_name: bear                                # [train_seqs, test_seqs, blackswan, ...]
     random_train_transform: True
     batch_sizes:
         train: 1

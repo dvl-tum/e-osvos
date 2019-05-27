@@ -1,0 +1,22 @@
+seed: 1
+env_prefix: null
+vis_interval: 1
+save_dir: ./models
+parent_model_cfg:
+    name: DRN_D_22                                  # [VGG, DRN_D_22]
+    epoch: 54
+optimizer_cfg:
+    lr: 0.000001                                # 1e-6
+    wd: 0.0
+    mom: 0.0
+num_epochs: 100
+num_ave_grad: 1                                     # average the gradient every num_ave_grad iterations
+data_cfg:
+    seq_name: train_seqs                                  # [train_seqs, test_seqs, blackswan, ...]
+    random_train_transform: True
+    batch_sizes:
+        train: 1
+        test: 1
+    shuffles:
+        train: True
+        test: False

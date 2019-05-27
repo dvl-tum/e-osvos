@@ -57,9 +57,9 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 # Network definition
-# model_name = 'vgg'
+# model_name = 'VGG'
 model_name = 'DRN_D_22'
-if model_name == 'vgg':
+if model_name == 'VGG':
     load_caffe_vgg = True
     num_losses = 5
     lr = 1e-8
@@ -78,9 +78,6 @@ if model_name == 'vgg':
 else:
     num_losses = 1
     lr = 1e-6
-
-    # net = DRNSeg(model_name, 1, pretrained=True, use_torch_up=True)
-
 
     net = DRNSeg('DRN_D_22', 1, pretrained=True, use_torch_up=False)
     if resume_epoch:
@@ -121,7 +118,7 @@ if vis_net:
 # Use the following optimizer
 wd = 0.0002
 
-if model_name == 'vgg':
+if model_name == 'VGG':
     optimizer = optim.SGD([
         {'params': [pr[1] for pr in net.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd,
          'initial_lr': lr},
@@ -220,7 +217,7 @@ for epoch in range(resume_epoch, nEpochs):
     # Save the model
     if (epoch % snapshot) == snapshot - 1 and epoch != 0:
         torch.save(net.state_dict(), os.path.join(
-            save_dir, model_name, model_name + '_epoch-' + str(epoch) + '.pth'))
+            save_dir, model_name, model_name + '_epoch-' + str(epoch + 1) + '.pth'))
 
     # One testing epoch
     if useTest and epoch % nTestInterval == (nTestInterval - 1):
