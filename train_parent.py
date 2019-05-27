@@ -37,7 +37,7 @@ p = {
 }
 
 # # Setting other parameters
-resume_epoch = 0  # Default is 0, change if want to resume
+resume_epoch = False  # Default is False, change if want to resume
 nEpochs = 240  # Number of epochs for training (nAveGrad * (50000)/(2079/trainBatch))
 useTest = True  # See evolution of the test set when training?
 testBatch = 5  # Testing Batch
@@ -46,8 +46,8 @@ db_root_dir = Path.db_root_dir()
 vis_net = False  # Visualize the network?
 snapshot = 5  # Store a model every snapshot epochs
 nAveGrad = 2
-load_caffe_vgg = True
 seed = 123
+log_to_tb = True
 save_dir = Path.save_root_dir()
 if not os.path.exists(save_dir):
     os.makedirs(os.path.join(save_dir))
@@ -60,6 +60,7 @@ torch.manual_seed(seed)
 # model_name = 'vgg'
 model_name = 'DRN_D_22'
 if model_name == 'vgg':
+    load_caffe_vgg = True
     num_losses = 5
     lr = 1e-8
 
@@ -78,7 +79,15 @@ else:
     num_losses = 1
     lr = 1e-6
 
-    net = DRNSeg(model_name, 1, pretrained=True, use_torch_up=True)
+    # net = DRNSeg(model_name, 1, pretrained=True, use_torch_up=True)
+
+
+    net = DRNSeg('DRN_D_22', 1, pretrained=True, use_torch_up=False)
+    if resume_epoch:
+        parent_state_dict = torch.load(
+        os.path.join(save_dir, 'DRN_D_22', f"DRN_D_22_epoch-{resume_epoch - 1}.pth"),
+                     map_location=lambda storage, loc: storage)
+        net.load_state_dict(parent_state_dict)
 
 if not os.path.exists(os.path.join(save_dir, model_name)):
     os.makedirs(os.path.join(save_dir, model_name))
@@ -93,8 +102,9 @@ print(
     f'NUM MODEL PARAMS - {model_name}: {sum([p.numel() for p in net.parameters()])}')
 
 # Logging into Tensorboard
-log_dir = os.path.join(save_dir, 'runs', model_name)
-writer = SummaryWriter(log_dir=log_dir)
+if log_to_tb:
+    log_dir = os.path.join(save_dir, 'runs', model_name)
+    writer = SummaryWriter(log_dir=log_dir)
 
 net.to(device)
 
@@ -138,11 +148,11 @@ composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
                                           tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
                                           tr.ToTensor()])
 # Training dataset and its iterator
-db_train = db.DAVIS2016(seqs='train', inputRes=None, db_root_dir=db_root_dir, transform=composed_transforms)
+db_train = db.DAVIS2016(seqs='train_seqs', input_res=None, db_root_dir=db_root_dir, transform=composed_transforms)
 trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num_workers=2)
 
 # Testing dataset and its iterator
-db_test = db.DAVIS2016(seqs='test', db_root_dir=db_root_dir, transform=tr.ToTensor())
+db_test = db.DAVIS2016(seqs='test_seqs', db_root_dir=db_root_dir, transform=tr.ToTensor())
 testloader = DataLoader(db_test, batch_size=testBatch, shuffle=False, num_workers=2)
 
 num_img_tr = len(trainloader)
@@ -181,8 +191,9 @@ for epoch in range(resume_epoch, nEpochs):
             running_loss_tr = [x / num_img_tr for x in running_loss_tr]
             loss_tr.append(running_loss_tr[-1])
             # writer.add_scalar('data/total_loss_epoch', running_loss_tr[-1], epoch)
-            writer.add_scalar('total_loss_epoch', loss,
-                              (ii + 1) + num_img_tr * epoch)
+            if log_to_tb:
+                writer.add_scalar('total_loss_epoch', loss,
+                                (ii + 1) + num_img_tr * epoch)
             print(f'[EPOCH {epoch + 1} ITER {ii + 1} LOSS {loss:.2f}]')
             # for l in range(0, len(running_loss_tr)):
             #     print(f'LOSS {l}: {running_loss_tr[l]:.2f}')
@@ -235,9 +246,10 @@ for epoch in range(resume_epoch, nEpochs):
                     loss_ts.append(running_loss_ts[-1])
 
                     print(f'[TEST LOSS {loss:.2f}]')
-                    writer.add_scalar('test_loss_epoch', loss, epoch)
+                    if log_to_tb:
+                        writer.add_scalar('test_loss_epoch', loss, epoch)
                     # for l in range(0, len(running_loss_ts)):
                     #     print('***Testing *** Loss %d: %f' % (l, running_loss_ts[l]))
                     #     running_loss_ts[l] = 0
-
-writer.close()
+if log_to_tb:
+    writer.close()
