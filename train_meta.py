@@ -109,7 +109,7 @@ def train_test_online(model, train_loader, test_loader, num_epochs, num_ave_grad
 @ex.capture
 def run_loader(model, loader, save_dir, data_cfg, _log):
     if save_dir is not None:
-        save_dir_res = os.path.join(save_dir, 'Results', data_cfg['seq_name'])
+        save_dir_res = os.path.join(save_dir, 'results', data_cfg['seq_name'])
         if not os.path.exists(save_dir_res):
             os.makedirs(save_dir_res)
 
