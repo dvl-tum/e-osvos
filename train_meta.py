@@ -20,13 +20,12 @@ from meta_stopping.meta_optim import MetaOptimizer, SGDFixed
 from meta_stopping.model import Model
 from meta_stopping.utils import (compute_loss,
                                  flat_grads_from_model,
-                                 flat_mean_grads_from_model,
-                                 flat_std_grads_from_model)
+                                 dict_to_html)
 from pytorch_tools.ingredients import (MONGODB_PORT, get_device,
                                        load_model_from_db, print_config,
                                        save_model_to_db, save_model_to_path,
                                        set_random_seeds, torch_ingredient)
-from pytorch_tools.vis import LineVis
+from pytorch_tools.vis import LineVis, TextVis
 from pytorch_tools.data import EpochSampler
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
@@ -39,25 +38,34 @@ ex.add_config('config.yaml')
 
 
 @ex.capture
-def train_online(model, train_loader, test_loader, num_epochs, num_ave_grad, save_dir,
+def train_test_online(model, train_loader, test_loader, num_epochs, num_ave_grad, save_dir,
                  meta_optimizer_cfg, data_cfg, _log, seed):
-
     device = get_device()
 
-    # Use the following optimizer
-    wd = 0.0
-    momentum = 0.0
+    # lr = 1e-8
+    # wd = 0.0002
+    # optimizer = optim.SGD([
+    #     {'params': [pr[1] for pr in model.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd},
+    #     {'params': [pr[1] for pr in model.stages.named_parameters() if 'bias' in pr[0]], 'lr': lr * 2},
+    #     {'params': [pr[1] for pr in model.side_prep.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd},
+    #     {'params': [pr[1] for pr in model.side_prep.named_parameters() if 'bias' in pr[0]], 'lr': lr*2},
+    #     {'params': [pr[1] for pr in model.upscale.named_parameters() if 'weight' in pr[0]], 'lr': 0},
+    #     {'params': [pr[1] for pr in model.upscale_.named_parameters() if 'weight' in pr[0]], 'lr': 0},
+    #     {'params': model.fuse.weight, 'lr': lr/100, 'weight_decay': wd},
+    #     {'params': model.fuse.bias, 'lr': 2*lr/100},
+    #     ], lr=lr, momentum=0.9)
+
     optimizer = SGDFixed(model.parameters(),
-                         lr=meta_optimizer_cfg['lr_range'][1],
-                         momentum=momentum)
+                         lr=meta_optimizer_cfg['lr_range'][1])
+
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=num_epochs / 2, gamma=0.1)
 
     test_losses = []
     run_train_loss = []
     ave_grad = 0
 
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=num_epochs / 2, gamma=0.1)
-
-    _log.info(f"Train regular OSVOS - SEQUENCE: {data_cfg['seq_name']}")
+    if _log is not None:
+        _log.info(f"Train regular OSVOS - SEQUENCE: {data_cfg['seq_name']}")
     for epoch in range(0, num_epochs * num_ave_grad):
         set_random_seeds(seed + epoch)
         for _, sample_batched in enumerate(train_loader):
@@ -81,20 +89,25 @@ def train_online(model, train_loader, test_loader, num_epochs, num_ave_grad, sav
                 optimizer.zero_grad()
                 ave_grad = 0
 
-                test_loss = test(model, test_loader, save_dir=None, _log=None)  # pylint: disable=E1120
-                test_losses.append(test_loss.item())
+                if test_loader is not None:
+                    test_loss = run_loader(  # pylint: disable=E1120
+                        model, test_loader, save_dir=None, _log=None)
+                    test_losses.append(test_loss.item())
                 # scheduler.step()
 
-    _log.info(
-        f'RUN TRAIN loss: {torch.tensor(run_train_loss).mean().item():.2f}]')
-    best_test_epoch = torch.tensor(test_losses).argmin()
-    best_test_loss = torch.tensor(test_losses)[best_test_epoch]
-    _log.info(
-        f'BEST TEST loss/epoch: {best_test_loss:.2f}/{best_test_epoch + 1}]')
+    if _log is not None:
+        _log.info(
+            f'RUN TRAIN loss: {torch.tensor(run_train_loss).mean().item():.2f}]')
+        if test_loader is not None:
+            best_test_epoch = torch.tensor(test_losses).argmin()
+            best_test_loss = torch.tensor(test_losses)[best_test_epoch]
+            _log.info(
+                f'BEST TEST loss/epoch: {best_test_loss:.2f}/{best_test_epoch + 1}]')
+    return torch.tensor(run_train_loss).mean(), test_losses
 
 
 @ex.capture
-def test(model, test_loader, save_dir, data_cfg, _log):
+def run_loader(model, loader, save_dir, data_cfg, _log):
     if save_dir is not None:
         save_dir_res = os.path.join(save_dir, 'Results', data_cfg['seq_name'])
         if not os.path.exists(save_dir_res):
@@ -102,10 +115,8 @@ def test(model, test_loader, save_dir, data_cfg, _log):
 
     device = get_device()
     run_loss = []
-    if _log is not  None:
-        _log.info('Testing Network')
     with torch.no_grad():
-        for j, sample_batched in enumerate(test_loader):
+        for sample_batched in loader:
             img, gt, fname = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
             inputs, gts = img.to(device), gt.to(device)
             outputs = model.forward(inputs)
@@ -125,40 +136,54 @@ def test(model, test_loader, save_dir, data_cfg, _log):
                     imageio.imsave(os.path.join(
                         save_dir_res, os.path.basename(fname[jj]) + '.png'), pred)
 
-    test_loss = torch.tensor(run_loss).mean()
-    if _log is not  None:
-        _log.info(f"MEAN TEST loss: {test_loss}")
-    return test_loss
+    return torch.tensor(run_loss).mean()
+
+@ex.capture
+def init_vis(db_train, env_prefix, _config, _run, torch_cfg):
+    vis_dict = {}
+    run_name = f"{env_prefix}_{_run.experiment_info['name']}"
+
+    opts = dict(
+        title="OSVOS META",
+        xlabel='NUM META RUNS',
+        width=750,
+        height=300,
+        legend=['MEAN seq RUN TRAIN loss',
+                # 'RUN BPTT ITER loss',
+                # 'RUN BPTT loss',
+                'MIN seq META loss',
+                'MAX seq META loss',
+                'MEAN seq META loss',
+                'RUN TIME'])
+    vis_dict['meta_metrics_vis'] = LineVis(opts, env=run_name, **torch_cfg['vis'])
+
+    opts = dict(title="CONFIG", width=300, height=750)
+    vis_dict['config_vis'] = TextVis(opts, env=run_name, **torch_cfg['vis'])
+    vis_dict['config_vis'].plot(dict_to_html(_config))
+
+    opts = dict(title="NON META BASELINE", width=300, height=750)
+    vis_dict['baseline_vis'] = TextVis(opts, env=run_name, **torch_cfg['vis'])
+
+    for seq_name in db_train.seqs_dict.keys():
+        opts = dict(
+            title=f"{seq_name} - MODEL METRICS",
+            xlabel='EPOCHS',
+            width=750,
+            height=300,
+            legend=["TRAIN loss", 'BPTT ITER loss', "LR MEAN", "LR STD"],)
+        vis_dict[f"{seq_name}_model_metrics"] = LineVis(
+            opts, env=run_name,  **torch_cfg['vis'])
+    return vis_dict
 
 
 @ex.automain
 def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
          num_ave_grad, meta_optim_grad_clip, meta_optimizer_cfg, save_dir,
          run_non_meta_baseline, vis_interval, data_cfg, torch_cfg, _run, seed,
-         _log):
+         _log, _config):
     device = get_device()
     meta_device = torch.device('cuda:1')
     set_random_seeds(seed)
-    run_name = f"{_run._id}_{_run.experiment_info['name']}"
-
-    if vis_interval is not None:
-        metrics_opts = dict(
-            title=f"OSVOS META",
-            xlabel='NUM META RUNS',
-            width=750,
-            height=300,
-            legend=['RUN TRAIN loss', 'RUN BPTT ITER loss', 'RUN BPTT loss', 'TEST loss', 'RUN TIME'])
-        metrics_vis = LineVis(metrics_opts, env=run_name, **torch_cfg['vis'])
-
-        model_metrics_opts = dict(
-            title=f"MODEL METRICS",
-            xlabel='EPOCHS',
-            ylabel='LOSS/ACCURACY',
-            width=750,
-            height=300,
-            legend=["TRAIN loss", 'BPTT ITER loss', "LR MEAN", "LR STD"],)
-        model_metrics_vis = LineVis(
-            model_metrics_opts, env=run_name,  **torch_cfg['vis'])
 
     if not os.path.exists(save_dir):
         os.makedirs(os.path.join(save_dir))
@@ -166,10 +191,14 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
     #
     # Model
     #
-    parent_state_dict = torch.load(os.path.join(save_dir, 'DRN_D_22', f"DRN_D_22_epoch-59.pth"),
-                                   map_location=lambda storage, loc: storage)
-
+    parent_state_dict = torch.load(
+        os.path.join(save_dir, 'DRN_D_22', f"DRN_D_22_epoch-54.pth"),
+        map_location=lambda storage, loc: storage)
     model = DRNSeg('DRN_D_22', 1, pretrained=True)
+    # model = vo.OSVOS(pretrained=0)
+    # parent_state_dict = torch.load(
+    #     os.path.join(save_dir, 'parent_epoch-239.pth'),
+    #     map_location=lambda storage, loc: storage)
     model.load_state_dict(parent_state_dict)
     model.to(device)
 
@@ -192,29 +221,77 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                                  data_cfg['batch_sizes']['train'])
     train_loader = DataLoader(db_train, batch_sampler=batch_sampler, num_workers=2)
 
-    db_test = db.DAVIS2016(seqs=data_cfg['seq_name'],
+    db_meta = db.DAVIS2016(seqs=data_cfg['seq_name'],
                            frame_id=-1,
                            transform=custom_transforms.ToTensor())
-    test_loader = DataLoader(
-        db_test,
-        batch_size=data_cfg['batch_sizes']['test'],
-        shuffle=False,
-        num_workers=2)
     meta_loader = DataLoader(
-        db_test,
+        db_meta,
         batch_size=data_cfg['batch_sizes']['meta'],
         shuffle=False,
         num_workers=2)
 
     #
+    # visualization
+    #
+    if vis_interval is not None:
+        vis_dict = init_vis(db_train)  # pylint: disable=E1120
+
+    #
     # non-meta baseline
     #
     if run_non_meta_baseline:
-        train_online(model, train_loader, test_loader)  # pylint: disable=E1120
-        test(model, test_loader, save_dir=None)  # pylint: disable=E1120
-        model.load_state_dict(parent_state_dict)
-        model.to(device)
-        model.zero_grad()
+        run_train_losses = []
+        init_meta_losses = []
+        meta_losses = []
+        for seq_name in db_train.seqs_dict.keys():
+            db_train.set_seq(seq_name)
+            db_meta.set_seq(seq_name)
+
+            model.load_state_dict(parent_state_dict)
+            model.to(device)
+            model.zero_grad()
+
+            init_meta_loss = run_loader(  # pylint: disable=E1120
+                model, meta_loader, save_dir=None, _log=None)
+            init_meta_losses.append(init_meta_loss)
+
+            run_train_loss, per_epoch_meta_losses = train_test_online(  # pylint: disable=E1120
+                model, train_loader, meta_loader, _log=None)
+            run_train_losses.append(run_train_loss)
+            meta_losses.append(per_epoch_meta_losses)
+
+            # meta_loss = run_loader(  # pylint: disable=E1120
+            #     model, meta_loader, save_dir=None, _log=None)
+            # meta_losses.append(meta_loss)
+
+        run_train_losses = torch.tensor(run_train_losses)
+        init_meta_losses = torch.tensor(init_meta_losses)
+        meta_losses = torch.tensor(meta_losses)
+
+        best_mean_meta_loss_epoch = meta_losses.mean(dim=0).argmin()
+
+        non_meta_baseline_results_str = ("<p>RUN TRAIN loss:<br>"
+            f"&nbsp;&nbsp;MIN seq: {run_train_losses.min():.2f}<br>"
+            f"&nbsp;&nbsp;MAX seq: {run_train_losses.max():.2f}<br>"
+            f"&nbsp;&nbsp;MEAN: {run_train_losses.mean():.2f}<br>"
+            "<br>"
+            "INIT META loss:<br>"
+            f"&nbsp;&nbsp;MEAN seq: {init_meta_losses.mean():.2f}<br>"
+            "<br>"
+            "LAST META loss:<br>"
+            f"&nbsp;&nbsp;MIN seq: {meta_losses[..., -1].min():.2f}<br>"
+            f"&nbsp;&nbsp;MAX seq: {meta_losses[..., -1].max():.2f}<br>"
+            f"&nbsp;&nbsp;MEAN: {meta_losses[..., -1].mean():.2f}</p>"
+            "<br>"
+            "BEST META loss:<br>"
+            f"&nbsp;&nbsp;EPOCH: {best_mean_meta_loss_epoch + 1}<br>"
+            f"&nbsp;&nbsp;MIN seq: {meta_losses[..., best_mean_meta_loss_epoch].min():.2f}<br>"
+            f"&nbsp;&nbsp;MAX seq: {meta_losses[..., best_mean_meta_loss_epoch].max():.2f}<br>"
+            f"&nbsp;&nbsp;MEAN: {meta_losses[..., best_mean_meta_loss_epoch].mean():.2f}</p>")
+        if vis_interval is None:
+            print(non_meta_baseline_results_str)
+        else:
+            vis_dict['baseline_vis'].plot(non_meta_baseline_results_str)
 
     #
     # Meta model
@@ -223,35 +300,34 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
     meta_model.load_state_dict(parent_state_dict)
     meta_model.to(meta_device)
 
-    meta_optim = MetaOptimizer(meta_model, **meta_optimizer_cfg)
+    meta_optim = MetaOptimizer(model, meta_model, **meta_optimizer_cfg)
     meta_optim.to(meta_device)
 
     meta_optim_optim = torch.optim.Adam(meta_optim.parameters(), lr=meta_optim_lr)
 
-    test_loss_seqs = {}
+    meta_loss_seqs = {}
+    run_train_loss_seqs = {}
     for i in range(num_meta_runs):
         start_time = timeit.default_timer()
 
         # db_train.set_random_seq()
         db_train.set_next_seq()
-        db_test.set_seq(db_train.seqs)
+        db_meta.set_seq(db_train.seqs)
+        vis_dict[f"{db_train.seqs}_model_metrics"].reset()
 
         model.load_state_dict(parent_state_dict)
         model.to(device)
         model.zero_grad()
-        model_metrics_vis.reset()
 
         bptt_loss = ave_grad = 0
         stop_epoch = stop_train = False
         prev_bptt_iter_loss = torch.zeros(1).to(meta_device)
-        meta_optim.reset_lstm(keep_state=False, model=model)
+        meta_optim.reset()
 
         # one epoch corresponds to one random transformed first frame instance
         run_train_loss = []
-        run_bptt_iter_loss = []
-        run_bptt_loss = []
         for epoch in range(0, num_epochs * num_ave_grad):
-            set_random_seeds(seed + epoch)
+            set_random_seeds(seed + epoch)# + i)
             for train_batch in train_loader:
                 train_inputs, train_gts = train_batch['image'], train_batch['gt']
                 train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
@@ -270,13 +346,11 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                 if ave_grad % num_ave_grad == 0:
                     ave_grad = 0
 
-                    mean_grads = flat_mean_grads_from_model(model)
-                    std_grads = flat_std_grads_from_model(model)
-
-                    meta_model, stop_epoch = meta_optim.meta_update(
-                        model, mean_grads, std_grads, train_loss.detach(), train_loss.detach())
-
+                    meta_model, stop_epoch = meta_optim.step(
+                        db_train.get_seq_id() + 1)
                     model.zero_grad()
+
+                    # db_meta.set_random_frame_id()
 
                     bptt_iter_loss = 0.0
                     for meta_batch in meta_loader:
@@ -289,17 +363,18 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                         bptt_iter_loss = class_balanced_cross_entropy_loss(
                             meta_outputs[-1], meta_gts, size_average=False)
 
-                    run_bptt_iter_loss.append(bptt_iter_loss.item())
-                    lr  = meta_optim.state['log_lr'].exp()
-                    model_metrics_vis.plot(
-                        [train_loss, bptt_iter_loss, lr.mean(), lr.std()], epoch)
+                    # run_bptt_iter_loss.append(bptt_iter_loss.item())
+                    if vis_interval is not None:
+                        lr  = meta_optim.state['log_lr'].exp()
+                        vis_dict[f"{db_train.seqs}_model_metrics"].plot(
+                            [train_loss, bptt_iter_loss, lr.mean(), lr.std()], epoch)
 
                     bptt_loss += bptt_iter_loss - prev_bptt_iter_loss
                     prev_bptt_iter_loss = bptt_iter_loss.detach()
 
                     # Update the parameters of the meta optimizer
                     if ((epoch + 1) / num_ave_grad) % num_bptt_steps == 0:
-                        run_bptt_loss.append(bptt_loss.item())
+                        # run_bptt_loss.append(bptt_loss.item())
                         meta_optim.zero_grad()
                         bptt_loss.backward()
 
@@ -308,7 +383,7 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                         #                       meta_optim_grad_clip)
                         meta_optim_optim.step()
 
-                        meta_optim.reset_lstm(keep_state=True, model=model)
+                        meta_optim.reset(keep_state=True)
                         prev_bptt_iter_loss = torch.zeros(1).to(meta_device)
                         bptt_loss = 0
 
@@ -319,13 +394,17 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
             if stop_train:
                 break
 
-        test_loss = test(model, test_loader, save_dir=None, _log=None)  # pylint: disable=E1120
-        test_loss_seqs[db_train.seqs] = test_loss.item()
+        run_train_loss_seqs[db_train.seqs] = torch.tensor(
+            run_train_loss).mean()
+
+        meta_loss = run_loader(model, meta_loader, save_dir=None, _log=None)  # pylint: disable=E1120
+        meta_loss_seqs[db_train.seqs] = meta_loss.item()
+
         stop_time = timeit.default_timer()
         if vis_interval is not None and not i % vis_interval:
-            metrics_vis.plot([torch.tensor(run_train_loss).mean(),
-                              torch.tensor(run_bptt_iter_loss).mean(),
-                              torch.tensor(run_bptt_loss).mean(),
-                            #   test_loss,
-                              torch.tensor(list(test_loss_seqs.values())).mean(),
-                              stop_time - start_time], i)
+            meta_metrics = [torch.tensor(list(run_train_loss_seqs.values())).mean(),
+                            torch.tensor(list(meta_loss_seqs.values())).min(),
+                            torch.tensor(list(meta_loss_seqs.values())).max(),
+                            torch.tensor(list(meta_loss_seqs.values())).mean(),
+                            stop_time - start_time]
+            vis_dict['meta_metrics_vis'].plot(meta_metrics, i)

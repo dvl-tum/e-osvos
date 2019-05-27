@@ -1,4 +1,5 @@
 seed: 1
+env_prefix: null
 vis_interval: 1
 save_dir: './models'
 num_bptt_steps: 5
@@ -13,14 +14,13 @@ meta_optimizer_cfg:
     lr_mom_logit_init: 3.2
     optim_func: SGD
 num_epochs: 100
-num_ave_grad: 1                                     # Average the gradient every num_ave_grad iterations
+num_ave_grad: 1                                     # average the gradient every num_ave_grad iterations
 data_cfg:
     seq_name: 'bear'                                # ['train_seqs', 'test_seqs', 'blackswan', ...]
-    random_train_transform: False
+    random_train_transform: True
     batch_sizes:
         meta: 1
         train: 1
-        test: 1
     shuffles:
         train: False
         test: False
