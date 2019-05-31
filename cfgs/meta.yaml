@@ -1,22 +1,36 @@
 seed: 1
-env_prefix: null
+env_suffix: null
 vis_interval: 1
 save_dir: ./models
-num_bptt_steps: 5
+non_meta_baseline_cfg:
+    compute: True
+    num_epochs: 36
+    lr: 0.000001                                    # 1e-6
+num_epochs: null                                    # if null run meta model until meta_optim returns stop_train=True
+num_ave_grad: 1
+bptt_cfg:
+    epochs: 5
+    interval: 1
+    runs_per_epoch_extension: 5                     # if num_epochs=None
 num_meta_runs: 10000
-meta_optim_lr: 0.001
-meta_optim_grad_clip: 1
-run_non_meta_baseline: True
-meta_optimizer_cfg:
+meta_optim:
     num_layers: 2
-    hidden_size: 20
-    lr_range: [0.00000000001, 0.00001]              # [1e-10, 1e-5]
-    lr_mom_logit_init: 3.2
-    optim_func: SGD
-num_epochs: 50
-num_ave_grad: 1                                     # average the gradient every num_ave_grad iterations
-data_cfg:
-    seq_name: bear                                # [train_seqs, test_seqs, blackswan, ...]
+    hidden_size: 128
+    lr_range: [0.00000001, 0.00001]                 # [1e-8, 1e-5]
+    lr_mom_init: 0.96
+    optim_func: SGD                                 # optimizer that computes paramter update step witout learning rate
+meta_optim_optim_cfg:
+    lr: 0.001
+    grad_clip: null                                 # average the gradient every num_ave_grad iterations
+parent_model:
+    file_dir: models
+    name: DRN_D_22                                  # [VGG, DRN_D_22]
+    epoch: 110
+train_early_stopping:
+    patience: 10
+    min_loss_improv: 100
+data:
+    seq_name: train_seqs                            # [train_seqs, test_seqs, blackswan, ...]
     random_train_transform: True
     batch_sizes:
         train: 1

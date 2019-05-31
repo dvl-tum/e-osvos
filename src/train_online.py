@@ -28,6 +28,7 @@ from torchvision import transforms
 from util import visualize as viz
 from util.helper_func import run_loader, train_val
 
+torch_ingredient.add_config('cfgs/torch.yaml')
 ex = sacred.Experiment('osvos-online', ingredients=[torch_ingredient])
 ex.add_config('cfgs/online.yaml')
 ex.add_named_config('VGG', 'cfgs/online_vgg.yaml')
@@ -91,6 +92,8 @@ def main(parent_model_cfg, optimizer_cfg, num_ave_grad, num_epochs, seed,
     elif parent_model_cfg['name'] == 'DRN_D_22':
         optimizer = optim.SGD(model.parameters(), lr=lr,
                               weight_decay=wd, momentum=mom)
+    else:
+        raise NotImplementedError
 
     #
     # data

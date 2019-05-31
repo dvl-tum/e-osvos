@@ -3,7 +3,7 @@ import socket
 import timeit
 from datetime import datetime
 
-from itertools import chain
+from itertools import count
 import networks.vgg_osvos as vo
 from networks.drn_seg import DRNSeg
 import sacred
@@ -30,9 +30,13 @@ from torchvision import transforms
 from util.helper_func import run_loader, train_val
 
 
+torch_ingredient.add_config('cfgs/torch.yaml')
+
 ex = sacred.Experiment('osvos-meta', ingredients=[torch_ingredient])
 ex.add_config('cfgs/meta.yaml')
+
 train_val = ex.capture(train_val)
+MetaOptimizer = ex.capture(MetaOptimizer, prefix='meta_optim')
 
 
 @ex.capture
@@ -46,15 +50,14 @@ def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
         width=750,
         height=300,
         legend=['MEAN seq RUN TRAIN loss',
-                # 'RUN BPTT ITER loss',
-                # 'RUN BPTT loss',
                 'MIN seq META loss',
                 'MAX seq META loss',
                 'MEAN seq META loss',
+                'NUM EPOCHS',
                 'RUN TIME'])
     vis_dict['meta_metrics_vis'] = LineVis(opts, env=run_name, **torch_cfg['vis'])
 
-    opts = dict(title="CONFIG and NON META BASELINE", width=300, height=1000)
+    opts = dict(title="CONFIG and NON META BASELINE", width=300, height=1250)
     vis_dict['config_vis'] = TextVis(opts, env=run_name, **torch_cfg['vis'])
     vis_dict['config_vis'].plot(dict_to_html(_config))
 
@@ -64,76 +67,86 @@ def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
             xlabel='EPOCHS',
             width=750,
             height=300,
-            legend=["TRAIN loss", 'BPTT ITER loss', "LR MEAN", "LR STD"],)
+            legend=["TRAIN loss", 'BPTT ITER loss', "LR MEAN", "LR MOM MEAN"])
         vis_dict[f"{seq_name}_model_metrics"] = LineVis(
             opts, env=run_name,  **torch_cfg['vis'])
     return vis_dict
 
 
-@ex.automain
-def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
-         num_ave_grad, meta_optim_grad_clip, meta_optimizer_cfg, save_dir,
-         run_non_meta_baseline, vis_interval, data_cfg, torch_cfg, _run, seed,
-         _log, _config):
-    device = get_device()
-    meta_device = torch.device('cuda:1')
-    set_random_seeds(seed)
+@ex.capture(prefix='train_early_stopping')
+def early_stopping(loss_hist, patience, min_loss_improv):
+    if patience is None or len(loss_hist) <= patience:
+        return False
 
-    if not os.path.exists(save_dir):
-        os.makedirs(os.path.join(save_dir))
+    best_loss = torch.tensor(loss_hist).min()
+    prev_best_loss = torch.tensor(loss_hist[:-patience]).min()
 
-    #
-    # Model
-    #
-    parent_state_dict = torch.load(
-        os.path.join(save_dir, 'DRN_D_22', f"DRN_D_22_epoch-54.pth"),
-        map_location=lambda storage, loc: storage)
-    model = DRNSeg('DRN_D_22', 1, pretrained=True)
-    # model = vo.OSVOS(pretrained=0)
-    # parent_state_dict = torch.load(
-    #     os.path.join(save_dir, 'VGG_epoch-240.pth'),
-    #     map_location=lambda storage, loc: storage)
-    model.load_state_dict(parent_state_dict)
-    model.to(device)
+    if torch.ge(best_loss.sub(prev_best_loss).abs(), min_loss_improv):
+        return False
+    return True
 
-    #
-    # Data
-    #
+
+@ex.capture(prefix='data')
+def datasets_and_loaders(seq_name, random_train_transform, batch_sizes, shuffles):
     train_transforms = []
-    if data_cfg['random_train_transform']:
+    if random_train_transform:
         train_transforms.extend([custom_transforms.RandomHorizontalFlip(),
                                  custom_transforms.ScaleNRotate(rots=(-30, 30),
                                                                 scales=(.75, 1.25))])
     train_transforms.append(custom_transforms.ToTensor())
     composed_transforms = transforms.Compose(train_transforms)
 
-    db_train = db.DAVIS2016(seqs=data_cfg['seq_name'],
+    db_train = db.DAVIS2016(seqs=seq_name,
                             frame_id=0,
                             transform=composed_transforms)
-    batch_sampler = EpochSampler(db_train,
-                                 data_cfg['shuffles']['train'],
-                                 data_cfg['batch_sizes']['train'])
+    batch_sampler = EpochSampler(db_train, shuffles['train'], batch_sizes['train'])
     train_loader = DataLoader(db_train, batch_sampler=batch_sampler, num_workers=2)
 
-    db_meta = db.DAVIS2016(seqs=data_cfg['seq_name'],
+    db_meta = db.DAVIS2016(seqs=seq_name,
                            frame_id=-1,
                            transform=custom_transforms.ToTensor())
     meta_loader = DataLoader(
         db_meta,
-        shuffle=data_cfg['shuffles']['meta'],
-        batch_size=data_cfg['batch_sizes']['meta'],
+        shuffle=shuffles['meta'],
+        batch_size=batch_sizes['meta'],
         num_workers=2)
 
-    #
-    # visualization
-    #
+    return db_train, train_loader, db_meta, meta_loader
+
+
+@ex.capture(prefix='parent_model')
+def parent_model(name, epoch, file_dir):
+    if name == 'DRN_D_22':
+        model = DRNSeg('DRN_D_22', 1, pretrained=True)
+    else:
+        raise NotImplementedError
+    # model = vo.OSVOS(pretrained=0)
+    # parent_state_dict = torch.load(
+    #     os.path.join(save_dir, 'VGG_epoch-240.pth'),
+    #     map_location=lambda storage, loc: storage)
+
+    parent_state_dict = torch.load(
+        os.path.join(file_dir, name, f"{name}_epoch-{epoch}.pth"),
+        map_location=lambda storage, loc: storage)
+    model.load_state_dict(parent_state_dict)
+    return model, parent_state_dict
+
+
+@ex.automain
+def main(num_meta_runs, bptt_cfg, num_epochs, meta_optim_optim_cfg,
+         num_ave_grad, non_meta_baseline_cfg, vis_interval, torch_cfg, _run,
+         seed, _log, _config):
+    device = get_device()
+    meta_device = torch.device('cuda:1')
+    set_random_seeds(seed)
+
+    model, parent_state_dict = parent_model()  # pylint: disable=E1120
+    model.to(device)
+    db_train, train_loader, db_meta, meta_loader = datasets_and_loaders()  # pylint: disable=E1120
     if vis_interval is not None:
         vis_dict = init_vis(db_train)  # pylint: disable=E1120
 
-    #
-    # non-meta baseline
-    #
-    if run_non_meta_baseline:
+    if non_meta_baseline_cfg['compute']:
         # lr = 1e-8
         # wd = 0.0002
         # optimizer = optim.SGD([
@@ -147,12 +160,11 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
         #     {'params': model.fuse.bias, 'lr': 2*lr/100},
         #     ], lr=lr, momentum=0.9)
 
-        optimizer = SGDFixed(model.parameters(),
-                            lr=meta_optimizer_cfg['lr_range'][1])
+        optimizer = SGDFixed(model.parameters(), lr=non_meta_baseline_cfg['lr'])
 
-        run_train_losses = []
-        init_meta_losses = []
-        meta_losses = []
+        run_train_loss_hist = []
+        init_meta_loss_hist = []
+        meta_loss_hist = []
         for seq_name in db_train.seqs_dict.keys():
             db_train.set_seq(seq_name)
             db_meta.set_seq(seq_name)
@@ -163,37 +175,37 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
 
             with torch.no_grad():
                 init_meta_loss = run_loader(model, meta_loader)
-                init_meta_losses.append(init_meta_loss)
+                init_meta_loss_hist.append(init_meta_loss)
 
             run_train_loss, per_epoch_meta_losses = train_val(  # pylint: disable=E1120
-                model, train_loader, meta_loader, optimizer, _log=None)
-            run_train_losses.append(run_train_loss)
-            meta_losses.append(per_epoch_meta_losses)
+                model, train_loader, meta_loader, optimizer, non_meta_baseline_cfg['num_epochs'], _log=None)
+            run_train_loss_hist.append(run_train_loss)
+            meta_loss_hist.append(per_epoch_meta_losses)
 
-        run_train_losses = torch.tensor(run_train_losses)
-        init_meta_losses = torch.tensor(init_meta_losses)
-        meta_losses = torch.tensor(meta_losses)
+        run_train_loss_hist = torch.tensor(run_train_loss_hist)
+        init_meta_loss_hist = torch.tensor(init_meta_loss_hist)
+        meta_loss_hist = torch.tensor(meta_loss_hist)
 
-        best_mean_meta_loss_epoch = meta_losses.mean(dim=0).argmin()
+        best_mean_meta_loss_epoch = meta_loss_hist.mean(dim=0).argmin()
 
         non_meta_baseline_results_str = ("<p>RUN TRAIN loss:<br>"
-            f"&nbsp;&nbsp;MIN seq: {run_train_losses.min():.2f}<br>"
-            f"&nbsp;&nbsp;MAX seq: {run_train_losses.max():.2f}<br>"
-            f"&nbsp;&nbsp;MEAN: {run_train_losses.mean():.2f}<br>"
+            f"&nbsp;&nbsp;MIN seq: {run_train_loss_hist.min():.2f}<br>"
+            f"&nbsp;&nbsp;MAX seq: {run_train_loss_hist.max():.2f}<br>"
+            f"&nbsp;&nbsp;MEAN: {run_train_loss_hist.mean():.2f}<br>"
             "<br>"
             "INIT META loss:<br>"
-            f"&nbsp;&nbsp;MEAN seq: {init_meta_losses.mean():.2f}<br>"
+            f"&nbsp;&nbsp;MEAN seq: {init_meta_loss_hist.mean():.2f}<br>"
             "<br>"
             "LAST META loss:<br>"
-            f"&nbsp;&nbsp;MIN seq: {meta_losses[..., -1].min():.2f}<br>"
-            f"&nbsp;&nbsp;MAX seq: {meta_losses[..., -1].max():.2f}<br>"
-            f"&nbsp;&nbsp;MEAN: {meta_losses[..., -1].mean():.2f}</p>"
+            f"&nbsp;&nbsp;MIN seq: {meta_loss_hist[..., -1].min():.2f}<br>"
+            f"&nbsp;&nbsp;MAX seq: {meta_loss_hist[..., -1].max():.2f}<br>"
+            f"&nbsp;&nbsp;MEAN: {meta_loss_hist[..., -1].mean():.2f}<br>"
             "<br>"
             "BEST META loss:<br>"
             f"&nbsp;&nbsp;EPOCH: {best_mean_meta_loss_epoch + 1}<br>"
-            f"&nbsp;&nbsp;MIN seq: {meta_losses[..., best_mean_meta_loss_epoch].min():.2f}<br>"
-            f"&nbsp;&nbsp;MAX seq: {meta_losses[..., best_mean_meta_loss_epoch].max():.2f}<br>"
-            f"&nbsp;&nbsp;MEAN: {meta_losses[..., best_mean_meta_loss_epoch].mean():.2f}</p>")
+            f"&nbsp;&nbsp;MIN seq: {meta_loss_hist[..., best_mean_meta_loss_epoch].min():.2f}<br>"
+            f"&nbsp;&nbsp;MAX seq: {meta_loss_hist[..., best_mean_meta_loss_epoch].max():.2f}<br>"
+            f"&nbsp;&nbsp;MEAN: {meta_loss_hist[..., best_mean_meta_loss_epoch].mean():.2f}</p>")
 
         if vis_interval is None:
             print(non_meta_baseline_results_str)
@@ -204,14 +216,14 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
     #
     # Meta model
     #
-    meta_model = DRNSeg('DRN_D_22', 1, pretrained=True)
-    meta_model.load_state_dict(parent_state_dict)
+    meta_model, parent_state_dict = parent_model()  # pylint: disable=E1120
     meta_model.to(meta_device)
 
-    meta_optim = MetaOptimizer(model, meta_model, **meta_optimizer_cfg)
+    meta_optim = MetaOptimizer(model, meta_model)  # pylint: disable=E1120
     meta_optim.to(meta_device)
 
-    meta_optim_optim = torch.optim.Adam(meta_optim.parameters(), lr=meta_optim_lr)
+    meta_optim_optim = torch.optim.Adam(
+        meta_optim.parameters(), lr=meta_optim_optim_cfg['lr'])
 
     meta_loss_seqs = {}
     run_train_loss_seqs = {}
@@ -228,13 +240,19 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
         model.zero_grad()
 
         bptt_loss = ave_grad = 0
-        stop_epoch = stop_train = False
+        stop_train = False
         prev_bptt_iter_loss = torch.zeros(1).to(meta_device)
         meta_optim.reset()
 
-        # one epoch corresponds to one random transformed first frame instance
-        run_train_loss = []
-        for epoch in range(0, num_epochs * num_ave_grad):
+        # one epoch corresponds to one random transformed first frame of a sequence
+        run_train_loss_hist = []
+        if num_epochs is None:
+            # epoch_iter = count()
+            epoch_iter = range(bptt_cfg['epochs'] * (1 + i // len(db_train.seqs_dict)))
+            # epoch_iter = range(bptt_cfg['epochs'] * (1 + i // bptt_cfg['runs_per_epoch_extension']))
+        else:
+            epoch_iter = range(num_epochs * num_ave_grad)
+        for epoch in epoch_iter:
             set_random_seeds(seed + epoch)# + i)
             for train_batch in train_loader:
                 train_inputs, train_gts = train_batch['image'], train_batch['gt']
@@ -246,7 +264,7 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                     train_outputs[-1], train_gts, size_average=False)
                 train_loss /= num_ave_grad
                 train_loss.backward()
-                run_train_loss.append(train_loss.item())
+                run_train_loss_hist.append(train_loss.item())
 
                 ave_grad += 1
 
@@ -254,56 +272,62 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                 if ave_grad % num_ave_grad == 0:
                     ave_grad = 0
 
-                    meta_model, stop_epoch = meta_optim.step(
-                        db_train.get_seq_id() + 1)
+                    meta_model, stop_train = meta_optim.step(db_train.get_seq_id() + 1)
                     model.zero_grad()
 
+                    stop_train = stop_train or early_stopping(  # pylint: disable=E1120
+                        run_train_loss_hist)
                     # db_meta.set_random_frame_id()
 
-                    bptt_iter_loss = 0.0
-                    for meta_batch in meta_loader:
-                        meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
-                        meta_inputs, meta_gts = meta_inputs.to(
-                            meta_device), meta_gts.to(meta_device)
+                    if not epoch % bptt_cfg['interval']:
+                        bptt_iter_loss = 0.0
+                        for meta_batch in meta_loader:
+                            meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
+                            meta_inputs, meta_gts = meta_inputs.to(
+                                meta_device), meta_gts.to(meta_device)
 
-                        meta_outputs = meta_model(meta_inputs)
+                            meta_outputs = meta_model(meta_inputs)
 
-                        bptt_iter_loss = class_balanced_cross_entropy_loss(
-                            meta_outputs[-1], meta_gts, size_average=False)
+                            bptt_iter_loss = class_balanced_cross_entropy_loss(
+                                meta_outputs[-1], meta_gts, size_average=False)
 
-                    # run_bptt_iter_loss.append(bptt_iter_loss.item())
-                    if vis_interval is not None:
-                        lr  = meta_optim.state['log_lr'].exp()
-                        vis_dict[f"{db_train.seqs}_model_metrics"].plot(
-                            [train_loss, bptt_iter_loss, lr.mean(), lr.std()], epoch)
+                        if vis_interval is not None:
+                            lr = meta_optim.state["log_lr"].exp().mean()
+                            lr_mom = meta_optim.state["lr_mom_logit"].sigmoid().mean()
+                            vis_dict[f"{db_train.seqs}_model_metrics"].plot(
+                                [train_loss, bptt_iter_loss, lr, lr_mom], epoch + 1)
 
-                    bptt_loss += bptt_iter_loss - prev_bptt_iter_loss
-                    prev_bptt_iter_loss = bptt_iter_loss.detach()
+                        bptt_loss += bptt_iter_loss - prev_bptt_iter_loss
+                        prev_bptt_iter_loss = bptt_iter_loss.detach()
 
                     # Update the parameters of the meta optimizer
-                    if ((epoch + 1) / num_ave_grad) % num_bptt_steps == 0:
-                        # run_bptt_loss.append(bptt_loss.item())
+                    if not ((epoch + 1) / (bptt_cfg['interval'] * num_ave_grad)) % bptt_cfg['epochs'] or stop_train:
                         meta_optim.zero_grad()
                         bptt_loss.backward()
 
-                        # for param in meta_optim.parameters():
-                        #     param.grad.clamp_(-1.0 * meta_optim_grad_clip,
-                        #                       meta_optim_grad_clip)
+                        if meta_optim_optim_cfg['grad_clip'] is not None:
+                            grad_clip = meta_optim_optim_cfg['grad_clip']
+                            for param in meta_optim.parameters():
+                                param.grad.clamp_(-1.0 * grad_clip, grad_clip)
                         meta_optim_optim.step()
 
                         meta_optim.reset(keep_state=True)
                         prev_bptt_iter_loss = torch.zeros(1).to(meta_device)
                         bptt_loss = 0
 
-                        if stop_epoch:
-                            stop_train = True
-                            break
+                    if stop_train:
+                        break
 
             if stop_train:
                 break
 
+        # 400 / (10 * 5) = 4
+        # bptt_cfg['interval'] = epoch // (1 * bptt_cfg['epochs'])
+        # bptt_cfg['interval'] = min(bptt_cfg['interval'], epoch // (1 * bptt_cfg['epochs']))
+        # print(bptt_cfg['interval'])
+
         run_train_loss_seqs[db_train.seqs] = torch.tensor(
-            run_train_loss).mean()
+            run_train_loss_hist).mean()
 
         with torch.no_grad():
             meta_loss = run_loader(model, meta_loader)
@@ -315,5 +339,6 @@ def main(num_meta_runs, num_bptt_steps, meta_optim_lr, num_epochs,
                             torch.tensor(list(meta_loss_seqs.values())).min(),
                             torch.tensor(list(meta_loss_seqs.values())).max(),
                             torch.tensor(list(meta_loss_seqs.values())).mean(),
+                            epoch + 1,
                             stop_time - start_time]
-            vis_dict['meta_metrics_vis'].plot(meta_metrics, i)
+            vis_dict['meta_metrics_vis'].plot(meta_metrics, i + 1)
