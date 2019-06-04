@@ -1,18 +1,15 @@
 seed: 1
 env_suffix: null
 vis_interval: 1
-save_dir: ./models
+save_dir: models
 non_meta_baseline_cfg:
     compute: True
     num_epochs: 36
     lr: 0.000001                                    # 1e-6
 num_epochs: null                                    # if null run meta model until meta_optim returns stop_train=True
-num_ave_grad: 1
 bptt_cfg:
     epochs: 5
-    interval: 1
-    runs_per_epoch_extension: 5                     # if num_epochs=None
-num_meta_runs: 10000
+    runs_per_epoch_extension: 1                     # if num_epochs=None
 meta_optim:
     num_layers: 2
     hidden_size: 128
@@ -22,19 +19,19 @@ meta_optim:
 meta_optim_optim_cfg:
     lr: 0.001
     grad_clip: null                                 # average the gradient every num_ave_grad iterations
-parent_model:
-    file_dir: models
-    name: DRN_D_22                                  # [VGG, DRN_D_22]
-    epoch: 110
+parent_model_path: models/DRN_D_22/DRN_D_22_epoch-110.pth
 train_early_stopping:
     patience: 10
     min_loss_improv: 100
 data:
     seq_name: train_seqs                            # [train_seqs, test_seqs, blackswan, ...]
     random_train_transform: True
+    frame_ids:
+        train: 0
+        test: -1
     batch_sizes:
-        train: 1
-        meta: 1
+        train: 5
+        test: 1
     shuffles:
         train: True
-        meta: False
+        test: False
