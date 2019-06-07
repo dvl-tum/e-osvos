@@ -1,5 +1,5 @@
 import os
-from itertools import count
+from itertools import count, zip_longest
 
 import imageio
 import networks.vgg_osvos as vo
@@ -122,7 +122,7 @@ def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
     batch_sampler = EpochSampler(
         db_train, shuffles['train'], batch_sizes['train'])
     train_loader = DataLoader(
-        db_train, batch_sampler=batch_sampler, num_workers=2)
+        db_train, batch_sampler=batch_sampler, num_workers=0)
 
     db_test = db.DAVIS2016(seqs=seq_name,
                            frame_id=frame_ids['test'],
@@ -131,7 +131,7 @@ def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
         db_test,
         shuffle=shuffles['test'],
         batch_size=batch_sizes['test'],
-        num_workers=2)
+        num_workers=0)
 
     return db_train, train_loader, db_test, test_loader
 
@@ -157,3 +157,9 @@ def early_stopping(loss_hist, patience, min_loss_improv):
     if torch.ge(best_loss.sub(prev_best_loss).abs(), min_loss_improv):
         return False
     return True
+
+
+def grouper(n, iterable, fillvalue=None):
+    "grouper(3, 'ABCDEFG', 'x') --> ABC DEF Gxx"
+    args = [iter(iterable)] * n
+    return zip_longest(fillvalue=fillvalue, *args)

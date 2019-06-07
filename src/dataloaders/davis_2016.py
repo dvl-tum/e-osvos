@@ -114,7 +114,10 @@ class DAVIS2016(Dataset):
 
     def __getitem__(self, idx):
         if self.frame_id is not None:
-            idx = self.frame_id
+            if self.frame_id == 'middle':
+                idx = len(self.img_list) // 2
+            else:
+                idx = self.frame_id
         img, gt = self.make_img_gt_pair(idx)
 
         sample = {'image': img, 'gt': gt}

@@ -33,7 +33,6 @@ class DRNSeg(nn.Module):
         m.bias.data.zero_()
         self.use_torch_up = use_torch_up
 
-
         up = nn.ConvTranspose2d(classes, classes, 16, stride=8, padding=(4, 5),
                                 output_padding=0, groups=classes,
                                 bias=False)

@@ -3,15 +3,11 @@ num_processes: 2
 env_suffix: null
 vis_interval: 1
 save_dir: models
-non_meta_baseline_cfg:
-    compute: True
-    num_epochs: 36
-    lr: 0.000001                                    # 1e-6
 num_epochs: null                                    # if null run meta model until meta_optim returns stop_train=True
 bptt_cfg:
     epochs: 5
     runs_per_epoch_extension: 1                     # if num_epochs=None
-meta_optim:
+meta_optim_cfg:
     num_layers: 2
     hidden_size: 128
     lr_range: [0.00000001, 0.00001]                 # [1e-8, 1e-5]
@@ -23,13 +19,13 @@ meta_optim_optim_cfg:
 parent_model_path: models/DRN_D_22/DRN_D_22_epoch-110.pth
 train_early_stopping:
     patience: 10
-    min_loss_improv: 100
+    min_loss_improv: 10
 data:
     seq_name: train_seqs                            # [train_seqs, test_seqs, blackswan, ...]
     random_train_transform: True
     frame_ids:
         train: 0
-        test: -1
+        test: 'middle'                                    # integer or str for frame mode, e.g., 'random', 'middle'
     batch_sizes:
         train: 5
         test: 1
