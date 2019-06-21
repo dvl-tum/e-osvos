@@ -48,6 +48,41 @@ def class_balanced_cross_entropy_loss(output, label, size_average=True, batch_av
     return final_loss
 
 
+def class_balanced_cross_entropy_loss_theoretical(output, label, size_average=True, batch_average=True):
+    """Theoretical version of the class balanced cross entropy loss to train the network (Produces unstable results)
+    Args:
+    output: Output of the network
+    label: Ground truth label
+    Returns:
+    Tensor that evaluates the loss
+    """
+    output = torch.sigmoid(output)
+
+    labels_pos = torch.ge(label, 0.5).float()
+    labels_neg = torch.lt(label, 0.5).float()
+
+    num_labels_pos = torch.sum(labels_pos)
+    num_labels_neg = torch.sum(labels_neg)
+    num_total = num_labels_pos + num_labels_neg
+
+    # loss_pos = torch.mul(labels_pos, torch.log(output + 1e-8))
+    # loss_neg = torch.mul(labels_neg, torch.log(1 - output + 1e-8))
+    loss_pos = torch.sum(torch.mul(labels_pos, torch.log(output + 1e-8)))
+    loss_neg = torch.sum(torch.mul(labels_neg, torch.log(1 - output + 1e-8)))
+
+    final_loss = -num_labels_neg / num_total * \
+        loss_pos - num_labels_pos / num_total * loss_neg
+
+    # final_loss = - loss_pos - loss_neg
+
+    if size_average:
+        final_loss /= np.prod(label.size())
+    elif batch_average:
+        final_loss /= label.size()[0]
+
+    return final_loss
+
+
 def center_crop(x, height, width):
     crop_h = torch.FloatTensor([x.size()[2]]).sub(height).div(-2)
     crop_w = torch.FloatTensor([x.size()[3]]).sub(width).div(-2)

@@ -39,7 +39,7 @@ early_stopping = ex.capture(early_stopping, prefix='train_early_stopping')
 
 
 @ex.capture
-def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
+def init_vis(env_suffix, _config, _run, torch_cfg):
     run_name = f"{_run.experiment_info['name']}_{env_suffix}"
     vis_dict = {}
 
@@ -63,6 +63,7 @@ def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
     vis_dict['meta_metrics_vis'] = LineVis(opts, env=run_name, **torch_cfg['vis'])
     vis_dict['meta_metrics_vis'].plot([0] * len(legend), 0)
 
+    db_train, _, _, _ = datasets_and_loaders()  # pylint: disable=E1120
     for seq_name in db_train.seqs_dict.keys():
         opts = dict(
             title=f"{seq_name} - MODEL METRICS",
@@ -76,7 +77,7 @@ def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
 
 
 # @ex.capture
-def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_path,
+def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_cfg, meta_optim_optim_state_dict,
              meta_optim_state_dict, num_epochs, meta_optim_optim_cfg, bptt_cfg,
              seed, vis_interval, train_early_stopping, data, return_dict=None,
              vis_dict=None):
@@ -88,11 +89,9 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_path,
 
     db_train, train_loader, db_meta, meta_loader = datasets_and_loaders(**data)
 
-    model, parent_state_dict = init_parent_model(parent_model_path)
-    meta_model, _ = init_parent_model(parent_model_path)
+    model, parent_state_dicts = init_parent_model(parent_model_cfg)
+    meta_model, _ = init_parent_model(parent_model_cfg)
     meta_optim = MetaOptimizer(model, meta_model, **meta_optim_cfg)
-    # meta_optim.reset()
-
     meta_optim.load_state_dict(meta_optim_state_dict)
 
     model.to(device)
@@ -103,10 +102,19 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_path,
     for name, param in meta_optim.named_parameters():
         meta_optim_param_grad[name] = torch.zeros_like(param)
 
+    train_split_X_val_seqs = []
+    for i, p in enumerate(parent_model_cfg['split_model_path']):
+        if 'split' in p:
+            split_file = os.path.join(f'data/DAVIS-2016/train_split_{i + 1}_val.txt')
+        else:
+            split_file = os.path.join('data/DAVIS-2016/test_seqs.txt')
+        seqs = [s.rstrip('\n') for s in open(split_file)]
+        train_split_X_val_seqs.append(seqs)
+
     # one epoch corresponds to one random transformed first frame of a sequence
     if num_epochs is None:
-        # epoch_iter = count()
-        epoch_iter = range(bptt_cfg['epochs'] * (1 + i // bptt_cfg['runs_per_epoch_extension']))
+        epoch_iter = count()
+        # epoch_iter = range(bptt_cfg['epochs'] * (1 + i // bptt_cfg['runs_per_epoch_extension']))
     else:
         epoch_iter = range(num_epochs)
 
@@ -126,14 +134,19 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_path,
         run_train_loss_hist = []
 
         meta_optim.reset()
-        meta_optim_optim = torch.optim.Adam(meta_optim.parameters(), lr=0.0)
 
-        model.load_state_dict(parent_state_dict)
+        meta_optim_optim = torch.optim.Adam(meta_optim.parameters(),
+                                            lr=meta_optim_optim_cfg['lr'])
+        meta_optim_optim.load_state_dict(meta_optim_optim_state_dict)
+
+        for seqs_list, p_s_d in zip(train_split_X_val_seqs, parent_state_dicts):
+            if seq_name in seqs_list:
+                model.load_state_dict(p_s_d)
         model.to(device)
         model.zero_grad()
 
         for epoch in epoch_iter:
-            set_random_seeds(seed + epoch + i)
+            set_random_seeds(seed + epoch)
             for train_batch in train_loader:
                 train_inputs, train_gts = train_batch['image'], train_batch['gt']
                 train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
@@ -142,9 +155,10 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_path,
 
                 train_loss = class_balanced_cross_entropy_loss(
                     train_outputs[-1], train_gts, size_average=False)
-                train_loss.backward()
                 run_train_loss_hist.append(train_loss.item())
+                train_loss.backward()
 
+                meta_optim.seq_id = db_train.get_seq_id()
                 meta_model, stop_train = meta_optim.step()
                 model.zero_grad()
 
@@ -187,7 +201,8 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_path,
 
                         meta_optim_param_grad[name] += param.grad.clone()
 
-                    meta_optim_optim.step()
+                    if meta_optim_optim_cfg['step_in_seq']:
+                        meta_optim_optim.step()
 
                     meta_optim.reset(keep_state=True)
                     prev_bptt_iter_loss = torch.zeros(1).to(meta_device)
@@ -203,11 +218,10 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_path,
         with torch.no_grad():
             meta_loss_seqs[seq_name] = run_loader(model, meta_loader)
 
-    # move to cpu
-    for name in meta_optim_param_grad.keys():
-        meta_optim_param_grad[name] = meta_optim_param_grad[name].cpu()
-
     if return_dict is not None:
+        meta_optim_param_grad = {name: param.cpu()
+                                 for name, param in meta_optim_param_grad.items()}
+
         return_dict['run_train_loss_seqs'] = run_train_loss_seqs
         return_dict['meta_loss_seqs'] = meta_loss_seqs
         return_dict['meta_optim_param_grad'] = meta_optim_param_grad
@@ -218,15 +232,14 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_path,
 
 @ex.automain
 def main(vis_interval, torch_cfg, num_epochs, data, _run, seed, _log, _config,
-         save_dir, parent_model_path, num_processes, meta_optim_optim_cfg,
+         save_dir, parent_model_cfg, num_processes, meta_optim_optim_cfg,
          bptt_cfg, train_early_stopping, meta_optim_cfg):
     if not os.path.exists(save_dir):
         os.makedirs(os.path.join(save_dir))
     set_random_seeds(seed)
 
-    db_train, _, _, _ = datasets_and_loaders()  # pylint: disable=E1120
     if vis_interval is not None:
-        vis_dict = init_vis(db_train)  # pylint: disable=E1120
+        vis_dict = init_vis()  # pylint: disable=E1120
 
     #
     # Meta model
@@ -234,18 +247,19 @@ def main(vis_interval, torch_cfg, num_epochs, data, _run, seed, _log, _config,
     process_manager = mp.Manager()
     processes = [dict() for _ in range(num_processes)]
 
-    model, _ = init_parent_model(parent_model_path)
+    model, _ = init_parent_model(parent_model_cfg)
     meta_optim = MetaOptimizer(model, model)  # pylint: disable=E1120
-    # meta_optim.reset()
+
     ### init zero gradients
-    output = meta_optim(torch.ones(1, 7))
+    output = meta_optim(torch.ones(1, 8))
     (output[0] + output[1]).sum().backward()
     meta_optim.zero_grad()
     ### init zero gradients
-    # meta_optim.to(meta_device)
 
-    meta_optim_optim = torch.optim.Adam(
-        meta_optim.parameters(), lr=meta_optim_optim_cfg['lr'])
+    meta_optim_optim = torch.optim.Adam(meta_optim.parameters(),
+                                        lr=meta_optim_optim_cfg['lr'])
+
+    db_train, _, _, _ = datasets_and_loaders()  # pylint: disable=E1120
 
     meta_loss_seqs = {}
     run_train_loss_seqs = {}
@@ -253,6 +267,7 @@ def main(vis_interval, torch_cfg, num_epochs, data, _run, seed, _log, _config,
     for i in count():
         start_time = timeit.default_timer()
         meta_optim_state_dict = copy.deepcopy(meta_optim.state_dict())
+        meta_optim_optim_state_dict = copy.deepcopy(meta_optim_optim.state_dict())
 
         for name, param in meta_optim.named_parameters():
             meta_optim_param_grad[name] = torch.zeros_like(param).cpu()
@@ -261,8 +276,9 @@ def main(vis_interval, torch_cfg, num_epochs, data, _run, seed, _log, _config,
         for rank, (p, seq_names) in enumerate(zip(processes, grouper(seqs_per_process, db_train.seqs_dict.keys()))):
             seq_names = [n for n in seq_names if n is not None]
             p['return_dict'] = process_manager.dict()
-            process_args = [i,  rank, seq_names, meta_optim_cfg, parent_model_path,
-                            meta_optim_state_dict, num_epochs, meta_optim_optim_cfg, bptt_cfg, seed,
+            process_args = [i,  rank, seq_names, meta_optim_cfg, parent_model_cfg,
+                            meta_optim_optim_state_dict, meta_optim_state_dict,
+                            num_epochs, meta_optim_optim_cfg, bptt_cfg, seed,
                             vis_interval, train_early_stopping, data, p['return_dict']]
             p['process'] = mp.Process(target=meta_run, args=process_args)
             p['process'].start()
@@ -289,6 +305,7 @@ def main(vis_interval, torch_cfg, num_epochs, data, _run, seed, _log, _config,
             if meta_optim_optim_cfg['grad_clip'] is not None:
                 grad_clip = meta_optim_optim_cfg['grad_clip']
                 param.grad.clamp_(-1.0 * grad_clip, grad_clip)
+
         meta_optim_optim.step()
 
         if vis_interval is not None and not i % vis_interval:
@@ -300,4 +317,4 @@ def main(vis_interval, torch_cfg, num_epochs, data, _run, seed, _log, _config,
             vis_dict['meta_metrics_vis'].plot(meta_metrics, i + 1)
 
         # save_model_to_db(meta_optim, f"update_{i}.model", ex)
-        torch.save(meta_optim, os.path.join(save_dir, 'meta', f"meta_run_{i + 1}.model"))
+        # torch.save(meta_optim, os.path.join(save_dir, 'meta', f"meta_run_{i + 1}.model"))

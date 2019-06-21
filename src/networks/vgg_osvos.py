@@ -13,9 +13,9 @@ from layers.osvos_layers import center_crop, interp_surgery
 from mypath import Path
 
 
-class OSVOS(nn.Module):
+class OSVOSVgg(nn.Module):
     def __init__(self, pretrained=1):
-        super(OSVOS, self).__init__()
+        super(OSVOSVgg, self).__init__()
         lay_list = [[64, 64],
                     ['M', 128, 128],
                     ['M', 256, 256, 256],

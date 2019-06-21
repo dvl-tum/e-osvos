@@ -7,8 +7,9 @@ import socket
 import timeit
 from datetime import datetime
 
-import networks.vgg_osvos as vo
+from networks.vgg_osvos import OSVOSVgg
 from networks.drn_seg import DRNSeg
+from networks.unet_resnet import Unet
 import numpy as np
 
 import torch
@@ -45,7 +46,7 @@ nTestInterval = 5  # Run on test set every nTestInterval epochs
 db_root_dir = Path.db_root_dir()
 vis_net = False  # Visualize the network?
 snapshot = 5  # Store a model every snapshot epochs
-nAveGrad = 2
+nAveGrad = 1
 seed = 123
 log_to_tb = True
 save_dir = Path.save_root_dir()
@@ -56,9 +57,14 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
+train_dataset = 'train_split_3_train'
+test_dataset = 'train_split_3_val'
+
 # Network definition
 # model_name = 'VGG'
-model_name = 'DRN_D_22'
+# model_name = 'DRN_D_22'
+# model_name = 'FPN_ResNet18'
+model_name = 'UNET_ResNet18'
 if model_name == 'VGG':
     load_caffe_vgg = True
     num_losses = 5
@@ -66,16 +72,16 @@ if model_name == 'VGG':
 
     if not resume_epoch:
         if load_caffe_vgg:
-            net = vo.OSVOS(pretrained=2)
+            net = OSVOSVgg(pretrained=2)
         else:
-            net = vo.OSVOS(pretrained=1)
+            net = OSVOSVgg(pretrained=1)
     else:
-        net = vo.OSVOS(pretrained=0)
+        net = OSVOSVgg(pretrained=0)
         file_name = f'{model_name}_epoch-{resume_epoch - 1}.pth'
         print("Updating weights from: {}".format(os.path.join(save_dir, file_name)))
         net.load_state_dict(torch.load(os.path.join(save_dir, file_name),
                             map_location=lambda storage, loc: storage))
-else:
+elif model_name == 'DRN_D_22':
     num_losses = 1
     lr = 1e-6
 
@@ -85,22 +91,34 @@ else:
         os.path.join(save_dir, 'DRN_D_22', f"DRN_D_22_epoch-{resume_epoch - 1}.pth"),
                      map_location=lambda storage, loc: storage)
         net.load_state_dict(parent_state_dict)
+elif model_name == 'UNET_ResNet18':
+    num_losses = 1
+    lr = 1e-6
+
+    net = Unet('resnet18', classes=1, activation='softmax')
+    if resume_epoch:
+        parent_state_dict = torch.load(
+            os.path.join(save_dir, 'UNET_ResNet18',
+                         f"UNET_ResNet18_epoch-{resume_epoch - 1}.pth"),
+            map_location=lambda storage, loc: storage)
+        net.load_state_dict(parent_state_dict)
 
 if not os.path.exists(os.path.join(save_dir, model_name)):
     os.makedirs(os.path.join(save_dir, model_name))
+if not os.path.exists(os.path.join(save_dir, model_name, train_dataset)):
+    os.makedirs(os.path.join(save_dir, model_name, train_dataset))
 
 # parentModelName = 'parent'
 # parentEpoch = 240
-# net = vo.OSVOS(pretrained=0)
+# net = OSVOSVgg(pretrained=0)
 # net.load_state_dict(torch.load(os.path.join(save_dir, parentModelName+'_epoch-'+str(parentEpoch-1)+'.pth'),
 #                                 map_location=lambda storage, loc: storage))
 
-print(
-    f'NUM MODEL PARAMS - {model_name}: {sum([p.numel() for p in net.parameters()])}')
+print(f'NUM MODEL PARAMS - {model_name}: {sum([p.numel() for p in net.parameters()])}')
 
 # Logging into Tensorboard
 if log_to_tb:
-    log_dir = os.path.join(save_dir, 'runs', model_name)
+    log_dir = os.path.join(save_dir, 'runs', model_name, train_dataset)
     writer = SummaryWriter(log_dir=log_dir)
 
 net.to(device)
@@ -145,11 +163,13 @@ composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
                                           tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
                                           tr.ToTensor()])
 # Training dataset and its iterator
-db_train = db.DAVIS2016(seqs='train_seqs', input_res=None, db_root_dir=db_root_dir, transform=composed_transforms)
+db_train = db.DAVIS2016(seqs=train_dataset, input_res=None,
+                        db_root_dir=db_root_dir, transform=composed_transforms)
 trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num_workers=2)
 
 # Testing dataset and its iterator
-db_test = db.DAVIS2016(seqs='test_seqs', db_root_dir=db_root_dir, transform=tr.ToTensor())
+db_test = db.DAVIS2016(
+    seqs=test_dataset, db_root_dir=db_root_dir, transform=tr.ToTensor())
 testloader = DataLoader(db_test, batch_size=testBatch, shuffle=False, num_workers=2)
 
 num_img_tr = len(trainloader)
@@ -217,7 +237,7 @@ for epoch in range(resume_epoch, nEpochs):
     # Save the model
     if (epoch % snapshot) == snapshot - 1 and epoch != 0:
         torch.save(net.state_dict(), os.path.join(
-            save_dir, model_name, model_name + '_epoch-' + str(epoch + 1) + '.pth'))
+            save_dir, model_name, train_dataset, model_name + '_epoch-' + str(epoch + 1) + '.pth'))
 
     # One testing epoch
     if useTest and epoch % nTestInterval == (nTestInterval - 1):

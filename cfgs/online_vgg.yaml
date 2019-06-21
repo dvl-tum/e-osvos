@@ -1,11 +1,10 @@
-parent_model_cfg:
-    name: VGG                                  # [VGG, DRN_D_22]
-    epoch: 240
-optimizer_cfg:
+parent_model_path: models/VGG/VGG_epoch-240.pth
+optim_cfg:
+    file_dir: null
     lr: 0.00000001                              # 1e-8
     wd: 0.0002
     mom: 0.9
 num_epochs: 2000
-data_cfg:
+data:
     batch_sizes:
         train: 5

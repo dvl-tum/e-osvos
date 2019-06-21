@@ -11,6 +11,10 @@ from dataloaders.helpers import *
 from torch.utils.data import Dataset
 
 
+def listdir_nohidden(path):
+    return [f for f in os.listdir(path) if not f.startswith('.')]
+
+
 class DAVIS2016(Dataset):
     """DAVIS 2016 dataset constructed using the PyTorch built-in functionalities"""
 
@@ -35,16 +39,16 @@ class DAVIS2016(Dataset):
         img_list = []
         labels = []
 
-        if seqs in ['train_seqs', 'test_seqs']:
+        if '_' in seqs:
             with open(os.path.join(db_root_dir, f'{seqs}.txt')) as f:
                 for seq in f.readlines():
                     seq = seq.strip()
                     seqs_dict[seq] = {}
 
-                    images = np.sort(os.listdir(os.path.join(db_root_dir, 'JPEGImages/480p/', seq)))
+                    images = np.sort(listdir_nohidden(os.path.join(db_root_dir, 'JPEGImages/480p/', seq)))
                     img_list_seq = list(map(lambda x: os.path.join('JPEGImages/480p/', seq, x), images))
 
-                    lab = np.sort(os.listdir(os.path.join(db_root_dir, 'Annotations/480p/', seq)))
+                    lab = np.sort(listdir_nohidden(os.path.join(db_root_dir, 'Annotations/480p/', seq)))
                     labels_seq = list(map(lambda x: os.path.join('Annotations/480p/', seq, x), lab))
 
                     assert (len(labels_seq) == len(img_list_seq)), f'failure in: {seq}'
@@ -56,10 +60,10 @@ class DAVIS2016(Dataset):
                     labels.extend(labels_seq)
         else:
             # Initialize the per sequence images for online training
-            names_img = np.sort(os.listdir(os.path.join(db_root_dir, 'JPEGImages/480p/', seqs)))
+            names_img = np.sort(listdir_nohidden(os.path.join(db_root_dir, 'JPEGImages/480p/', seqs)))
             img_list_seq = list(map(lambda x: os.path.join('JPEGImages/480p/', seqs, x), names_img))
 
-            names_label = np.sort(os.listdir(os.path.join(db_root_dir, 'Annotations/480p/', seqs)))
+            names_label = np.sort(listdir_nohidden(os.path.join(db_root_dir, 'Annotations/480p/', seqs)))
             labels_seq = list(map(lambda x: os.path.join('Annotations/480p/', seqs, x), names_label))
 
             assert (len(labels_seq) == len(img_list_seq)), f'failure in: {seqs}'
@@ -88,7 +92,7 @@ class DAVIS2016(Dataset):
         return list(self.seqs_dict.keys()).index(self.seqs)
 
     def set_next_seq(self):
-        if self.seqs in ['train_seqs', 'test_seqs']:
+        if '_' in self.seqs:
             key_idx = 0
         else:
             key_idx = self.get_seq_id() + 1
@@ -122,7 +126,7 @@ class DAVIS2016(Dataset):
 
         sample = {'image': img, 'gt': gt}
 
-        if self.seqs not in ['train_seqs', 'test_seqs']:
+        if '_' not in self.seqs:
             sample['fname'] = os.path.join(self.seqs, "%05d" % idx)
 
         if self.transform is not None:

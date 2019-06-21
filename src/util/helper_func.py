@@ -30,15 +30,16 @@ def run_loader(model, loader, img_save_dir=None):
             run_loss.append(loss.item())
 
             if img_save_dir is not None:
-                for jj in range(int(inputs.size()[0])):
-                    pred = np.transpose(
-                        outputs[-1].cpu().data.numpy()[jj, :, :, :], (1, 2, 0))
-                    pred = 1 / (1 + np.exp(-pred))
-                    pred = 255 * np.squeeze(pred)
-                    pred = pred.astype(np.uint8)
+                pred = torch.sigmoid(outputs[-1])
+                pred = pred >= 0.5
+                pred = 255 * pred
 
-                    imageio.imsave(os.path.join(
-                        img_save_dir, os.path.basename(fname[jj]) + '.png'), pred)
+                # print(pred.float().eq(gts).sum())
+                for sample_i in range(inputs.size(0)):
+                    imageio.imsave(
+                        os.path.join(img_save_dir, os.path.basename(fname[sample_i]) + '.png'),
+                        np.transpose(pred[sample_i].cpu().numpy(),
+                                     (1, 2, 0)).astype(np.uint8))
 
     return torch.tensor(run_loss).mean()
 
