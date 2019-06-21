@@ -2,13 +2,14 @@ import os
 from itertools import count, zip_longest
 
 import imageio
-import networks.vgg_osvos as vo
 import numpy as np
 import torch
 from dataloaders import custom_transforms
 from dataloaders import davis_2016 as db
 from layers.osvos_layers import class_balanced_cross_entropy_loss
 from networks.drn_seg import DRNSeg
+from networks.vgg_osvos import OSVOSVgg
+from networks.unet_resnet import Unet
 from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
 from torch.utils.data import DataLoader
@@ -136,15 +137,24 @@ def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
     return db_train, train_loader, db_test, test_loader
 
 
-def init_parent_model(path):
-    if 'VGG' in path:
-        model = vo.OSVOS(pretrained=0)
-    elif 'DRN_D_22' in path:
+def init_parent_model(cfg):
+    base_path = cfg['base_path']
+    if 'VGG' in base_path:
+        model = OSVOSVgg(pretrained=0)
+    elif 'DRN_D_22' in base_path:
         model = DRNSeg('DRN_D_22', 1, pretrained=True)
+    elif 'UNET_ResNet18' in base_path:
+        model = Unet('resnet18', classes=1, activation='softmax')
+    else:
+        raise NotImplementedError
 
-    parent_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
-    model.load_state_dict(parent_state_dict)
-    return model, parent_state_dict
+    parent_state_dicts = []
+    for p in cfg['split_model_path']:
+        split_model_path = os.path.join(cfg['base_path'], p)
+        parent_state_dicts.append(torch.load(
+            split_model_path, map_location=lambda storage, loc: storage))
+    # model.load_state_dict(parent_state_dict)
+    return model, parent_state_dicts
 
 
 def early_stopping(loss_hist, patience, min_loss_improv):
