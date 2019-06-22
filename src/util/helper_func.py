@@ -1,15 +1,18 @@
 import os
-from itertools import count, zip_longest
+from itertools import count, zip_longest, product
 
+import davis
 import imageio
 import numpy as np
 import torch
 from dataloaders import custom_transforms
 from dataloaders import davis_2016 as db
+from davis import DAVISLoader, Segmentation, db_eval, db_eval_sequence, Annotation
 from layers.osvos_layers import class_balanced_cross_entropy_loss
 from networks.drn_seg import DRNSeg
-from networks.vgg_osvos import OSVOSVgg
 from networks.unet_resnet import Unet
+from networks.vgg_osvos import OSVOSVgg
+from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
 from torch.utils.data import DataLoader
@@ -174,3 +177,41 @@ def grouper(n, iterable, fillvalue=None):
     "grouper(3, 'ABCDEFG', 'x') --> ABC DEF Gxx"
     args = [iter(iterable)] * n
     return zip_longest(fillvalue=fillvalue, *args)
+
+def eval_davis(results_dir, seq_name):
+    metrics = ['J', 'F']
+    statistics = ['mean', 'recall', 'decay']
+
+    if seq_name == 'train_seqs':
+        phase = davis.phase['TRAIN']
+    elif seq_name == 'test_seqs':
+        phase = davis.phase['VAL']
+
+    db = DAVISLoader('2016', phase, True)
+
+    # Load segmentations
+    segmentations = [Segmentation(os.path.join(results_dir, s), True)
+                     for s in db.iternames()]
+
+    # Evaluate results
+    evaluation = db_eval(db, segmentations, metrics)
+
+    # Print results
+    table = PrettyTable(['Method']+[p[0]+'_'+p[1] for p in
+                                    product(metrics, statistics)])
+
+    table.add_row([os.path.basename(results_dir)] + ["%.3f" % np.round(
+        evaluation['dataset'][metric][statistic], 3) for metric, statistic
+        in product(metrics, statistics)])
+
+    return evaluation, table
+
+
+def eval_davis_seq(results_dir, seq_name):
+    segmentations = Segmentation(os.path.join(results_dir, seq_name), True)
+    annotations = Annotation(seq_name, True)
+
+    evaluation = {}
+    for m in ['J', 'F']:
+        evaluation[m] = db_eval_sequence(segmentations, annotations, measure=m)
+    return evaluation

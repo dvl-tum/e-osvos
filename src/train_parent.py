@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from util import visualize as viz
+from util.helper_func import (run_loader, eval_davis_seq)
 
 # Select which GPU, -1 if CPU
 gpu_id = 0
@@ -57,8 +58,10 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
-train_dataset = 'train_split_3_train'
-test_dataset = 'train_split_3_val'
+train_dataset = 'train_seqs'
+test_dataset = 'test_seqs'
+# train_dataset = 'train_split_3_train'
+# test_dataset = 'train_split_3_val'
 
 # Network definition
 # model_name = 'VGG'
@@ -242,31 +245,29 @@ for epoch in range(resume_epoch, nEpochs):
     # One testing epoch
     if useTest and epoch % nTestInterval == (nTestInterval - 1):
         with torch.no_grad():
-            for ii, sample_batched in enumerate(testloader):
-                inputs, gts = sample_batched['image'], sample_batched['gt']
+            results_dir = os.path.join(save_dir, model_name, train_dataset, 'results')
+            test_losses = []
+            test_J = []
+            test_F = []
+            for seq_name in db_test.seqs_dict.keys():
+                img_save_dir = os.path.join(results_dir, seq_name)
+                if not os.path.exists(img_save_dir):
+                    os.makedirs(img_save_dir)
 
-                # Forward pass of the mini-batch
-                inputs, gts = inputs.to(device), gts.to(device)
+                db_test.set_seq(seq_name)
+                test_losses.append(run_loader(net, testloader, img_save_dir=img_save_dir))
 
-                outputs = net.forward(inputs)
+                evaluation = eval_davis_seq(results_dir, seq_name)
+                test_J.append(evaluation['J']['mean'])
+                test_F.append(evaluation['F']['mean'])
 
-                # Compute the losses, side outputs and fuse
-                losses = [0] * num_losses
-                for i in range(num_losses):
-                    losses[i] = class_balanced_cross_entropy_loss(outputs[i], gts, size_average=False)
-                    running_loss_ts[i] += losses[i].item()
-                loss = (1 - epoch / nEpochs) * sum(losses[:-1]) + losses[-1]
+            test_losses = torch.tensor(test_losses).mean()
+            test_J = torch.tensor(test_J).mean()
+            test_F = torch.tensor(test_F).mean()
+            if log_to_tb:
+                writer.add_scalar('test_metrics/loss', test_losses, epoch)
+                writer.add_scalar('test_metrics/J_mean', test_J, epoch)
+                writer.add_scalar('test_metrics/F_mean', test_F, epoch)
 
-                # Print stuff
-                if ii % num_img_ts == num_img_ts - 1:
-                    running_loss_ts = [x / num_img_ts for x in running_loss_ts]
-                    loss_ts.append(running_loss_ts[-1])
-
-                    print(f'[TEST LOSS {loss:.2f}]')
-                    if log_to_tb:
-                        writer.add_scalar('test_loss_epoch', loss, epoch)
-                    # for l in range(0, len(running_loss_ts)):
-                    #     print('***Testing *** Loss %d: %f' % (l, running_loss_ts[l]))
-                    #     running_loss_ts[l] = 0
 if log_to_tb:
     writer.close()

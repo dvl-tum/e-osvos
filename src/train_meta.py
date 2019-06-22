@@ -133,17 +133,18 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_cfg, meta_optim_op
         prev_bptt_iter_loss = 0.0
         run_train_loss_hist = []
 
-        meta_optim.reset()
-
-        meta_optim_optim = torch.optim.Adam(meta_optim.parameters(),
-                                            lr=meta_optim_optim_cfg['lr'])
-        meta_optim_optim.load_state_dict(meta_optim_optim_state_dict)
-
         for seqs_list, p_s_d in zip(train_split_X_val_seqs, parent_state_dicts):
             if seq_name in seqs_list:
                 model.load_state_dict(p_s_d)
         model.to(device)
         model.zero_grad()
+
+        meta_optim.load_state_dict(meta_optim_state_dict)
+        meta_optim.reset()
+
+        meta_optim_optim = torch.optim.Adam(meta_optim.parameters(),
+                                            lr=meta_optim_optim_cfg['lr'])
+        meta_optim_optim.load_state_dict(meta_optim_optim_state_dict)
 
         for epoch in epoch_iter:
             set_random_seeds(seed + epoch)

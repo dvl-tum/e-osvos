@@ -7,22 +7,20 @@ import socket
 import timeit
 from datetime import datetime
 
-import davis
 import imageio
 import numpy as np
 import sacred
 import torch
-from davis import DAVISLoader, Segmentation, db_eval
 from layers.osvos_layers import class_balanced_cross_entropy_loss
 from meta_stopping.utils import dict_to_html
-from prettytable import PrettyTable
 from pytorch_tools.ingredients import (get_device, set_random_seeds,
                                        torch_ingredient)
 from pytorch_tools.vis import TextVis
 from tensorboardX import SummaryWriter
 from util import visualize as viz
 from util.helper_func import (datasets_and_loaders, early_stopping,
-                              init_parent_model, run_loader, train_val)
+                              init_parent_model, run_loader, train_val,
+                              eval_davis, eval_davis_seq)
 
 torch_ingredient.add_config('cfgs/torch.yaml')
 ex = sacred.Experiment('osvos-online', ingredients=[torch_ingredient])
@@ -89,7 +87,7 @@ def init_optim(model, parent_model_cfg, optim_cfg):
 
 @ex.automain
 def main(parent_model_cfg, num_ave_grad, seed, validate_best_epoch,
-         vis_interval, save_img_and_eval, _log, _config, data):
+         vis_interval, _log, _config, data):
     device = get_device()
     set_random_seeds(seed)
 
@@ -112,11 +110,21 @@ def main(parent_model_cfg, num_ave_grad, seed, validate_best_epoch,
         seqs = [s.rstrip('\n') for s in open(split_file)]
         train_split_X_val_seqs.append(seqs)
 
+    results_dir = os.path.join(parent_model_cfg['base_path'], 'results')
+
     run_train_losses = []
     val_losses = []
     test_losses = []
     init_test_losses = []
+    init_J = []
+    init_F = []
+    last_J = []
+    last_F = []
     for seq_name in db_train.seqs_dict.keys():
+        img_save_dir = os.path.join(results_dir, seq_name)
+        if not os.path.exists(img_save_dir):
+            os.makedirs(img_save_dir)
+
         optim = init_optim(model)  # pylint: disable=E1120
 
         db_train.set_seq(seq_name)
@@ -128,7 +136,13 @@ def main(parent_model_cfg, num_ave_grad, seed, validate_best_epoch,
         model.to(device)
         model.zero_grad()
 
-        init_test_losses.append(run_loader(model, test_loader))
+        with torch.no_grad():
+            init_test_losses.append(run_loader(
+                model, test_loader, img_save_dir=img_save_dir))
+
+        evaluation = eval_davis_seq(results_dir, seq_name)
+        init_J.append(evaluation['J']['mean'])
+        init_F.append(evaluation['F']['mean'])
 
         run_train_loss, per_epoch_val_losses = train_val(  # pylint: disable=E1120
             model, train_loader, val_loader, optim, early_stopping_func=early_stopping)
@@ -136,57 +150,26 @@ def main(parent_model_cfg, num_ave_grad, seed, validate_best_epoch,
         val_losses.append(per_epoch_val_losses)
 
         with torch.no_grad():
-            img_save_dir = None
-            if save_img_and_eval:
-                img_save_dir = os.path.join(
-                    parent_model_cfg['base_path'],
-                    'results',
-                    seq_name)
-                if not os.path.exists(img_save_dir):
-                    os.makedirs(img_save_dir)
-            test_losses.append(run_loader(model, test_loader, img_save_dir=img_save_dir))
+            test_losses.append(run_loader(
+                model, test_loader, img_save_dir=img_save_dir))
+
+        evaluation = eval_davis_seq(results_dir, seq_name)
+        last_J.append(evaluation['J']['mean'])
+        last_F.append(evaluation['F']['mean'])
 
     run_train_losses = torch.tensor(run_train_losses)
     test_losses = torch.tensor(test_losses)
     init_test_losses = torch.tensor(init_test_losses)
-
-    if save_img_and_eval:
-        if data['seq_name'] == 'train_seqs':
-            phase = davis.phase['TRAIN']
-        elif data['seq_name'] == 'test_seqs':
-            phase = davis.phase['VAL']
-        else:
-            phase = None
-
-        if phase is not None:
-            db = DAVISLoader('2016', phase, True)
-
-            metrics = ['J', 'F']
-            statistics = ['mean','recall','decay']
-            results_dir = os.path.join(
-                parent_model_cfg['base_path'], 'results')
-
-            # Load segmentations
-            segmentations = [Segmentation(os.path.join(results_dir, s), True)
-                            for s in db.iternames()]
-
-            # Evaluate results
-            evaluation = db_eval(db, segmentations, metrics)
-
-            # Print results
-            table = PrettyTable(['Method']+[p[0]+'_'+p[1] for p in
-                                            itertools.product(metrics, statistics)])
-
-            table.add_row([os.path.basename(results_dir)] + ["%.3f" % np.round(
-                evaluation['dataset'][metric][statistic] , 3) for metric, statistic
-                in itertools.product(metrics, statistics)])
-
-            for s_name, s_eval in evaluation['sequence'].items():
-                print(f"{s_name} - {s_eval['J']['mean'][0]:.2f}")
-            print(str(table) + "\n")
+    init_J = torch.tensor(init_J)
+    init_F = torch.tensor(init_F)
+    last_J = torch.tensor(last_J)
+    last_F = torch.tensor(last_F)
 
     results_str = (
-        "<p>RUN TRAIN loss:<br>\n"
+        "<p>METRICS:<br>\n"
+        f"&nbsp;&nbsp;INIT MEAN J/F: {init_J.mean():.2f}/{init_F.mean():.2f}<br>\n"
+        f"&nbsp;&nbsp;LAST MEAN J/F: {last_J.mean():.2f}/{last_F.mean():.2f}<br>\n"
+        "RUN TRAIN loss:<br>\n"
         f"&nbsp;&nbsp;MIN seq: {run_train_losses.min():.2f}<br>\n"
         f"&nbsp;&nbsp;MAX seq: {run_train_losses.max():.2f}<br>\n"
         f"&nbsp;&nbsp;MEAN: {run_train_losses.mean():.2f}<br>\n"
