@@ -1,9 +1,9 @@
 from __future__ import division
 
 import numpy as np
-from PIL import Image
-
 import torch
+import torch.nn as nn
+from PIL import Image
 from torch.autograd import Variable
 from torch.nn import functional as F
 
@@ -16,7 +16,7 @@ def sigmoid_np(x):
     return 1/(1+np.exp(-x))
 
 
-def class_balanced_cross_entropy_loss(output, label, size_average=True, batch_average=True):
+def class_balanced_cross_entropy_loss(output, label, size_average=False, batch_average=True):
     """Define the class balanced cross entropy loss to train the network
     Args:
     output: Output of the network
@@ -81,6 +81,19 @@ def class_balanced_cross_entropy_loss_theoretical(output, label, size_average=Tr
         final_loss /= label.size()[0]
 
     return final_loss
+
+
+def dice_loss(output, label, batch_average=True):
+    pred = torch.sigmoid(output)
+    smooth = 1.
+
+    pred_flat = pred.view(-1)
+    label_flat = label.view(-1)
+    intersection = pred_flat * label_flat
+
+    return 1 - ((2. * intersection.sum() + smooth) /
+                (pred_flat.sum() + label_flat.sum() + smooth))
+                # ((pred_flat + label_flat - intersection).sum() + smooth))
 
 
 def center_crop(x, height, width):

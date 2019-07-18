@@ -1,5 +1,7 @@
 import os
-from itertools import count, zip_longest, product
+import shutil
+import tempfile
+from itertools import count, product, zip_longest
 
 import davis
 import imageio
@@ -7,10 +9,12 @@ import numpy as np
 import torch
 from dataloaders import custom_transforms
 from dataloaders import davis_2016 as db
-from davis import DAVISLoader, Segmentation, db_eval, db_eval_sequence, Annotation
-from layers.osvos_layers import class_balanced_cross_entropy_loss
+from davis import (Annotation, DAVISLoader, Segmentation, db_eval,
+                   db_eval_sequence)
+from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
 from networks.drn_seg import DRNSeg
-from networks.unet_resnet import Unet
+from networks.unet import Unet
+from networks.fpn import FPN
 from networks.vgg_osvos import OSVOSVgg
 from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
@@ -19,53 +23,81 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 
-def run_loader(model, loader, img_save_dir=None):
+def run_loader(model, loader, loss_func, img_save_dir=None):
     device = next(model.parameters()).device
-    run_loss = []
+
+    metrics = {n: [] for n in ['loss', 'acc']}
+
     with torch.no_grad():
         for sample_batched in loader:
-            img, gt, fname = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
-            inputs, gts = img.to(device), gt.to(device)
+            imgs, gts, fnames = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
+            inputs, gts = imgs.to(device), gts.to(device)
             outputs = model.forward(inputs)
 
-            loss = class_balanced_cross_entropy_loss(
-                outputs[-1], gts, size_average=False)
-            run_loss.append(loss.item())
+            if loss_func == 'cross_entropy':
+                loss = class_balanced_cross_entropy_loss(outputs[-1], gts)
+            elif loss_func == 'dice':
+                loss = dice_loss(outputs[-1], gts)
+            else:
+                raise NotImplementedError
+
+            metrics['loss'].append(loss.item())
+
+            preds = torch.sigmoid(outputs[-1])
+            preds = preds >= 0.5
+            metrics['acc'].append(preds.eq(gts.byte()).sum().float().div(preds.numel()).item())
 
             if img_save_dir is not None:
-                pred = torch.sigmoid(outputs[-1])
-                pred = pred >= 0.5
-                pred = 255 * pred
+                preds = 255 * preds
+                preds = np.transpose(preds.cpu().numpy(), (0, 2, 3, 1)).astype(np.uint8)
 
-                # print(pred.float().eq(gts).sum())
-                for sample_i in range(inputs.size(0)):
-                    imageio.imsave(
-                        os.path.join(img_save_dir, os.path.basename(fname[sample_i]) + '.png'),
-                        np.transpose(pred[sample_i].cpu().numpy(),
-                                     (1, 2, 0)).astype(np.uint8))
+                for fname, pred in zip(fnames, preds):
+                    pred_path = os.path.join(img_save_dir, os.path.basename(fname) + '.png')
+                    imageio.imsave(pred_path, pred)
 
-    return torch.tensor(run_loss).mean()
+    metrics = {n: torch.tensor(m).mean().item() for n, m in metrics.items()}
+    return metrics['loss'], metrics['acc']
+
+
+def eval_loader(model, loader, loss_func, img_save_dir=None):
+    seq_name = loader.dataset.seqs
+
+    if img_save_dir is None:
+        img_save_dir = tempfile.mkdtemp()
+        os.makedirs(os.path.join(img_save_dir, seq_name))
+
+    loss, acc = run_loader(model, loader, loss_func, os.path.join(img_save_dir, seq_name))
+    
+    evaluation = eval_davis_seq(img_save_dir, seq_name)
+
+    if '/tmp/' in img_save_dir:
+        shutil.rmtree(img_save_dir)
+
+    return loss, acc, evaluation['J']['mean'][0], evaluation['F']['mean'][0]
 
 
 def train_val(model, train_loader, val_loader, optim, num_epochs,
-              num_ave_grad, seed, _log, early_stopping_func=None):
+              seed, _log, early_stopping_func=None,
+              validate_inter=None, loss_func='cross_entropy'):
     device = next(model.parameters()).device
 
-    train_loss_hist = []
-    val_losses = []
+    metrics_names = ['train_loss', 'val_loss', 'val_J', 'val_F', 'val_acc']
+    metrics = {n: [] for n in metrics_names}
+
     ave_grad = 0
 
     if early_stopping_func is None:
         early_stopping_func = lambda loss_hist: False
 
-    if _log is not None:
-        seq_name = train_loader.dataset.seqs
-        _log.info(f"Train OSVOS online - SEQUENCE: {seq_name}")
+    # if _log is not None:
+    #     seq_name = train_loader.dataset.seqs
+    #     _log.info(f"Train OSVOS online - SEQUENCE: {seq_name}")
 
     if num_epochs is None:
         epoch_iter = count()
     else:
-        epoch_iter = range(num_epochs * num_ave_grad)
+        epoch_iter = range(1, num_epochs + 1)
+
     for epoch in epoch_iter:
         set_random_seeds(seed + epoch)
         for _, sample_batched in enumerate(train_loader):
@@ -74,41 +106,37 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
 
             outputs = model(inputs)
 
-            # Compute the fuse loss
-            loss = class_balanced_cross_entropy_loss(
-                outputs[-1], gts, size_average=False)
-            train_loss_hist.append(loss.item())
+            if loss_func == 'cross_entropy':
+                loss = class_balanced_cross_entropy_loss(outputs[-1], gts)
+            elif loss_func == 'dice':
+                loss = dice_loss(outputs[-1], gts)
+            else:
+                raise NotImplementedError
+            metrics['train_loss'].append(loss.item())
 
-            loss /= num_ave_grad
             loss.backward()
             ave_grad += 1
 
-            # Update the weights once in num_ave_grad forward passes
-            if ave_grad % num_ave_grad == 0:
-                optim.step()
-                model.zero_grad()
-                ave_grad = 0
+            optim.step()
+            model.zero_grad()
+            ave_grad = 0
 
-                if val_loader is not None:
-                    val_loss = run_loader(model, val_loader)
-                    val_losses.append(val_loss.item())
+            if validate_inter is not None and epoch % validate_inter == 0:
+                val_loss, val_acc, val_J, val_F = eval_loader(model, val_loader, loss_func)
+                metrics['val_loss'].append(val_loss)
+                metrics['val_acc'].append(val_acc)
+                metrics['val_J'].append(val_J)
+                metrics['val_F'].append(val_F)
+                print(f"Epoch: {epoch} J: {val_J} LOSS: {val_loss}")
 
-            if early_stopping_func(train_loss_hist):
+            if early_stopping_func(metrics['train_loss']):
                 break
 
-        if early_stopping_func(train_loss_hist):
+        if early_stopping_func(metrics['train_loss']):
             break
 
-    if _log is not None:
-        _log.info(
-            f'RUN TRAIN loss: {torch.tensor(train_loss_hist).mean().item():.2f}')
-        if val_loader is not None:
-            _log.info(f'LAST VAL loss: {val_losses[-1]:.2f}')
-
-            best_val_epoch = torch.tensor(val_losses).argmin()
-            best_val_loss = torch.tensor(val_losses)[best_val_epoch]
-            _log.info(f'BEST VAL loss/epoch: {best_val_loss:.2f}/{best_val_epoch + 1}')
-    return torch.tensor(train_loss_hist).mean(), val_losses
+    metrics = {n: torch.tensor(m) for n, m in metrics.items()}
+    return metrics['train_loss'], metrics['val_loss'], metrics['val_acc'], metrics['val_J'], metrics['val_F']
 
 
 def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
@@ -149,6 +177,10 @@ def init_parent_model(cfg):
         model = DRNSeg('DRN_D_22', 1, pretrained=True)
     elif 'UNET_ResNet18' in base_path:
         model = Unet('resnet18', classes=1, activation='softmax')
+    elif 'UNET_ResNet34' in base_path:
+        model = Unet('resnet34', classes=1, activation='softmax')
+    elif 'FPN_ResNet34' in base_path:
+        model = FPN('resnet34', classes=1, activation='softmax', dropout=0.0)
     else:
         raise NotImplementedError
 
@@ -168,7 +200,7 @@ def early_stopping(loss_hist, patience, min_loss_improv):
     best_loss = torch.tensor(loss_hist).min()
     prev_best_loss = torch.tensor(loss_hist[:-patience]).min()
 
-    if torch.ge(best_loss.sub(prev_best_loss).abs(), min_loss_improv):
+    if torch.gt(best_loss.sub(prev_best_loss).abs(), min_loss_improv):
         return False
     return True
 

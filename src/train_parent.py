@@ -9,21 +9,22 @@ from datetime import datetime
 
 from networks.vgg_osvos import OSVOSVgg
 from networks.drn_seg import DRNSeg
-from networks.unet_resnet import Unet
+from networks.unet import Unet
+from networks.fpn import FPN
 import numpy as np
 
 import torch
 import torch.optim as optim
 from dataloaders import custom_transforms as tr
 from dataloaders import davis_2016 as db
-from layers.osvos_layers import class_balanced_cross_entropy_loss
+from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
 from mypath import Path
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from util import visualize as viz
-from util.helper_func import (run_loader, eval_davis_seq)
+from util.helper_func import (eval_loader, eval_davis_seq)
 
 # Select which GPU, -1 if CPU
 gpu_id = 0
@@ -35,14 +36,14 @@ if torch.cuda.is_available():
 # Setting of parameters
 # Parameters in p are used for the name of the model
 p = {
-    'trainBatch': 5,  # Number of Images in each mini-batch
+    'trainBatch': 8,  # Number of Images in each mini-batch
 }
 
 # # Setting other parameters
 resume_epoch = False  # Default is False, change if want to resume
 nEpochs = 240  # Number of epochs for training (nAveGrad * (50000)/(2079/trainBatch))
 useTest = True  # See evolution of the test set when training?
-testBatch = 5  # Testing Batch
+testBatch = 8  # Testing Batch
 nTestInterval = 5  # Run on test set every nTestInterval epochs
 db_root_dir = Path.db_root_dir()
 vis_net = False  # Visualize the network?
@@ -50,6 +51,7 @@ snapshot = 5  # Store a model every snapshot epochs
 nAveGrad = 1
 seed = 123
 log_to_tb = True
+
 save_dir = Path.save_root_dir()
 if not os.path.exists(save_dir):
     os.makedirs(os.path.join(save_dir))
@@ -66,9 +68,12 @@ test_dataset = 'test_seqs'
 # Network definition
 # model_name = 'VGG'
 # model_name = 'DRN_D_22'
-# model_name = 'FPN_ResNet18'
-model_name = 'UNET_ResNet18'
-if model_name == 'VGG':
+# model_name = 'UNET_ResNet18_dice_loss'
+# model_name = 'UNET_ResNet34'
+model_name = 'FPN_ResNet34_dice_loss_adam_lr_1e-5'
+loss_func = 'dice'
+
+if 'VGG' in model_name:
     load_caffe_vgg = True
     num_losses = 5
     lr = 1e-8
@@ -84,7 +89,7 @@ if model_name == 'VGG':
         print("Updating weights from: {}".format(os.path.join(save_dir, file_name)))
         net.load_state_dict(torch.load(os.path.join(save_dir, file_name),
                             map_location=lambda storage, loc: storage))
-elif model_name == 'DRN_D_22':
+elif 'DRN_D_22' in model_name:
     num_losses = 1
     lr = 1e-6
 
@@ -94,15 +99,37 @@ elif model_name == 'DRN_D_22':
         os.path.join(save_dir, 'DRN_D_22', f"DRN_D_22_epoch-{resume_epoch - 1}.pth"),
                      map_location=lambda storage, loc: storage)
         net.load_state_dict(parent_state_dict)
-elif model_name == 'UNET_ResNet18':
+elif 'UNET_ResNet18' in model_name:
     num_losses = 1
-    lr = 1e-6
+    lr = 1e-3
 
     net = Unet('resnet18', classes=1, activation='softmax')
     if resume_epoch:
         parent_state_dict = torch.load(
             os.path.join(save_dir, 'UNET_ResNet18',
                          f"UNET_ResNet18_epoch-{resume_epoch - 1}.pth"),
+            map_location=lambda storage, loc: storage)
+        net.load_state_dict(parent_state_dict)
+elif 'UNET_ResNet34' in model_name:
+    num_losses = 1
+    lr = 1e-7
+
+    net = Unet('resnet34', classes=1, activation='softmax')
+    if resume_epoch:
+        parent_state_dict = torch.load(
+            os.path.join(save_dir, 'UNET_ResNet34',
+                         f"UNET_ResNet34_epoch-{resume_epoch - 1}.pth"),
+            map_location=lambda storage, loc: storage)
+        net.load_state_dict(parent_state_dict)
+elif 'FPN_ResNet34' in model_name:
+    num_losses = 1
+    lr = 1e-5
+
+    net = FPN('resnet34', classes=1, activation='softmax')
+    if resume_epoch:
+        parent_state_dict = torch.load(
+            os.path.join(save_dir, 'FPN_ResNet34',
+                         f"FPN_ResNet34_epoch-{resume_epoch - 1}.pth"),
             map_location=lambda storage, loc: storage)
         net.load_state_dict(parent_state_dict)
 
@@ -139,7 +166,7 @@ if vis_net:
 # Use the following optimizer
 wd = 0.0002
 
-if model_name == 'VGG':
+if 'VGG' in model_name:
     optimizer = optim.SGD([
         {'params': [pr[1] for pr in net.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd,
          'initial_lr': lr},
@@ -158,7 +185,8 @@ if model_name == 'VGG':
         {'params': net.fuse.bias, 'lr': 2 * lr / 100, 'initial_lr': 2 * lr / 100},
     ], lr=lr, momentum=0.9)
 else:
-    optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9)
+    # optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9)
+    optimizer = optim.Adam(net.parameters(), lr=lr)
 
 # Preparation of the data loaders
 # Define augmentation transformations as a composition
@@ -173,10 +201,10 @@ trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num
 # Testing dataset and its iterator
 db_test = db.DAVIS2016(
     seqs=test_dataset, db_root_dir=db_root_dir, transform=tr.ToTensor())
-testloader = DataLoader(db_test, batch_size=testBatch, shuffle=False, num_workers=2)
+test_loader = DataLoader(db_test, batch_size=testBatch, shuffle=False, num_workers=2)
 
 num_img_tr = len(trainloader)
-num_img_ts = len(testloader)
+num_img_ts = len(test_loader)
 running_loss_tr = [0] * num_losses
 running_loss_ts = [0] * num_losses
 loss_tr = []
@@ -200,7 +228,13 @@ for epoch in range(resume_epoch, nEpochs):
         # Compute the losses
         losses = [0] * num_losses
         for i in range(num_losses):
-            losses[i] = class_balanced_cross_entropy_loss(outputs[i], gts, size_average=False)
+            if loss_func == 'cross_entropy':
+                losses[i] = class_balanced_cross_entropy_loss(outputs[i], gts)
+            elif loss_func == 'dice':
+                losses[i] = dice_loss(outputs[i], gts)
+            else:
+                raise NotImplementedError
+
             running_loss_tr[i] += losses[i].item()
         loss = (1 - epoch / nEpochs)*sum(losses[:-1]) + losses[-1]
 
@@ -245,29 +279,24 @@ for epoch in range(resume_epoch, nEpochs):
     # One testing epoch
     if useTest and epoch % nTestInterval == (nTestInterval - 1):
         with torch.no_grad():
-            results_dir = os.path.join(save_dir, model_name, train_dataset, 'results')
-            test_losses = []
-            test_J = []
-            test_F = []
+            metrics_names = ['test_loss', 'test_acc', 'test_J', 'test_F']
+            metrics = {n: [] for n in metrics_names}
+
             for seq_name in db_test.seqs_dict.keys():
-                img_save_dir = os.path.join(results_dir, seq_name)
-                if not os.path.exists(img_save_dir):
-                    os.makedirs(img_save_dir)
-
                 db_test.set_seq(seq_name)
-                test_losses.append(run_loader(net, testloader, img_save_dir=img_save_dir))
+                test_loss, test_acc, test_J, test_F = eval_loader(net, test_loader, loss_func)
+                metrics['test_loss'].append(test_loss)
+                metrics['test_acc'].append(test_acc)
+                metrics['test_J'].append(test_J)
+                metrics['test_F'].append(test_F)
 
-                evaluation = eval_davis_seq(results_dir, seq_name)
-                test_J.append(evaluation['J']['mean'])
-                test_F.append(evaluation['F']['mean'])
+            metrics = {n: torch.tensor(m).mean() for n, m in metrics.items()}
 
-            test_losses = torch.tensor(test_losses).mean()
-            test_J = torch.tensor(test_J).mean()
-            test_F = torch.tensor(test_F).mean()
             if log_to_tb:
-                writer.add_scalar('test_metrics/loss', test_losses, epoch)
-                writer.add_scalar('test_metrics/J_mean', test_J, epoch)
-                writer.add_scalar('test_metrics/F_mean', test_F, epoch)
+                writer.add_scalar('test_metrics/loss', metrics['test_loss'], epoch)
+                writer.add_scalar('test_metrics/acc', metrics['test_acc'], epoch)
+                writer.add_scalar('test_metrics/J_mean', metrics['test_J'], epoch)
+                writer.add_scalar('test_metrics/F_mean', metrics['test_F'], epoch)
 
 if log_to_tb:
     writer.close()

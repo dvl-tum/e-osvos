@@ -10,20 +10,36 @@ bptt_cfg:
 meta_optim_cfg:
     num_layers: 2
     hidden_size: 128
-    lr_range: [0.00000001, 0.00001]                 # [1e-8, 1e-5]
-    lr_mom_init: 0.96
-    optim_func: SGD                                 # optimizer that computes paramter update step witout learning rate
+    # lr_range: [0.00000001, 0.0001]                 # [1e-8, 1e-4]
+    lr_range: [0.00000001, 0.001]                 # [1e-6, 1e-3]
+    init_lr_mom: 0.5
+    optim_func: Adam                                 # optimizer that computes paramter update step witout learning rate
 meta_optim_optim_cfg:
-    lr: 0.001
+    lr: 0.01
     step_in_seq: False
     grad_clip: null                                 # average the gradient every num_ave_grad iterations
+loss_func: dice
 parent_model_cfg:
-    base_path: models/UNET_ResNet18
+    # base_path: models/FPN_ResNet34_lr_1e-5
+    base_path: models/FPN_ResNet34_dice_loss
+    # base_path: models/UNET_ResNet18
+    # base_path: models/DRN_D_22
     split_model_path:
-        # - UNET_ResNet18_epoch-5.pth
-        - train_split_1_train/UNET_ResNet18_epoch-70.pth
-        - train_split_2_train/UNET_ResNet18_epoch-70.pth
-        - train_split_3_train/UNET_ResNet18_epoch-70.pth
+        # - DRN_D_22_epoch-214.pth
+        - train_seqs/FPN_ResNet34_epoch-240.pth
+        # - train_seqs/FPN_ResNet34_lr_1e-5_epoch-240.pth
+        # - train_seqs/UNET_ResNet34_dice_loss_epoch-215.pth
+        # - train_split_1_train/FPN_ResNet34_epoch-240.pth
+        # - train_split_2_train/FPN_ResNet34_epoch-240.pth
+        # - train_split_3_train/FPN_ResNet34_epoch-240.pth
+        # - train_split_1_train/UNET_ResNet18_epoch-240.pth
+        # - train_split_2_train/UNET_ResNet18_epoch-240.pth
+        # - train_split_3_train/UNET_ResNet18_epoch-240.pth
+    split_val_file_path:
+        - data/DAVIS-2016/test_seqs.txt
+        # - data/DAVIS-2016/train_split_1_val.txt
+        # - data/DAVIS-2016/train_split_2_val.txt
+        # - data/DAVIS-2016/train_split_3_val.txt
 train_early_stopping:
     patience: 10
     min_loss_improv: 10
@@ -32,7 +48,7 @@ data:
     random_train_transform: True
     frame_ids:
         train: 0
-        test: 'middle'                                    # integer or str for frame mode, e.g., 'random', 'middle'
+        test: random                                    # integer or str for frame mode, e.g., 'random', 'middle'
     batch_sizes:
         train: 5
         test: 1
