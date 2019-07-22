@@ -25,8 +25,8 @@ from torchvision import transforms
 
 def run_loader(model, loader, loss_func, img_save_dir=None):
     device = next(model.parameters()).device
-
-    metrics = {n: [] for n in ['loss', 'acc']}
+    
+    metrics = {n: [] for n in ['loss_batches', 'acc_batches']}
 
     with torch.no_grad():
         for sample_batched in loader:
@@ -41,11 +41,11 @@ def run_loader(model, loader, loss_func, img_save_dir=None):
             else:
                 raise NotImplementedError
 
-            metrics['loss'].append(loss.item())
+            metrics['loss_batches'].append(loss.item())
 
             preds = torch.sigmoid(outputs[-1])
             preds = preds >= 0.5
-            metrics['acc'].append(preds.eq(gts.byte()).sum().float().div(preds.numel()).item())
+            metrics['acc_batches'].append(preds.eq(gts.byte()).sum().float().div(preds.numel()).item())
 
             if img_save_dir is not None:
                 preds = 255 * preds
@@ -55,8 +55,9 @@ def run_loader(model, loader, loss_func, img_save_dir=None):
                     pred_path = os.path.join(img_save_dir, os.path.basename(fname) + '.png')
                     imageio.imsave(pred_path, pred)
 
-    metrics = {n: torch.tensor(m).mean().item() for n, m in metrics.items()}
-    return metrics['loss'], metrics['acc']
+    # metrics = {n: torch.tensor(m).mean().item() for n, m in metrics.items()}
+    metrics = {n: torch.tensor(m) for n, m in metrics.items()}
+    return metrics['loss_batches'], metrics['acc_batches']
 
 
 def eval_loader(model, loader, loss_func, img_save_dir=None):
@@ -66,14 +67,14 @@ def eval_loader(model, loader, loss_func, img_save_dir=None):
         img_save_dir = tempfile.mkdtemp()
         os.makedirs(os.path.join(img_save_dir, seq_name))
 
-    loss, acc = run_loader(model, loader, loss_func, os.path.join(img_save_dir, seq_name))
+    loss_batches, acc_batches = run_loader(model, loader, loss_func, os.path.join(img_save_dir, seq_name))
     
     evaluation = eval_davis_seq(img_save_dir, seq_name)
 
     if '/tmp/' in img_save_dir:
         shutil.rmtree(img_save_dir)
-
-    return loss, acc, evaluation['J']['mean'][0], evaluation['F']['mean'][0]
+    
+    return loss_batches, acc_batches, evaluation['J']['mean'][0], evaluation['F']['mean'][0]
 
 
 def train_val(model, train_loader, val_loader, optim, num_epochs,
@@ -122,12 +123,11 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
             ave_grad = 0
 
             if validate_inter is not None and epoch % validate_inter == 0:
-                val_loss, val_acc, val_J, val_F = eval_loader(model, val_loader, loss_func)
-                metrics['val_loss'].append(val_loss)
-                metrics['val_acc'].append(val_acc)
+                val_loss_batches, val_acc_batches, val_J, val_F = eval_loader(model, val_loader, loss_func)
+                metrics['val_loss'].append(val_loss_batches.mean())
+                metrics['val_acc'].append(val_acc_batches.mean())
                 metrics['val_J'].append(val_J)
                 metrics['val_F'].append(val_F)
-                print(f"Epoch: {epoch} J: {val_J} LOSS: {val_loss}")
 
             if early_stopping_func(metrics['train_loss']):
                 break
@@ -209,6 +209,7 @@ def grouper(n, iterable, fillvalue=None):
     "grouper(3, 'ABCDEFG', 'x') --> ABC DEF Gxx"
     args = [iter(iterable)] * n
     return zip_longest(fillvalue=fillvalue, *args)
+
 
 def eval_davis(results_dir, seq_name):
     metrics = ['J', 'F']

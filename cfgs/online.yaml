@@ -3,11 +3,13 @@ env_suffix: null
 vis_interval: 1
 parent_model_cfg:
     # base_path: models/FPN_ResNet34
-    base_path: models/FPN_ResNet34_lr_1e-5
+    # base_path: models/FPN_ResNet34_lr_1e-5
     # base_path: models/FPN_ResNet34_dice_loss
     # base_path: models/UNET_ResNet34_dice_loss
+    base_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5
     split_model_path:
-        - train_seqs/FPN_ResNet34_lr_1e-5_epoch-240.pth
+        - train_seqs/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-200.pth
+        # - train_seqs/FPN_ResNet34_lr_1e-5_epoch-240.pth
         # - train_seqs/FPN_ResNet34_epoch-240.pth
         # - train_split_1_train/UNET_ResNet34_dice_loss_epoch-215.pth
         # - train_split_2_train/UNET_ResNet34_dice_loss_epoch-215.pth
@@ -19,8 +21,8 @@ parent_model_cfg:
         # - data/DAVIS-2016/train_split_3_val.txt
 optim_cfg:
     file_dir: models/meta/meta_run_78.model
-    lr: 0.0001                                          # 1e-5
-loss_func: cross_entropy                                       # ['cross_entropy', 'dice']
+    lr: 0.00001                                          # 1e-5
+loss_func: dice                                       # ['cross_entropy', 'dice']
 validate_inter: False
 num_epochs: null
 train_early_stopping:

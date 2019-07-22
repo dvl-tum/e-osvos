@@ -137,8 +137,8 @@ def main(parent_model_cfg, seed, validate_inter, vis_interval, _log, _config,
         model.zero_grad()
 
         with torch.no_grad():
-            test_loss, test_acc, test_J, test_F = eval_loader(model, test_loader, loss_func=loss_func)
-        metrics['init_test_loss'].append(test_loss)
+            test_loss_batches, test_acc, test_J, test_F = eval_loader(model, test_loader, loss_func=loss_func)
+        metrics['init_test_loss'].append(test_loss_batches.mean())
         metrics['init_test_J'].append(test_J)
         metrics['init_test_F'].append(test_F)
         metrics['init_test_acc'].append(test_acc)
@@ -158,8 +158,8 @@ def main(parent_model_cfg, seed, validate_inter, vis_interval, _log, _config,
             vis_dict['val_metrics'].plot([loss, J], i + 1)
 
         with torch.no_grad():
-            test_loss, test_acc, test_J, test_F = eval_loader(model, test_loader, loss_func=loss_func)
-        metrics['test_loss'].append(test_loss)
+            test_loss_batches, test_acc, test_J, test_F = eval_loader(model, test_loader, loss_func=loss_func)
+        metrics['test_loss'].append(test_loss_batches.mean())
         metrics['test_J'].append(test_J)
         metrics['test_F'].append(test_F)
         metrics['test_acc'].append(test_acc)
