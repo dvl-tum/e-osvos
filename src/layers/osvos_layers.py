@@ -87,13 +87,23 @@ def dice_loss(output, label, batch_average=True):
     pred = torch.sigmoid(output)
     smooth = 1.
 
-    pred_flat = pred.view(-1)
-    label_flat = label.view(-1)
-    intersection = pred_flat * label_flat
+    if batch_average:
+        pred_flat = pred.view(-1)
+        label_flat = label.view(-1)
+        intersection = pred_flat * label_flat
 
-    return 1 - ((2. * intersection.sum() + smooth) /
-                (pred_flat.sum() + label_flat.sum() + smooth))
-                # ((pred_flat + label_flat - intersection).sum() + smooth))
+        return 1 - ((2. * intersection.sum() + smooth) /
+                    (pred_flat.sum() + label_flat.sum() + smooth))
+    else:
+        batch_dim = pred.size(0)
+        
+        pred_flat = pred.view(batch_dim, -1)
+        label_flat = label.view(batch_dim, -1)
+        intersection = pred_flat * label_flat
+
+        
+        return 1 - ((2. * intersection.sum(dim=1) + smooth) /
+                    (pred_flat.sum(dim=1) + label_flat.sum(dim=1) + smooth))
 
 
 def center_crop(x, height, width):

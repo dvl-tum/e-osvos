@@ -1,20 +1,20 @@
 seed: 1
-num_processes: 2
+num_processes: 1
 env_suffix: null
 vis_interval: 1
 save_dir: models
 num_epochs: null                                    # if null run meta model until meta_optim returns stop_train=True
 bptt_cfg:
     epochs: 5
-    # runs_per_epoch_extension: 1                     # if num_epochs=None
 meta_optim_cfg:
     num_layers: 2
-    hidden_size: 128
-    # lr_range: [0.00000001, 0.0001]                 # [1e-8, 1e-4]
-    lr_range: [0.00000001, 0.01]                 # [1e-6, 1e-3]
+    hidden_size: 256
+    # lr_range: [0.00000001, 0.0001]                # [1e-8, 1e-4]
+    lr_range: [0.00000001, 0.001]                   # [1e-6, 1e-3]
     init_lr_mom: 0.5
     init_weight_decay: 0.0001
-    optim_func: Adam                                 # optimizer that computes paramter update step witout learning rate
+    optim_func: Adam                                # optimizer that computes paramter update step witout learning rate
+    learn_model_init: False
 meta_optim_optim_cfg:
     lr: 0.01
     step_in_seq: False
@@ -45,16 +45,19 @@ parent_model_cfg:
         # - data/DAVIS-2016/train_split_3_val.txt
 train_early_stopping:
     patience: 10
-    min_loss_improv: 10
+    min_loss_improv: 0.001
 data:
     seq_name: train_seqs                            # [train_seqs, test_seqs, blackswan, ...]
     random_train_transform: True
-    frame_ids:
+    frame_ids:                                      # integer or str for frame mode, e.g., 'random', 'middle'
         train: 0
-        test: middle                                    # integer or str for frame mode, e.g., 'random', 'middle'
+        test: null                                    
+        meta: middle
     batch_sizes:
-        train: 5
-        test: 1
+        train: 16
+        test: 16
+        meta: 1
     shuffles:
         train: True
         test: False
+        meta: False

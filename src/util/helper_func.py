@@ -1,3 +1,4 @@
+import collections
 import os
 import shutil
 import tempfile
@@ -32,20 +33,22 @@ def run_loader(model, loader, loss_func, img_save_dir=None):
         for sample_batched in loader:
             imgs, gts, fnames = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
             inputs, gts = imgs.to(device), gts.to(device)
+            
             outputs = model.forward(inputs)
 
             if loss_func == 'cross_entropy':
                 loss = class_balanced_cross_entropy_loss(outputs[-1], gts)
             elif loss_func == 'dice':
-                loss = dice_loss(outputs[-1], gts)
+                loss = dice_loss(outputs[-1], gts, batch_average=False)
             else:
                 raise NotImplementedError
 
-            metrics['loss_batches'].append(loss.item())
+            metrics['loss_batches'].append(loss)
 
             preds = torch.sigmoid(outputs[-1])
             preds = preds >= 0.5
-            metrics['acc_batches'].append(preds.eq(gts.byte()).sum().float().div(preds.numel()).item())
+            # print(preds.eq(gts.byte()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()).shape)
+            metrics['acc_batches'].append(preds.eq(gts.byte()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()))
 
             if img_save_dir is not None:
                 preds = 255 * preds
@@ -55,8 +58,7 @@ def run_loader(model, loader, loss_func, img_save_dir=None):
                     pred_path = os.path.join(img_save_dir, os.path.basename(fname) + '.png')
                     imageio.imsave(pred_path, pred)
 
-    # metrics = {n: torch.tensor(m).mean().item() for n, m in metrics.items()}
-    metrics = {n: torch.tensor(m) for n, m in metrics.items()}
+    metrics = {n: torch.cat(m).cpu() for n, m in metrics.items()}
     return metrics['loss_batches'], metrics['acc_batches']
 
 
@@ -141,6 +143,7 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
 
 def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
                          shuffles, frame_ids):
+    # train
     train_transforms = []
     if random_train_transform:
         train_transforms.extend([custom_transforms.RandomHorizontalFlip(),
@@ -156,7 +159,8 @@ def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
         db_train, shuffles['train'], batch_sizes['train'])
     train_loader = DataLoader(
         db_train, batch_sampler=batch_sampler, num_workers=0)
-
+    
+    # test
     db_test = db.DAVIS2016(seqs=seq_name,
                            frame_id=frame_ids['test'],
                            transform=custom_transforms.ToTensor())
@@ -166,7 +170,20 @@ def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
         batch_size=batch_sizes['test'],
         num_workers=0)
 
-    return db_train, train_loader, db_test, test_loader
+    if 'meta' not in batch_sizes:
+        return db_train, train_loader, db_test, test_loader
+
+    # meta
+    db_meta = db.DAVIS2016(seqs=seq_name,
+                           frame_id=frame_ids['meta'],
+                           transform=custom_transforms.ToTensor())
+    meta_loader = DataLoader(
+        db_meta,
+        shuffle=shuffles['meta'],
+        batch_size=batch_sizes['meta'],
+        num_workers=0)
+
+    return db_train, train_loader, db_test, test_loader, db_meta, meta_loader
 
 
 def init_parent_model(cfg):
@@ -211,6 +228,15 @@ def grouper(n, iterable, fillvalue=None):
     return zip_longest(fillvalue=fillvalue, *args)
 
 
+def update_dict(d, u):
+    for k, v in u.items():
+        if isinstance(v, collections.Mapping):
+            d[k] = update_dict(d.get(k, {}), v)
+        else:
+            d[k] = v
+    return d
+
+    
 def eval_davis(results_dir, seq_name):
     metrics = ['J', 'F']
     statistics = ['mean', 'recall', 'decay']

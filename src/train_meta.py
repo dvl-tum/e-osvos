@@ -21,7 +21,7 @@ from pytorch_tools.ingredients import (MONGODB_PORT, get_device,
 from pytorch_tools.vis import LineVis, TextVis
 # from sacred.observers import MongoObserver
 from util.helper_func import (datasets_and_loaders, early_stopping, grouper,
-                              init_parent_model, run_loader, eval_loader)
+                              init_parent_model, run_loader, eval_loader, update_dict)
 
 torch.multiprocessing.set_start_method("spawn", force=True)
 torch_ingredient.add_config('cfgs/torch.yaml')
@@ -65,7 +65,7 @@ def init_vis(env_suffix, _config, _run, torch_cfg):
     vis_dict['meta_metrics_vis'] = LineVis(opts, env=run_name, **torch_cfg['vis'])
     vis_dict['meta_metrics_vis'].plot([0] * len(legend), 0)
 
-    db_train, _, _, _ = datasets_and_loaders()  # pylint: disable=E1120
+    db_train, *_ = datasets_and_loaders()  # pylint: disable=E1120
 
     legend = [f"{seq_name}" for seq_name in db_train.seqs_dict.keys()]
     opts = dict(
@@ -101,7 +101,7 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_cfg,
     # device = torch.device(f'cuda:{rank}')
     # meta_device = torch.device(f'cuda:{rank}')
 
-    db_train, train_loader, db_meta, meta_loader = datasets_and_loaders(**data)
+    db_train, train_loader, db_test, test_loader, db_meta, meta_loader = datasets_and_loaders(**data)
 
     model, parent_state_dicts = init_parent_model(parent_model_cfg)
     meta_model, _ = init_parent_model(parent_model_cfg)
@@ -123,11 +123,12 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_cfg,
     seqs_metrics = {'meta_loss': {}, 'test_loss': {}, 'test_J': {}, 'test_F': {}, 'train_loss_hist': {}}
     vis_data_seqs = {}
 
-    # make next_frame_ids mutable
-    next_frame_ids = return_dict['next_frame_ids'].copy()
+    # make next_meta_frame_ids mutable
+    next_meta_frame_ids = return_dict['next_meta_frame_ids'].copy()
 
     for seq_name in seq_names:
         db_train.set_seq(seq_name)
+        db_test.set_seq(seq_name)
         db_meta.set_seq(seq_name)
 
         vis_data_seqs[seq_name] = []
@@ -156,15 +157,14 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_cfg,
         # one epoch corresponds to one random transformed first frame of a sequence
         if num_epochs is None:
             epoch_iter = count(start=1)
-            # epoch_iter = range(bptt_cfg['epochs'] * (1 + i // bptt_cfg['runs_per_epoch_extension']))
         else:
             epoch_iter = range(1, num_epochs + 1)
 
         # meta_loader.dataset.set_random_frame_id()
-        if next_frame_ids[seq_name] is not None:
-            meta_loader.dataset.frame_id = next_frame_ids[seq_name]
+        if next_meta_frame_ids[seq_name] is not None:
+            meta_loader.dataset.frame_id = next_meta_frame_ids[seq_name]
         else:
-            meta_loader.dataset.frame_id = data['frame_ids']['test']
+            meta_loader.dataset.frame_id = data['frame_ids']['meta']
 
         for epoch in epoch_iter:
             set_random_seeds(seed + epoch + i)
@@ -196,7 +196,7 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_cfg,
                     meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
                     meta_inputs, meta_gts = meta_inputs.to(
                         meta_device), meta_gts.to(meta_device)
-
+                    
                     meta_outputs = meta_model(meta_inputs)
 
                     if loss_func == 'cross_entropy':
@@ -250,10 +250,9 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_cfg,
             loss_batches, _ = run_loader(model, meta_loader, loss_func, 'log/meta_results')
             seqs_metrics['meta_loss'][seq_name] = loss_batches.mean()
             
-            # test
-            meta_loader.dataset.frame_id = None
-            loss_batches, _, J, F = eval_loader(model, meta_loader, loss_func)
-            next_frame_ids[seq_name] = loss_batches.argmax().item()
+            loss_batches, _, J, F = eval_loader(model, test_loader, loss_func)
+            
+            next_meta_frame_ids[seq_name] = loss_batches.argmax().item()
             seqs_metrics['test_loss'][seq_name] = loss_batches.mean()
             seqs_metrics['test_J'][seq_name] = J
             seqs_metrics['test_F'][seq_name] = F
@@ -271,7 +270,7 @@ def meta_run(i, rank, seq_names, meta_optim_cfg, parent_model_cfg,
         return_dict['seqs_metrics'] = seqs_metrics
         return_dict['meta_optim_param_grad'] = meta_optim_param_grad
         return_dict['vis_data_seqs'] = vis_data_seqs
-        return_dict['next_frame_ids'] = next_frame_ids
+        return_dict['next_meta_frame_ids'] = next_meta_frame_ids
 
     return seqs_metrics, meta_optim_param_grad
 
@@ -300,10 +299,10 @@ def main(vis_interval, torch_cfg, num_epochs, data, _run, seed, _log, _config,
     meta_optim_optim = torch.optim.Adam(meta_optim.parameters(),
                                         lr=meta_optim_optim_cfg['lr'])
 
-    db_train, _, _, _ = datasets_and_loaders()  # pylint: disable=E1120
+    db_train, *_ = datasets_and_loaders()  # pylint: disable=E1120
 
-    seqs_metrics = {'meta_loss': {}, 'test_loss': {}, 'test_J': {}}
-    next_frame_ids = {n: None for n in db_train.seqs_dict.keys()}
+    seqs_metrics = {'meta_loss': {}, 'test_loss': {}, 'test_J': {}, 'test_F': {}}
+    next_meta_frame_ids = {n: None for n in db_train.seqs_dict.keys()}
     meta_optim_param_grad = {}
 
     for i in count():
@@ -318,7 +317,7 @@ def main(vis_interval, torch_cfg, num_epochs, data, _run, seed, _log, _config,
         for rank, (p, seq_names) in enumerate(zip(processes, grouper(seqs_per_process, db_train.seqs_dict.keys()))):
             seq_names = [n for n in seq_names if n is not None]
             p['return_dict'] = process_manager.dict()
-            p['return_dict']['next_frame_ids'] = {n: next_frame_ids[n] for n in seq_names}
+            p['return_dict']['next_meta_frame_ids'] = {n: next_meta_frame_ids[n] for n in seq_names}
             process_args = [i,  rank, seq_names, meta_optim_cfg, parent_model_cfg,
                             meta_optim_optim_state_dict, meta_optim_state_dict,
                             num_epochs, meta_optim_optim_cfg, bptt_cfg, seed,
@@ -329,9 +328,9 @@ def main(vis_interval, torch_cfg, num_epochs, data, _run, seed, _log, _config,
 
         for p in processes:
             p['process'].join()
-            seqs_metrics.update(p['return_dict']['seqs_metrics'])
+            update_dict(seqs_metrics, p['return_dict']['seqs_metrics'])
             
-            next_frame_ids.update(p['return_dict']['next_frame_ids'])
+            next_meta_frame_ids.update(p['return_dict']['next_meta_frame_ids'])
             for name in meta_optim_param_grad.keys():
                 meta_optim_param_grad[name] += p['return_dict']['meta_optim_param_grad'][name]
 

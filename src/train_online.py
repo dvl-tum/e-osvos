@@ -137,11 +137,11 @@ def main(parent_model_cfg, seed, validate_inter, vis_interval, _log, _config,
         model.zero_grad()
 
         with torch.no_grad():
-            test_loss_batches, test_acc, test_J, test_F = eval_loader(model, test_loader, loss_func=loss_func)
+            test_loss_batches, test_acc_batches, test_J, test_F = eval_loader(model, test_loader, loss_func=loss_func)
         metrics['init_test_loss'].append(test_loss_batches.mean())
         metrics['init_test_J'].append(test_J)
         metrics['init_test_F'].append(test_F)
-        metrics['init_test_acc'].append(test_acc)
+        metrics['init_test_acc'].append(test_acc_batches.mean())
 
         train_loss, val_loss, val_acc, val_J, val_F = train_val(  # pylint: disable=E1120
             model, train_loader, val_loader, optim,
@@ -154,16 +154,13 @@ def main(parent_model_cfg, seed, validate_inter, vis_interval, _log, _config,
         metrics['val_J_hist'].append(val_J)
         metrics['val_F_hist'].append(val_F)
 
-        for i, (loss, J) in enumerate(zip(val_loss, val_J)):
-            vis_dict['val_metrics'].plot([loss, J], i + 1)
-
         with torch.no_grad():
-            test_loss_batches, test_acc, test_J, test_F = eval_loader(model, test_loader, loss_func=loss_func)
+            test_loss_batches, test_acc_batches, test_J, test_F = eval_loader(model, test_loader, loss_func=loss_func)
         metrics['test_loss'].append(test_loss_batches.mean())
         metrics['test_J'].append(test_J)
         metrics['test_F'].append(test_F)
-        metrics['test_acc'].append(test_acc)
-
+        metrics['test_acc'].append(test_acc_batches.mean())
+    
     metrics = {n: m if 'hist' in n else torch.tensor(m)
                for n, m in metrics.items()}
 
@@ -190,6 +187,9 @@ def main(parent_model_cfg, seed, validate_inter, vis_interval, _log, _config,
         )
 
     if validate_inter:
+        for i, (loss, J) in enumerate(zip(torch.stack(metrics['val_loss_hist']).mean(dim=0), torch.stack(metrics['val_J_hist']).mean(dim=0))):
+            vis_dict['val_metrics'].plot([loss, J], i + 1)
+
         patience_metrics = {n: [] for n in ['loss', 'acc', 'J', 'F']}
         for patience in range(1, num_epochs // validate_inter):
             stopped_metrics = {n: [] for n in ['loss', 'acc', 'J', 'F']}
