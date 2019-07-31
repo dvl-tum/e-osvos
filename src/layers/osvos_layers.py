@@ -87,6 +87,10 @@ def dice_loss(output, label, batch_average=True):
     pred = torch.sigmoid(output)
     smooth = 1.
 
+    unlabeled_mask = label.eq(255)
+    label[unlabeled_mask] = 0
+    output[unlabeled_mask] = 0
+
     if batch_average:
         pred_flat = pred.view(-1)
         label_flat = label.view(-1)
@@ -96,12 +100,12 @@ def dice_loss(output, label, batch_average=True):
                     (pred_flat.sum() + label_flat.sum() + smooth))
     else:
         batch_dim = pred.size(0)
-        
+
         pred_flat = pred.view(batch_dim, -1)
         label_flat = label.view(batch_dim, -1)
         intersection = pred_flat * label_flat
 
-        
+
         return 1 - ((2. * intersection.sum(dim=1) + smooth) /
                     (pred_flat.sum(dim=1) + label_flat.sum(dim=1) + smooth))
 
