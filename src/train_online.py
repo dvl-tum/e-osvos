@@ -133,6 +133,7 @@ def main(parent_model_cfg, seed, validate_inter, vis_interval, _log, _config,
         for seqs_list, p_s_d in zip(train_split_X_val_seqs, parent_state_dicts):
             if seq_name in seqs_list:
                 model.load_state_dict(p_s_d)
+        
         model.to(device)
         model.zero_grad()
 

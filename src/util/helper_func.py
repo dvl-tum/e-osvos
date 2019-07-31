@@ -17,23 +17,25 @@ from networks.drn_seg import DRNSeg
 from networks.unet import Unet
 from networks.fpn import FPN
 from networks.vgg_osvos import OSVOSVgg
+from networks.deeplab import DeepLab
 from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from meta_stopping.meta_optim import MetaOptimizer
 
 
 def run_loader(model, loader, loss_func, img_save_dir=None):
     device = next(model.parameters()).device
-    
+
     metrics = {n: [] for n in ['loss_batches', 'acc_batches']}
 
     with torch.no_grad():
         for sample_batched in loader:
             imgs, gts, fnames = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
             inputs, gts = imgs.to(device), gts.to(device)
-            
+
             outputs = model.forward(inputs)
 
             if loss_func == 'cross_entropy':
@@ -70,12 +72,12 @@ def eval_loader(model, loader, loss_func, img_save_dir=None):
         os.makedirs(os.path.join(img_save_dir, seq_name))
 
     loss_batches, acc_batches = run_loader(model, loader, loss_func, os.path.join(img_save_dir, seq_name))
-    
+
     evaluation = eval_davis_seq(img_save_dir, seq_name)
 
     if '/tmp/' in img_save_dir:
         shutil.rmtree(img_save_dir)
-    
+
     return loss_batches, acc_batches, evaluation['J']['mean'][0], evaluation['F']['mean'][0]
 
 
@@ -97,7 +99,7 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
     #     _log.info(f"Train OSVOS online - SEQUENCE: {seq_name}")
 
     if num_epochs is None:
-        epoch_iter = count()
+        epoch_iter = count(start=1)
     else:
         epoch_iter = range(1, num_epochs + 1)
 
@@ -119,8 +121,10 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
 
             loss.backward()
             ave_grad += 1
-
-            optim.step()
+            if isinstance(optim, MetaOptimizer):
+                optim.train_loss = loss.detach()
+            with torch.no_grad():
+                optim.step()
             model.zero_grad()
             ave_grad = 0
 
@@ -159,7 +163,7 @@ def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
         db_train, shuffles['train'], batch_sizes['train'])
     train_loader = DataLoader(
         db_train, batch_sampler=batch_sampler, num_workers=0)
-    
+
     # test
     db_test = db.DAVIS2016(seqs=seq_name,
                            frame_id=frame_ids['test'],
@@ -186,28 +190,30 @@ def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
     return db_train, train_loader, db_test, test_loader, db_meta, meta_loader
 
 
-def init_parent_model(cfg):
-    base_path = cfg['base_path']
-    if 'VGG' in base_path:
+def init_parent_model(parent_model_path):
+    if 'VGG' in parent_model_path:
         model = OSVOSVgg(pretrained=0)
-    elif 'DRN_D_22' in base_path:
+    elif 'DRN_D_22' in parent_model_path:
         model = DRNSeg('DRN_D_22', 1, pretrained=True)
-    elif 'UNET_ResNet18' in base_path:
+    elif 'UNET_ResNet18' in parent_model_path:
         model = Unet('resnet18', classes=1, activation='softmax')
-    elif 'UNET_ResNet34' in base_path:
+    elif 'UNET_ResNet34' in parent_model_path:
         model = Unet('resnet34', classes=1, activation='softmax')
-    elif 'FPN_ResNet34' in base_path:
+    elif 'FPN_ResNet34' in parent_model_path:
         model = FPN('resnet34', classes=1, activation='softmax', dropout=0.0)
+    elif 'DeepLab_ResNet101' in parent_model_path:
+        model = DeepLab(backbone='resnet', output_stride=16, num_classes=1, freeze_bn=True)
     else:
         raise NotImplementedError
 
-    parent_state_dicts = []
-    for p in cfg['split_model_path']:
-        split_model_path = os.path.join(cfg['base_path'], p)
-        parent_state_dicts.append(torch.load(
-            split_model_path, map_location=lambda storage, loc: storage))
+    parent_state_dict = torch.load(parent_model_path, map_location=lambda storage, loc: storage)
+
+    if 'DeepLab_ResNet101' in parent_model_path:
+        parent_state_dict = parent_state_dict['state_dict']
+        parent_state_dicts['decoder.last_conv.8.weight'] = model.state_dict()['decoder.last_conv.8.weight'].clone()
+        parent_state_dicts['decoder.last_conv.8.bias'] = model.state_dict()['decoder.last_conv.8.bias'].clone()
     # model.load_state_dict(parent_state_dict)
-    return model, parent_state_dicts
+    return model, parent_state_dict
 
 
 def early_stopping(loss_hist, patience, min_loss_improv):
@@ -236,7 +242,7 @@ def update_dict(d, u):
             d[k] = v
     return d
 
-    
+
 def eval_davis(results_dir, seq_name):
     metrics = ['J', 'F']
     statistics = ['mean', 'recall', 'decay']
