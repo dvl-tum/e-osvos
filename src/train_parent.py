@@ -16,7 +16,8 @@ import numpy as np
 import torch
 import torch.optim as optim
 from dataloaders import custom_transforms as tr
-from dataloaders import davis_2016 as db
+from dataloaders import davis_2016
+from dataloaders import pascal_voc
 from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
 from mypath import Path
 from tensorboardX import SummaryWriter
@@ -24,7 +25,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from util import visualize as viz
-from util.helper_func import (eval_loader, eval_davis_seq)
+from util.helper_func import (run_loader, eval_loader, eval_davis_seq)
 
 # Select which GPU, -1 if CPU
 gpu_id = 0
@@ -41,7 +42,7 @@ p = {
 
 # # Setting other parameters
 resume_epoch = False  # Default is False, change if want to resume
-nEpochs = 240  # Number of epochs for training (nAveGrad * (50000)/(2079/trainBatch))
+nEpochs = 500  # Number of epochs for training (nAveGrad * (50000)/(2079/trainBatch))
 useTest = True  # See evolution of the test set when training?
 testBatch = 8  # Testing Batch
 nTestInterval = 5  # Run on test set every nTestInterval epochs
@@ -60,8 +61,9 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
-train_dataset = 'train_seqs'
-test_dataset = 'test_seqs'
+train_dataset = 'pascal_voc'
+# train_dataset = 'train_seqs'
+# test_dataset = 'test_seqs'
 # train_dataset = 'train_split_3_train'
 # test_dataset = 'train_split_3_val'
 
@@ -70,8 +72,9 @@ test_dataset = 'test_seqs'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34_dice_loss_adam_lr_1e-5'
+model_name = 'FPN_ResNet34_dice_loss_adam_lr_1e-5_500_epochs'
 loss_func = 'dice'
+
 
 if 'VGG' in model_name:
     load_caffe_vgg = True
@@ -188,20 +191,28 @@ else:
     # optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9)
     optimizer = optim.Adam(net.parameters(), lr=lr)
 
-# Preparation of the data loaders
-# Define augmentation transformations as a composition
-composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
-                                          tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
-                                          tr.ToTensor()])
-# Training dataset and its iterator
-db_train = db.DAVIS2016(seqs=train_dataset, input_res=None,
-                        db_root_dir=db_root_dir, transform=composed_transforms)
-trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num_workers=2)
+if 'pascal_voc' not in train_dataset:
+    # Preparation of the data loaders
+    # Define augmentation transformations as a composition
+    composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
+                                            tr.ScaleNRotate(
+                                                rots=(-30, 30), scales=(.75, 1.25)),
+                                            tr.ToTensor()])
+    # Training dataset and its iterator
+    db_train = davis_2016.DAVIS2016(seqs=train_dataset, input_res=None,
+                                    db_root_dir=db_root_dir, transform=composed_transforms)
 
-# Testing dataset and its iterator
-db_test = db.DAVIS2016(
-    seqs=test_dataset, db_root_dir=db_root_dir, transform=tr.ToTensor())
-test_loader = DataLoader(db_test, batch_size=testBatch, shuffle=False, num_workers=2)
+    # Testing dataset and its iterator
+    db_test = davis_2016.DAVIS2016(
+        seqs=test_dataset, db_root_dir=db_root_dir, transform=tr.ToTensor())
+else:
+    db_train = pascal_voc.VOC2012(split='train')
+    db_test = pascal_voc.VOC2012(split='val')
+
+trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num_workers=2)
+test_loader = DataLoader(db_test, batch_size=testBatch,
+                         shuffle=False, num_workers=2)
+
 
 num_img_tr = len(trainloader)
 num_img_ts = len(test_loader)
@@ -282,13 +293,21 @@ for epoch in range(resume_epoch, nEpochs):
             metrics_names = ['test_loss', 'test_acc', 'test_J', 'test_F']
             metrics = {n: [] for n in metrics_names}
 
-            for seq_name in db_test.seqs_dict.keys():
-                db_test.set_seq(seq_name)
-                test_loss, test_acc, test_J, test_F = eval_loader(net, test_loader, loss_func)
-                metrics['test_loss'].append(test_loss)
-                metrics['test_acc'].append(test_acc)
-                metrics['test_J'].append(test_J)
-                metrics['test_F'].append(test_F)
+            if train_dataset == 'pascal_voc':
+                test_loss_batches, test_acc_batches = run_loader(net, test_loader, loss_func)
+                metrics['test_loss'].append(test_loss_batches.mean())
+                metrics['test_acc'].append(test_acc_batches.mean())
+                metrics['test_J'].append(0.0)
+                metrics['test_F'].append(0.0)
+            else:
+                for seq_name in db_test.seqs_dict.keys():
+                    db_test.set_seq(seq_name)
+                    test_loss_batches, test_acc_batches, test_J, test_F = eval_loader(
+                        net, test_loader, loss_func)
+                    metrics['test_loss'].append(test_loss_batches.mean())
+                    metrics['test_acc'].append(test_acc_batches.mean())
+                    metrics['test_J'].append(test_J)
+                    metrics['test_F'].append(test_F)
 
             metrics = {n: torch.tensor(m).mean() for n, m in metrics.items()}
 
