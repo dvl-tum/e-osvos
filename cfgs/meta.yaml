@@ -4,7 +4,7 @@ env_suffix: null
 vis_interval: 1
 val_seq_name: test_seqs
 save_dir: models
-num_epochs: null                                    # if null run meta model until meta_optim returns stop_train=True
+num_epochs: 30                                    # if null run meta model until meta_optim returns stop_train=True
 bptt_epochs: 10
 meta_optim_cfg:
     num_layers: 2
@@ -18,11 +18,13 @@ meta_optim_cfg:
 meta_optim_optim_cfg:
     model_init_lr: 0.00001
     log_init_lr_lr: 0.1
-    lr: 0.01
+    lr: 0.001
     step_in_seq: False
     grad_clip: null                                 # average the gradient every num_ave_grad iterations
 loss_func: dice
+# parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/train_seqs/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-240.pth
 parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/pascal_voc/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-200.pth
+# parent_model_path: models/FPN_ResNet101_dice_loss_adam_lr_1e-5_500_epochs/pascal_voc/FPN_ResNet101_dice_loss_adam_lr_1e-5_500_epochs_epoch-500.pth
 # # base_path: models/FPN_ResNet34_lr_1e-5
 # # base_path: models/FPN_ResNet34_dice_loss
 # # base_path: models/UNET_ResNet18
@@ -48,7 +50,7 @@ parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/pascal_voc/FPN_Res
 #     # - data/DAVIS-2016/train_split_2_val.txt
 #     # - data/DAVIS-2016/train_split_3_val.txt
 train_early_stopping_cfg:
-    patience: 1
+    patience: null
     min_loss_improv: 0.001
 data_cfg:
     seq_name: train_seqs                            # [train_seqs, test_seqs, blackswan, ...]

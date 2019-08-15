@@ -72,7 +72,7 @@ train_dataset = 'pascal_voc'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34_dice_loss_adam_lr_1e-5_500_epochs'
+model_name = 'FPN_ResNet101_dice_loss_adam_lr_1e-5_500_epochs'
 loss_func = 'dice'
 
 
@@ -124,15 +124,15 @@ elif 'UNET_ResNet34' in model_name:
                          f"UNET_ResNet34_epoch-{resume_epoch - 1}.pth"),
             map_location=lambda storage, loc: storage)
         net.load_state_dict(parent_state_dict)
-elif 'FPN_ResNet34' in model_name:
+elif 'FPN_ResNet101' in model_name:
     num_losses = 1
     lr = 1e-5
 
-    net = FPN('resnet34', classes=1, activation='softmax')
+    net = FPN('resnet101', classes=1, activation='softmax')
     if resume_epoch:
         parent_state_dict = torch.load(
-            os.path.join(save_dir, 'FPN_ResNet34',
-                         f"FPN_ResNet34_epoch-{resume_epoch - 1}.pth"),
+            os.path.join(save_dir, 'FPN_ResNet101',
+                         f"FPN_ResNet101_epoch-{resume_epoch - 1}.pth"),
             map_location=lambda storage, loc: storage)
         net.load_state_dict(parent_state_dict)
 

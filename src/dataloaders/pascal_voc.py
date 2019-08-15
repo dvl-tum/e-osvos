@@ -150,6 +150,7 @@ class ToTensor(object):
 
         # remove semantic classes and make pascal voc foreground background segmentation
         mask[mask.ne(0) - mask.eq(255)] = 1
+        mask = mask.unsqueeze(dim=0)
 
         return {'image': img,
                 'gt': mask}

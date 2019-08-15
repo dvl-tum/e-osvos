@@ -86,7 +86,7 @@ def class_balanced_cross_entropy_loss_theoretical(output, label, size_average=Tr
 def dice_loss(output, label, batch_average=True):
     pred = torch.sigmoid(output)
     smooth = 1.
-
+    
     unlabeled_mask = label.eq(255)
     label[unlabeled_mask] = 0
     output[unlabeled_mask] = 0

@@ -23,7 +23,6 @@ from pytorch_tools.vis import LineVis, TextVis
 from util.helper_func import (datasets_and_loaders, early_stopping, grouper, train_val,
                               init_parent_model, run_loader, eval_loader, update_dict)
 
-torch.multiprocessing.set_start_method("spawn", force=True)
 torch_ingredient.add_config('cfgs/torch.yaml')
 
 ex = sacred.Experiment('osvos-meta', ingredients=[torch_ingredient])
@@ -96,17 +95,17 @@ def init_vis(env_suffix, _config, _run, val_seq_name, torch_cfg):
     return vis_dict
 
 
-def meta_run(i, rank, seq_names, meta_optim_optim_state_dict, meta_optim_state_dict, 
-             meta_optim_param_grad, next_meta_frame_ids, _config, return_dict):
+def meta_run(i, rank, seq_names, meta_optim_state_dict, meta_optim_param_grad,
+             next_train_frame_ids, next_meta_frame_ids, _config, return_dict):
     loss_func = _config['loss_func']
     num_epochs = _config['num_epochs']
 
     torch.backends.cudnn.fastest = False
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
-    
+
     set_random_seeds(_config['seed'])
-    
+
     device = torch.device(f'cuda:{(2 * rank) + 1}')
     meta_device = torch.device(f'cuda:{(2 * rank + 1) + 1}')
 
@@ -153,14 +152,19 @@ def meta_run(i, rank, seq_names, meta_optim_optim_state_dict, meta_optim_state_d
         else:
             epoch_iter = range(1, num_epochs + 1)
 
-        if next_meta_frame_ids[seq_name] is not None:
-            meta_loader.dataset.frame_id = next_meta_frame_ids[seq_name]
+        if next_train_frame_ids[seq_name] is not None:
+            db_train.frame_id = next_train_frame_ids[seq_name]
         else:
-            meta_loader.dataset.frame_id = _config['data_cfg']['frame_ids']['meta']
+            db_train.frame_id = _config['data_cfg']['frame_ids']['train']
+
+        if next_meta_frame_ids[seq_name] is not None:
+            db_meta.frame_id = next_meta_frame_ids[seq_name]
+        else:
+            db_meta.frame_id = _config['data_cfg']['frame_ids']['meta']
 
         for epoch in epoch_iter:
             set_random_seeds(_config['seed'] + epoch)
-            
+
             for train_batch in train_loader:
                 train_inputs, train_gts = train_batch['image'], train_batch['gt']
                 train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
@@ -248,7 +252,7 @@ def meta_run(i, rank, seq_names, meta_optim_optim_state_dict, meta_optim_state_d
 
         # normalize over epochs
         for name, grad in meta_optim_param_grad_seq.items():
-            meta_optim_param_grad[name] += grad.cpu() / epoch
+            meta_optim_param_grad[name] += grad.cpu()
 
     return_dict['seqs_metrics'] = seqs_metrics
     return_dict['vis_data_seqs'] = vis_data_seqs
@@ -257,7 +261,7 @@ def meta_run(i, rank, seq_names, meta_optim_optim_state_dict, meta_optim_state_d
 def validate(meta_optim_state_dict, _config, return_dict):
     seed = _config['seed']
     loss_func = _config['loss_func']
-    
+
     torch.backends.cudnn.fastest = False
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
@@ -279,7 +283,8 @@ def validate(meta_optim_state_dict, _config, return_dict):
     data_cfg['seq_name'] = _config['val_seq_name']
     db_train, train_loader, db_test, test_loader, *_ = datasets_and_loaders(**data_cfg)  # pylint: disable=E1120
 
-    def early_stopping_func(loss_hist): return early_stopping(loss_hist, **_config['train_early_stopping_cfg'])
+    def early_stopping_func(loss_hist):
+        return early_stopping(loss_hist, **_config['train_early_stopping_cfg'])
 
     init_test_J_seq = []
     test_J_seq = []
@@ -309,6 +314,8 @@ def validate(meta_optim_state_dict, _config, return_dict):
 
 @ex.automain
 def main(vis_interval, save_dir, num_processes, meta_optim_optim_cfg, seed, _config):
+    mp.set_start_method("spawn")
+
     if not os.path.exists(save_dir):
         os.makedirs(os.path.join(save_dir))
     set_random_seeds(seed)
@@ -337,9 +344,6 @@ def main(vis_interval, save_dir, num_processes, meta_optim_optim_cfg, seed, _con
 
     del model
     del meta_model
-    # meta_optim.to(device)
-    # meta_model.to(device)
-    # model.to(device)
 
     meta_optim_params = [{'params': [p for n, p in meta_optim.named_parameters() if 'model_init' in n], 'lr': meta_optim_optim_cfg['model_init_lr']},
                          {'params': [p for n, p in meta_optim.named_parameters() if 'log_init_lr' in n], 'lr': meta_optim_optim_cfg['log_init_lr_lr']},
@@ -348,6 +352,7 @@ def main(vis_interval, save_dir, num_processes, meta_optim_optim_cfg, seed, _con
                                         lr=meta_optim_optim_cfg['lr'])
 
     seqs_metrics = {'train_loss': {}, 'meta_loss': {}, 'loss': {}, 'J': {}, 'F': {}}
+    next_train_frame_ids = process_manager.dict({n: None for n in db_train.seqs_dict.keys()})
     next_meta_frame_ids = process_manager.dict({n: None for n in db_train.seqs_dict.keys()})
     meta_optim_param_grad = process_manager.dict({name: torch.zeros_like(param).cpu()
                                                   for name, param in meta_optim.named_parameters()})
@@ -371,17 +376,19 @@ def main(vis_interval, save_dir, num_processes, meta_optim_optim_cfg, seed, _con
         for seq_name in db_train.seqs_dict.keys():
             db_train.set_seq(seq_name)
             db_train.set_random_frame_id()
+            next_train_frame_ids[seq_name] = db_train.frame_id
+            db_train.set_random_frame_id()
             next_meta_frame_ids[seq_name] = db_train.frame_id
-        
-        # start processes 
+
+        # start processes
         for rank, (p, seq_names) in enumerate(zip(meta_processes, grouper(seqs_per_process, db_train.seqs_dict.keys()))):
             # filter None values from grouper
             seq_names = [n for n in seq_names if n is not None]
 
             p['return_dict'] = process_manager.dict()
 
-            process_args = [i, rank, seq_names, meta_optim_optim.state_dict(),
-                            meta_optim.state_dict(), meta_optim_param_grad,
+            process_args = [i, rank, seq_names, meta_optim.state_dict(),
+                            meta_optim_param_grad, next_train_frame_ids,
                             next_meta_frame_ids, _config, p['return_dict']]
             p['process'] = mp.Process(target=meta_run, args=process_args)
             p['process'].start()
@@ -403,7 +410,7 @@ def main(vis_interval, save_dir, num_processes, meta_optim_optim_cfg, seed, _con
         # visualize meta runs
         if vis_interval is not None and (i == 1 or not i % vis_interval):
             meta_metrics = [torch.tensor(list(m.values())).mean() for m in seqs_metrics.values()]
-            meta_metrics.append((timeit.default_timer() - start_time) / 60)                
+            meta_metrics.append((timeit.default_timer() - start_time) / 60)
 
             vis_dict['meta_metrics_vis'].plot(meta_metrics, i)
 
@@ -412,8 +419,8 @@ def main(vis_interval, save_dir, num_processes, meta_optim_optim_cfg, seed, _con
         for name, param in meta_optim.named_parameters():
             param.grad = meta_optim_param_grad[name] / len(db_train.seqs_dict)
 
-            if meta_optim_optim_cfg['grad_clip'] is not None:
-                grad_clip = meta_optim_optim_cfg['grad_clip']
+            grad_clip = meta_optim_optim_cfg['grad_clip']
+            if grad_clip is not None:
                 param.grad.clamp_(-1.0 * grad_clip, grad_clip)
 
         meta_optim_optim.step()
@@ -422,11 +429,11 @@ def main(vis_interval, save_dir, num_processes, meta_optim_optim_cfg, seed, _con
         if val_process and not val_process['process'].is_alive():
             val_process['process'].join()
 
-            test_J_seq = val_process['return_dict']['test_J_seq']
-            test_J_seq.insert(0, torch.tensor(test_J_seq).mean())
-            test_J_seq.insert(0, torch.tensor(
-                val_process['return_dict']['init_test_J_seq']).mean())
-            vis_dict['val_J_seq_vis'].plot(test_J_seq, val_process['num_meta_run'])
+            val_J_seq_vis = [torch.tensor(val_process['return_dict']['init_test_J_seq']).mean(),
+                             torch.tensor(val_process['return_dict']['test_J_seq']).mean()]
+            val_J_seq_vis.extend(val_process['return_dict']['test_J_seq'])
+
+            vis_dict['val_J_seq_vis'].plot(val_J_seq_vis, val_process['num_meta_run'])
 
             val_process = {}
 

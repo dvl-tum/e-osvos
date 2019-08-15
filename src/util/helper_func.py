@@ -201,6 +201,8 @@ def init_parent_model(parent_model_path):
         model = Unet('resnet34', classes=1, activation='softmax')
     elif 'FPN_ResNet34' in parent_model_path:
         model = FPN('resnet34', classes=1, activation='softmax', dropout=0.0)
+    elif 'FPN_ResNet101' in parent_model_path:
+        model = FPN('resnet101', classes=1, activation='softmax', dropout=0.0)
     elif 'DeepLab_ResNet101' in parent_model_path:
         model = DeepLab(backbone='resnet', output_stride=16, num_classes=1, freeze_bn=True)
     else:
