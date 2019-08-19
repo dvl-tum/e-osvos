@@ -17,7 +17,7 @@ from networks.drn_seg import DRNSeg
 from networks.unet import Unet
 from networks.fpn import FPN
 from networks.vgg_osvos import OSVOSVgg
-from networks.deeplab import DeepLab
+# from networks.deeplab import DeepLab
 from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
@@ -208,8 +208,8 @@ def init_parent_model(parent_model_path):
         model = FPN('resnet34', classes=1, activation='softmax', dropout=0.0)
     elif 'FPN_ResNet101' in parent_model_path:
         model = FPN('resnet101', classes=1, activation='softmax', dropout=0.0)
-    elif 'DeepLab_ResNet101' in parent_model_path:
-        model = DeepLab(backbone='resnet', output_stride=16, num_classes=1, freeze_bn=True)
+    # elif 'DeepLab_ResNet101' in parent_model_path:
+    #     model = DeepLab(backbone='resnet', output_stride=16, num_classes=1, freeze_bn=True)
     else:
         raise NotImplementedError
 

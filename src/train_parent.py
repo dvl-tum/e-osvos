@@ -151,7 +151,7 @@ print(f'NUM MODEL PARAMS - {model_name}: {sum([p.numel() for p in net.parameters
 
 # Logging into Tensorboard
 if log_to_tb:
-    log_dir = os.path.join(save_dir, 'runs', model_name, train_dataset)
+    log_dir = os.path.join('log/tf_runs', model_name, train_dataset)
     writer = SummaryWriter(log_dir=log_dir)
 
 net.to(device)

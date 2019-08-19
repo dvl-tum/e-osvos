@@ -4,6 +4,7 @@ import os
 import random
 import numpy as np
 import cv2
+import torch
 from scipy.misc import imresize
 from collections import OrderedDict
 
@@ -22,7 +23,7 @@ class DAVIS2016(Dataset):
                  seqs='train_seqs',  # ['train_seqs', 'test_seqs', 'blackswan', ...]
                  frame_id=None,
                  input_res=None,
-                 db_root_dir='./data/DAVIS-2016',
+                 db_root_dir='data/DAVIS-2016',
                  transform=None,
                  meanval=(104.00699, 116.66877, 122.67892)):
         """Loads image to label pairs for tool pose estimation
@@ -86,7 +87,7 @@ class DAVIS2016(Dataset):
         self.set_seq(rnd_seq_name)
 
     def set_random_frame_id(self):
-        self.frame_id = random.randint(0, len(self.img_list) - 1)
+        self.frame_id = torch.randint(len(self.img_list), (1,)).item()
 
     def get_seq_id(self):
         return list(self.seqs_dict.keys()).index(self.seqs)
@@ -121,7 +122,7 @@ class DAVIS2016(Dataset):
             if self.frame_id == 'middle':
                 idx = len(self.img_list) // 2
             elif self.frame_id == 'random':
-                idx = random.randint(0, len(self.img_list) - 1)
+                idx = torch.randint(len(self.img_list), (1,)).item()
             else:
                 idx = self.frame_id
         img, gt = self.make_img_gt_pair(idx)
