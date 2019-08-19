@@ -9,7 +9,8 @@ runs/*
 *.pyc
 params.py
 *.mat
-*.txt
 cluster/script.sh
 cluster/train_parent.sh
 experiments/
+.python-version
+*.sbatch
