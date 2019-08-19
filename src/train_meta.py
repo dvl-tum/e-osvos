@@ -92,6 +92,18 @@ def init_vis(env_suffix, _config, _run, val_seq_name, torch_cfg):
             legend=legend)
         vis_dict[f"{seq_name}_model_metrics"] = LineVis(
             opts, env=run_name,  **torch_cfg['vis'])
+
+    model, _ = init_parent_model()
+    legend = ['MEAN'] + [f"{n}" for n, _ in model.named_parameters()]
+    opts = dict(
+        title=f"INIT LR (RUN: {_run._id})",
+        xlabel='NUM META RUNS',
+        ylabel='LR',
+        width=750,
+        height=750,
+        legend=legend)
+    vis_dict['init_lr_vis'] = LineVis(opts, env=run_name, **torch_cfg['vis'])
+
     return vis_dict
 
 
@@ -111,7 +123,7 @@ def meta_run(i, rank, seq_names, meta_optim_state_dict, meta_optim_param_grad,
 
     db_train, train_loader, _, _, db_meta, meta_loader = datasets_and_loaders(**_config['data_cfg'])
 
-    model, _ = init_parent_model(_config['parent_model_path'])
+    model, parent_state_dict = init_parent_model(_config['parent_model_path'])
     meta_model, _ = init_parent_model(_config['parent_model_path'])
 
     meta_optim = MetaOptimizer(model, meta_model, **_config['meta_optim_cfg'])
@@ -139,6 +151,7 @@ def meta_run(i, rank, seq_names, meta_optim_state_dict, meta_optim_param_grad,
         meta_optim_param_grad_seq = {name: torch.zeros_like(param)
                                      for name, param in meta_optim.named_parameters()}
 
+        model.load_state_dict(parent_state_dict)
         meta_optim.load_state_dict(meta_optim_state_dict)
         meta_optim.reset()
 
@@ -162,6 +175,22 @@ def meta_run(i, rank, seq_names, meta_optim_state_dict, meta_optim_param_grad,
         else:
             db_meta.frame_id = _config['data_cfg']['frame_ids']['meta']
 
+        # seq temporal info
+        with torch.no_grad():
+            for train_batch in train_loader:
+                train_inputs, train_gts = train_batch['image'], train_batch['gt']
+                train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
+            for meta_batch in meta_loader:
+                meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
+                meta_inputs, meta_gts = meta_inputs.to(device), meta_gts.to(device)
+
+                meta_outputs = model(meta_inputs)[0]
+                meta_preds = torch.sigmoid(meta_outputs)
+                meta_preds = meta_preds.ge(0.5).float()
+
+                seq_temporal_info = train_gts[0].sub(
+                    meta_preds[0]).abs().mean() * 100
+
         for epoch in epoch_iter:
             set_random_seeds(_config['seed'] + epoch)
 
@@ -180,6 +209,7 @@ def meta_run(i, rank, seq_names, meta_optim_state_dict, meta_optim_param_grad,
                 train_loss_hist.append(train_loss.item())
                 train_loss.backward()
 
+                meta_optim.seq_temporal_info = seq_temporal_info.detach()
                 meta_optim.train_loss = train_loss.detach()
                 meta_model, stop_train = meta_optim.step()
                 model.zero_grad()
@@ -269,7 +299,7 @@ def validate(meta_optim_state_dict, _config, return_dict):
     set_random_seeds(seed)
     device = torch.device(f'cuda:0')
 
-    model, _ = init_parent_model(_config['parent_model_path'])
+    model, parent_state_dict = init_parent_model(_config['parent_model_path'])
     meta_model, _ = init_parent_model(_config['parent_model_path'])
 
     meta_optim = MetaOptimizer(model, meta_model, **_config['meta_optim_cfg'])
@@ -292,12 +322,24 @@ def validate(meta_optim_state_dict, _config, return_dict):
         db_train.set_seq(seq_name)
         db_test.set_seq(seq_name)
 
+        model.load_state_dict(parent_state_dict)
         meta_optim.reset()
         meta_optim.eval()
 
         model.zero_grad()
-        _, _, J, _ = eval_loader(model, test_loader, loss_func)
+        _, _, J, _, preds = eval_loader(model, test_loader, loss_func, return_preds=True)
         init_test_J_seq.append(J)
+
+        # seq temporal info
+        with torch.no_grad():
+            for train_batch in train_loader:
+                train_inputs, train_gts = train_batch['image'], train_batch['gt']
+                train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
+
+            seq_temporal_info = train_gts[0:1].sub(preds.float()).abs()
+            seq_temporal_info = seq_temporal_info.view(seq_temporal_info.size(0), -1).mean(dim=1)
+            seq_temporal_info = seq_temporal_info.max()
+            meta_optim.seq_temporal_info = seq_temporal_info * 100
 
         train_val(  # pylint: disable=E1120
             model, train_loader, None, meta_optim, _config['num_epochs'], seed,
@@ -375,8 +417,8 @@ def main(vis_interval, save_dir, num_processes, meta_optim_optim_cfg, seed, _con
         # set random next frame ids
         for seq_name in db_train.seqs_dict.keys():
             db_train.set_seq(seq_name)
-            db_train.set_random_frame_id()
-            next_train_frame_ids[seq_name] = db_train.frame_id
+            # db_train.set_random_frame_id()
+            # next_train_frame_ids[seq_name] = db_train.frame_id
             db_train.set_random_frame_id()
             next_meta_frame_ids[seq_name] = db_train.frame_id
 
@@ -413,6 +455,10 @@ def main(vis_interval, save_dir, num_processes, meta_optim_optim_cfg, seed, _con
             meta_metrics.append((timeit.default_timer() - start_time) / 60)
 
             vis_dict['meta_metrics_vis'].plot(meta_metrics, i)
+
+            meta_init_lr = [meta_optim.log_init_lr.exp().mean()]
+            meta_init_lr += meta_optim.log_init_lr.exp().detach().numpy().tolist()
+            vis_dict['init_lr_vis'].plot(meta_init_lr, i)
 
         # optimize meta_optim
         meta_optim.zero_grad()

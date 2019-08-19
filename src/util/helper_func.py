@@ -26,11 +26,12 @@ from torchvision import transforms
 from meta_stopping.meta_optim import MetaOptimizer
 
 
-def run_loader(model, loader, loss_func, img_save_dir=None):
+def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
     device = next(model.parameters()).device
 
     metrics = {n: [] for n in ['loss_batches', 'acc_batches']}
 
+    preds_all = []
     with torch.no_grad():
         for sample_batched in loader:
             imgs, gts, fnames = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
@@ -48,7 +49,8 @@ def run_loader(model, loader, loss_func, img_save_dir=None):
             metrics['loss_batches'].append(loss)
 
             preds = torch.sigmoid(outputs[-1])
-            preds = preds >= 0.5
+            preds = preds.ge(0.5)
+            preds_all.append(preds)
             # print(preds.eq(gts.byte()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()).shape)
             metrics['acc_batches'].append(preds.eq(gts.byte()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()))
 
@@ -61,23 +63,26 @@ def run_loader(model, loader, loss_func, img_save_dir=None):
                     imageio.imsave(pred_path, pred)
 
     metrics = {n: torch.cat(m).cpu() for n, m in metrics.items()}
+    if return_preds:
+        return metrics['loss_batches'], metrics['acc_batches'], torch.cat(preds_all)
     return metrics['loss_batches'], metrics['acc_batches']
 
 
-def eval_loader(model, loader, loss_func, img_save_dir=None):
+def eval_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
     seq_name = loader.dataset.seqs
 
     if img_save_dir is None:
         img_save_dir = tempfile.mkdtemp()
         os.makedirs(os.path.join(img_save_dir, seq_name))
 
-    loss_batches, acc_batches = run_loader(model, loader, loss_func, os.path.join(img_save_dir, seq_name))
+    loss_batches, acc_batches, preds = run_loader(model, loader, loss_func, os.path.join(img_save_dir, seq_name), True)
 
     evaluation = eval_davis_seq(img_save_dir, seq_name)
 
     if '/tmp/' in img_save_dir:
         shutil.rmtree(img_save_dir)
-
+    if return_preds:
+        return loss_batches, acc_batches, evaluation['J']['mean'][0], evaluation['F']['mean'][0], preds
     return loss_batches, acc_batches, evaluation['J']['mean'][0], evaluation['F']['mean'][0]
 
 
@@ -112,17 +117,17 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
             outputs = model(inputs)
 
             if loss_func == 'cross_entropy':
-                loss = class_balanced_cross_entropy_loss(outputs[-1], gts)
+                train_loss = class_balanced_cross_entropy_loss(outputs[-1], gts)
             elif loss_func == 'dice':
-                loss = dice_loss(outputs[-1], gts)
+                train_loss = dice_loss(outputs[-1], gts)
             else:
                 raise NotImplementedError
-            metrics['train_loss'].append(loss.item())
+            metrics['train_loss'].append(train_loss.item())
 
-            loss.backward()
+            train_loss.backward()
             ave_grad += 1
             if isinstance(optim, MetaOptimizer):
-                optim.train_loss = loss.detach()
+                optim.train_loss = train_loss.detach()
             with torch.no_grad():
                 optim.step()
             model.zero_grad()

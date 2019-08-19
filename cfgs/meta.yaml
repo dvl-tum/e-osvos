@@ -4,7 +4,7 @@ env_suffix: null
 vis_interval: 1
 val_seq_name: test_seqs
 save_dir: models
-num_epochs: 30                                    # if null run meta model until meta_optim returns stop_train=True
+num_epochs: 5                                    # if null run meta model until meta_optim returns stop_train=True
 bptt_epochs: 10
 meta_optim_cfg:
     num_layers: 2
@@ -14,7 +14,7 @@ meta_optim_cfg:
     init_lr_mom: 0.5
     init_weight_decay: 0.0001
     optim_func: Adam                                # optimizer that computes paramter update step witout learning rate
-    learn_model_init: True
+    learn_model_init: False
 meta_optim_optim_cfg:
     model_init_lr: 0.00001
     log_init_lr_lr: 0.1
@@ -22,8 +22,8 @@ meta_optim_optim_cfg:
     step_in_seq: False
     grad_clip: null                                 # average the gradient every num_ave_grad iterations
 loss_func: dice
-# parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/train_seqs/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-240.pth
-parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/pascal_voc/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-200.pth
+parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/train_seqs/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-240.pth
+# parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/pascal_voc/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-200.pth
 # parent_model_path: models/FPN_ResNet101_dice_loss_adam_lr_1e-5_500_epochs/pascal_voc/FPN_ResNet101_dice_loss_adam_lr_1e-5_500_epochs_epoch-500.pth
 # # base_path: models/FPN_ResNet34_lr_1e-5
 # # base_path: models/FPN_ResNet34_dice_loss
