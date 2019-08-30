@@ -23,7 +23,7 @@ from mypath import Path
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
-
+from davis import cfg as davis_cfg
 from util import visualize as viz
 from util.helper_func import (run_loader, eval_loader, eval_davis_seq)
 
@@ -61,20 +61,29 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
-train_dataset = 'pascal_voc'
+
+davis_cfg.YEAR = 2016
+davis_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+davis_cfg.PATH.DATA = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, db_root_dir))
+davis_cfg.PATH.SEQUENCES = os.path.join(davis_cfg.PATH.DATA, "JPEGImages", davis_cfg.RESOLUTION)
+davis_cfg.PATH.ANNOTATIONS = os.path.join(davis_cfg.PATH.DATA, "Annotations", davis_cfg.RESOLUTION)
+davis_cfg.PATH.PALETTE = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, 'data/palette.txt'))
+
+# train_dataset = 'pascal_voc'
+
 # train_dataset = 'train_seqs'
 # test_dataset = 'test_seqs'
-# train_dataset = 'train_split_3_train'
-# test_dataset = 'train_split_3_val'
+
+train_dataset = 'train_split_1_train'
+test_dataset = 'train_split_1_val'
 
 # Network definition
 # model_name = 'VGG'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet101_dice_loss_adam_lr_1e-5_500_epochs'
+model_name = 'FPN_ResNet34_group_norm'
 loss_func = 'dice'
-
 
 if 'VGG' in model_name:
     load_caffe_vgg = True
@@ -124,15 +133,15 @@ elif 'UNET_ResNet34' in model_name:
                          f"UNET_ResNet34_epoch-{resume_epoch - 1}.pth"),
             map_location=lambda storage, loc: storage)
         net.load_state_dict(parent_state_dict)
-elif 'FPN_ResNet101' in model_name:
+elif 'FPN_ResNet34' in model_name:
     num_losses = 1
     lr = 1e-5
 
-    net = FPN('resnet101', classes=1, activation='softmax')
+    net = FPN('resnet34-group-norm', classes=1, activation='softmax')
     if resume_epoch:
         parent_state_dict = torch.load(
-            os.path.join(save_dir, 'FPN_ResNet101',
-                         f"FPN_ResNet101_epoch-{resume_epoch - 1}.pth"),
+            os.path.join(save_dir, 'FPN_ResNet34',
+                         f"FPN_ResNet34_epoch-{resume_epoch - 1}.pth"),
             map_location=lambda storage, loc: storage)
         net.load_state_dict(parent_state_dict)
 
@@ -200,11 +209,10 @@ if 'pascal_voc' not in train_dataset:
                                             tr.ToTensor()])
     # Training dataset and its iterator
     db_train = davis_2016.DAVIS2016(seqs=train_dataset, input_res=None,
-                                    db_root_dir=db_root_dir, transform=composed_transforms)
+                                    root_dir=db_root_dir, transform=composed_transforms)
 
     # Testing dataset and its iterator
-    db_test = davis_2016.DAVIS2016(
-        seqs=test_dataset, db_root_dir=db_root_dir, transform=tr.ToTensor())
+    db_test = davis_2016.DAVIS2016(seqs=test_dataset, root_dir=db_root_dir, transform=tr.ToTensor())
 else:
     db_train = pascal_voc.VOC2012(split='train')
     db_test = pascal_voc.VOC2012(split='val')
@@ -234,6 +242,7 @@ for epoch in range(resume_epoch, nEpochs):
         inputs.requires_grad_()
         inputs, gts = inputs.to(device), gts.to(device)
 
+        net.train()
         outputs = net.forward(inputs)
 
         # Compute the losses
@@ -292,7 +301,8 @@ for epoch in range(resume_epoch, nEpochs):
         with torch.no_grad():
             metrics_names = ['test_loss', 'test_acc', 'test_J', 'test_F']
             metrics = {n: [] for n in metrics_names}
-
+             
+            net.eval()
             if train_dataset == 'pascal_voc':
                 test_loss_batches, test_acc_batches = run_loader(net, test_loader, loss_func)
                 metrics['test_loss'].append(test_loss_batches.mean())

@@ -99,10 +99,6 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
     if early_stopping_func is None:
         early_stopping_func = lambda loss_hist: False
 
-    # if _log is not None:
-    #     seq_name = train_loader.dataset.seqs
-    #     _log.info(f"Train OSVOS online - SEQUENCE: {seq_name}")
-
     if num_epochs is None:
         epoch_iter = count(start=1)
     else:
@@ -150,7 +146,7 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
     return metrics['train_loss'], metrics['val_loss'], metrics['val_acc'], metrics['val_J'], metrics['val_F']
 
 
-def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
+def datasets_and_loaders(dataset, root_dir, random_train_transform, batch_sizes,
                          shuffles, frame_ids):
     # train
     train_transforms = []
@@ -161,7 +157,8 @@ def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
     train_transforms.append(custom_transforms.ToTensor())
     composed_transforms = transforms.Compose(train_transforms)
 
-    db_train = db.DAVIS2016(seqs=seq_name,
+    db_train = db.DAVIS2016(root_dir=root_dir,
+                            seqs=dataset,
                             frame_id=frame_ids['train'],
                             transform=composed_transforms)
     batch_sampler = EpochSampler(
@@ -170,7 +167,8 @@ def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
         db_train, batch_sampler=batch_sampler, num_workers=0)
 
     # test
-    db_test = db.DAVIS2016(seqs=seq_name,
+    db_test = db.DAVIS2016(root_dir=root_dir,
+                           seqs=dataset,
                            frame_id=frame_ids['test'],
                            transform=custom_transforms.ToTensor())
     test_loader = DataLoader(
@@ -183,7 +181,8 @@ def datasets_and_loaders(seq_name, random_train_transform, batch_sizes,
         return db_train, train_loader, db_test, test_loader
 
     # meta
-    db_meta = db.DAVIS2016(seqs=seq_name,
+    db_meta = db.DAVIS2016(root_dir=root_dir,
+                           seqs=dataset,
                            frame_id=frame_ids['meta'],
                            transform=custom_transforms.ToTensor())
     meta_loader = DataLoader(
@@ -217,8 +216,8 @@ def init_parent_model(parent_model_path):
 
     if 'DeepLab_ResNet101' in parent_model_path:
         parent_state_dict = parent_state_dict['state_dict']
-        parent_state_dicts['decoder.last_conv.8.weight'] = model.state_dict()['decoder.last_conv.8.weight'].clone()
-        parent_state_dicts['decoder.last_conv.8.bias'] = model.state_dict()['decoder.last_conv.8.bias'].clone()
+        parent_state_dict['decoder.last_conv.8.weight'] = model.state_dict()['decoder.last_conv.8.weight'].clone()
+        parent_state_dict['decoder.last_conv.8.bias'] = model.state_dict()['decoder.last_conv.8.bias'].clone()
     # model.load_state_dict(parent_state_dict)
     return model, parent_state_dict
 

@@ -1,8 +1,6 @@
 seed: 1
 num_processes: 1
 env_suffix: null
-vis_interval: 1
-val_seq_name: test_seqs
 save_dir: models
 num_seq_epochs_per_step: 4                          # num of times a seq is processed and gradients are collected for the step
 num_epochs: 5                                       # if null run meta model until meta_optim returns stop_train=True
@@ -23,7 +21,9 @@ meta_optim_optim_cfg:
     step_in_seq: False
     grad_clip: null                                 # average the gradient every num_ave_grad iterations
 loss_func: dice
-parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/train_seqs/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-240.pth
+parent_model_path: models/FPN_ResNet34_batch_norm_fix/train_split_1_train/FPN_ResNet34_batch_norm_fix_epoch-40.pth
+val_parent_model_path: models/FPN_ResNet34_batch_norm_fix/train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
+# parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/pascal_voc/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-240.pth
 # parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/pascal_voc/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-200.pth
 # parent_model_path: models/FPN_ResNet101_dice_loss_adam_lr_1e-5_500_epochs/pascal_voc/FPN_ResNet101_dice_loss_adam_lr_1e-5_500_epochs_epoch-500.pth
 # # base_path: models/FPN_ResNet34_lr_1e-5
@@ -53,8 +53,11 @@ parent_model_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5/train_seqs/FPN_Res
 train_early_stopping_cfg:
     patience: null
     min_loss_improv: 0.001
+datasets:
+    train: train_seqs                            # [train_seqs, test_seqs, blackswan, ...]
+    val: test_seqs
 data_cfg:
-    seq_name: train_seqs                            # [train_seqs, test_seqs, blackswan, ...]
+    root_dir: data/DAVIS-2016
     random_train_transform: True
     frame_ids:                                      # integer or str for frame mode, e.g., 'random', 'middle'
         train: 0

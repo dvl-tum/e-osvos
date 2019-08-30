@@ -23,14 +23,14 @@ class DAVIS2016(Dataset):
                  seqs='train_seqs',  # ['train_seqs', 'test_seqs', 'blackswan', ...]
                  frame_id=None,
                  input_res=None,
-                 db_root_dir='data/DAVIS-2016',
+                 root_dir='data/DAVIS-2016',
                  transform=None,
                  meanval=(104.00699, 116.66877, 122.67892)):
         """Loads image to label pairs for tool pose estimation
-        db_root_dir: dataset directory with subfolders "JPEGImages" and "Annotations"
+        root_dir: dataset directory with subfolders "JPEGImages" and "Annotations"
         """
         self.input_res = input_res
-        self.db_root_dir = db_root_dir
+        self.root_dir = root_dir
         self.transform = transform
         self.meanval = meanval
         self.seqs = seqs
@@ -41,15 +41,15 @@ class DAVIS2016(Dataset):
         labels = []
 
         if '_' in seqs:
-            with open(os.path.join(db_root_dir, f'{seqs}.txt')) as f:
+            with open(os.path.join(root_dir, f'{seqs}.txt')) as f:
                 for seq in f.readlines():
                     seq = seq.strip()
                     seqs_dict[seq] = {}
 
-                    images = np.sort(listdir_nohidden(os.path.join(db_root_dir, 'JPEGImages/480p/', seq)))
+                    images = np.sort(listdir_nohidden(os.path.join(root_dir, 'JPEGImages/480p/', seq)))
                     img_list_seq = list(map(lambda x: os.path.join('JPEGImages/480p/', seq, x), images))
 
-                    lab = np.sort(listdir_nohidden(os.path.join(db_root_dir, 'Annotations/480p/', seq)))
+                    lab = np.sort(listdir_nohidden(os.path.join(root_dir, 'Annotations/480p/', seq)))
                     labels_seq = list(map(lambda x: os.path.join('Annotations/480p/', seq, x), lab))
 
                     assert (len(labels_seq) == len(img_list_seq)), f'failure in: {seq}'
@@ -61,10 +61,10 @@ class DAVIS2016(Dataset):
                     labels.extend(labels_seq)
         else:
             # Initialize the per sequence images for online training
-            names_img = np.sort(listdir_nohidden(os.path.join(db_root_dir, 'JPEGImages/480p/', seqs)))
+            names_img = np.sort(listdir_nohidden(os.path.join(root_dir, 'JPEGImages/480p/', seqs)))
             img_list_seq = list(map(lambda x: os.path.join('JPEGImages/480p/', seqs, x), names_img))
 
-            names_label = np.sort(listdir_nohidden(os.path.join(db_root_dir, 'Annotations/480p/', seqs)))
+            names_label = np.sort(listdir_nohidden(os.path.join(root_dir, 'Annotations/480p/', seqs)))
             labels_seq = list(map(lambda x: os.path.join('Annotations/480p/', seqs, x), names_label))
 
             assert (len(labels_seq) == len(img_list_seq)), f'failure in: {seqs}'
@@ -141,10 +141,10 @@ class DAVIS2016(Dataset):
         """
         Make the image-ground-truth pair
         """
-        img = cv2.imread(os.path.join(self.db_root_dir, self.img_list[idx]))
+        img = cv2.imread(os.path.join(self.root_dir, self.img_list[idx]))
 
         if self.labels[idx] is not None:
-            label = cv2.imread(os.path.join(self.db_root_dir, self.labels[idx]), 0)
+            label = cv2.imread(os.path.join(self.root_dir, self.labels[idx]), 0)
         else:
             gt = np.zeros(img.shape[:-1], dtype=np.uint8)
 
@@ -163,27 +163,7 @@ class DAVIS2016(Dataset):
         return img, gt
 
     def get_img_size(self):
-        img = cv2.imread(os.path.join(self.db_root_dir, self.img_list[0]))
+        img = cv2.imread(os.path.join(self.root_dir, self.img_list[0]))
 
         return list(img.shape[:2])
 
-
-# if __name__ == '__main__':
-#     import custom_transforms as tr
-#     import torch
-#     from torchvision import transforms
-#     from matplotlib import pyplot as plt
-
-#     transforms = transforms.Compose([tr.RandomHorizontalFlip(), tr.Resize(scales=[0.5, 0.8, 1]), tr.ToTensor()])
-
-#     dataset = DAVIS2016(db_root_dir='/media/eec/external/Databases/Segmentation/DAVIS-2016',
-#                         train=True, transform=transforms)
-#     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=1)
-
-#     for i, data in enumerate(dataloader):
-#         plt.figure()
-#         plt.imshow(overlay_mask(im_normalize(tens2image(data['image'])), tens2image(data['gt'])))
-#         if i == 10:
-#             break
-
-#     plt.show(block=True)
