@@ -25,7 +25,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from davis import cfg as davis_cfg
 from util import visualize as viz
-from util.helper_func import (run_loader, eval_loader, eval_davis_seq)
+from util.helper_func import (run_loader, eval_loader, eval_davis_seq, setup_davis_eval)
 
 # Select which GPU, -1 if CPU
 gpu_id = 0
@@ -74,15 +74,15 @@ davis_cfg.PATH.PALETTE = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, 'data
 # train_dataset = 'train_seqs'
 # test_dataset = 'test_seqs'
 
-train_dataset = 'train_split_1_train'
-test_dataset = 'train_split_1_val'
+train_dataset = 'train_split_3_train'
+test_dataset = 'train_split_3_val'
 
 # Network definition
 # model_name = 'VGG'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34_group_norm'
+model_name = 'FPN_ResNet34_group_norm_lr_1e-6'
 loss_func = 'dice'
 
 if 'VGG' in model_name:
@@ -106,44 +106,28 @@ elif 'DRN_D_22' in model_name:
     lr = 1e-6
 
     net = DRNSeg('DRN_D_22', 1, pretrained=True, use_torch_up=False)
-    if resume_epoch:
-        parent_state_dict = torch.load(
-        os.path.join(save_dir, 'DRN_D_22', f"DRN_D_22_epoch-{resume_epoch - 1}.pth"),
-                     map_location=lambda storage, loc: storage)
-        net.load_state_dict(parent_state_dict)
 elif 'UNET_ResNet18' in model_name:
     num_losses = 1
     lr = 1e-3
 
     net = Unet('resnet18', classes=1, activation='softmax')
-    if resume_epoch:
-        parent_state_dict = torch.load(
-            os.path.join(save_dir, 'UNET_ResNet18',
-                         f"UNET_ResNet18_epoch-{resume_epoch - 1}.pth"),
-            map_location=lambda storage, loc: storage)
-        net.load_state_dict(parent_state_dict)
 elif 'UNET_ResNet34' in model_name:
     num_losses = 1
     lr = 1e-7
 
     net = Unet('resnet34', classes=1, activation='softmax')
-    if resume_epoch:
-        parent_state_dict = torch.load(
-            os.path.join(save_dir, 'UNET_ResNet34',
-                         f"UNET_ResNet34_epoch-{resume_epoch - 1}.pth"),
-            map_location=lambda storage, loc: storage)
-        net.load_state_dict(parent_state_dict)
 elif 'FPN_ResNet34' in model_name:
     num_losses = 1
-    lr = 1e-5
+    lr = 1e-6
 
     net = FPN('resnet34-group-norm', classes=1, activation='softmax')
-    if resume_epoch:
-        parent_state_dict = torch.load(
-            os.path.join(save_dir, 'FPN_ResNet34',
-                         f"FPN_ResNet34_epoch-{resume_epoch - 1}.pth"),
-            map_location=lambda storage, loc: storage)
-        net.load_state_dict(parent_state_dict)
+
+if resume_epoch:
+    parent_state_dict = torch.load(
+        os.path.join(save_dir, model_name, train_dataset,
+                        f"{model_name}_epoch-{resume_epoch}.pth"),
+        map_location=lambda storage, loc: storage)
+    net.load_state_dict(parent_state_dict)
 
 if not os.path.exists(os.path.join(save_dir, model_name)):
     os.makedirs(os.path.join(save_dir, model_name))
@@ -174,10 +158,8 @@ if vis_net:
     g = viz.make_dot(y, net.state_dict())
     g.view()
 
-
 # Use the following optimizer
 wd = 0.0002
-
 if 'VGG' in model_name:
     optimizer = optim.SGD([
         {'params': [pr[1] for pr in net.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd,
@@ -204,8 +186,7 @@ if 'pascal_voc' not in train_dataset:
     # Preparation of the data loaders
     # Define augmentation transformations as a composition
     composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
-                                            tr.ScaleNRotate(
-                                                rots=(-30, 30), scales=(.75, 1.25)),
+                                            tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
                                             tr.ToTensor()])
     # Training dataset and its iterator
     db_train = davis_2016.DAVIS2016(seqs=train_dataset, input_res=None,

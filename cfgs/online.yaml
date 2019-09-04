@@ -1,24 +1,15 @@
 seed: 1
 env_suffix: null
 vis_interval: 1
-parent_model_cfg:
-    # base_path: models/FPN_ResNet34
-    # base_path: models/FPN_ResNet34_lr_1e-5
-    # base_path: models/FPN_ResNet34_dice_loss
-    # base_path: models/UNET_ResNet34_dice_loss
-    base_path: models/FPN_ResNet34_dice_loss_adam_lr_1e-5
-    split_model_path:
-        - train_seqs/FPN_ResNet34_dice_loss_adam_lr_1e-5_epoch-200.pth
-        # - train_seqs/FPN_ResNet34_lr_1e-5_epoch-240.pth
-        # - train_seqs/FPN_ResNet34_epoch-240.pth
-        # - train_split_1_train/UNET_ResNet34_dice_loss_epoch-215.pth
-        # - train_split_2_train/UNET_ResNet34_dice_loss_epoch-215.pth
-        # - train_split_3_train/UNET_ResNet34_dice_loss_epoch-215.pth
-    split_val_file_path:
-        - data/DAVIS-2016/test_seqs.txt
-        # - data/DAVIS-2016/train_split_1_val.txt
-        # - data/DAVIS-2016/train_split_2_val.txt
-        # - data/DAVIS-2016/train_split_3_val.txt
+parent_model:
+    # base_path: models/FPN_ResNet34_group_norm
+    base_path: models/FPN_ResNet34_batch_norm_fix
+    val:
+        paths:
+        #    - train_seqs/FPN_ResNet34_group_norm_epoch-455.pth
+           - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
+        val_split_files:
+            - data/DAVIS-2016/test_seqs.txt
 optim_cfg:
     file_dir: models/meta/meta_run_78.model
     lr: 0.00001                                          # 1e-5
@@ -28,15 +19,16 @@ num_epochs: null
 train_early_stopping:
     patience: null
     min_loss_improv: 0
-data:
-    seq_name: train_seqs                              # [train_seqs, test_seqs, blackswan, ...]
+dataset: train_seqs                              # [train_seqs, test_seqs, blackswan, ...]
+data_cfg:
+    root_dir: data/DAVIS-2016
     random_train_transform: True
     frame_ids:
         train: 0
         test: null
     batch_sizes:
-        train: 1
-        test: 1
+        train: 8
+        test: 8
     shuffles:
         train: True
         test: False

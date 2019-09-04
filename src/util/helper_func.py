@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from dataloaders import custom_transforms
 from dataloaders import davis_2016 as db
+from davis import cfg as davis_cfg
 from davis import (Annotation, DAVISLoader, Segmentation, db_eval,
                    db_eval_sequence)
 from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
@@ -37,6 +38,8 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
             imgs, gts, fnames = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
             inputs, gts = imgs.to(device), gts.to(device)
 
+            # model.train()
+            model.eval()
             outputs = model.forward(inputs)
 
             if loss_func == 'cross_entropy':
@@ -110,6 +113,11 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
             inputs, gts = sample_batched['image'], sample_batched['gt']
             inputs, gts = inputs.to(device), gts.to(device)
 
+            # model.eval()
+            model.train()
+            for name, m in model.named_modules():
+                if isinstance(m, torch.nn.BatchNorm2d):
+                    m.eval()
             outputs = model(inputs)
 
             if loss_func == 'cross_entropy':
@@ -123,6 +131,13 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
             train_loss.backward()
             ave_grad += 1
             if isinstance(optim, MetaOptimizer):
+                if epoch == 1:
+                    optim.train_loss = torch.zeros_like(train_loss)
+                else:
+                    optim.train_loss = train_loss.detach() - optim.prev_train_loss
+                optim.prev_train_loss = train_loss.detach()
+
+                # print('validate', train_loader.dataset.seqs, optim.train_loss.item())
                 optim.train_loss = train_loss.detach()
             with torch.no_grad():
                 optim.step()
@@ -194,32 +209,47 @@ def datasets_and_loaders(dataset, root_dir, random_train_transform, batch_sizes,
     return db_train, train_loader, db_test, test_loader, db_meta, meta_loader
 
 
-def init_parent_model(parent_model_path):
-    if 'VGG' in parent_model_path:
+def init_parent_model(base_path, learn_batch_norm_params, **datasets):
+    if 'VGG' in base_path:
         model = OSVOSVgg(pretrained=0)
-    elif 'DRN_D_22' in parent_model_path:
+    elif 'DRN_D_22' in base_path:
         model = DRNSeg('DRN_D_22', 1, pretrained=True)
-    elif 'UNET_ResNet18' in parent_model_path:
+    elif 'UNET_ResNet18' in base_path:
         model = Unet('resnet18', classes=1, activation='softmax')
-    elif 'UNET_ResNet34' in parent_model_path:
+    elif 'FPN_ResNet34_group_norm' in base_path:
+        model = FPN('resnet34-group-norm', classes=1, activation='softmax', dropout=0.0)
+    elif 'UNET_ResNet34' in base_path:
         model = Unet('resnet34', classes=1, activation='softmax')
-    elif 'FPN_ResNet34' in parent_model_path:
+    elif 'FPN_ResNet34' in base_path:
         model = FPN('resnet34', classes=1, activation='softmax', dropout=0.0)
-    elif 'FPN_ResNet101' in parent_model_path:
+    elif 'FPN_ResNet101' in base_path:
         model = FPN('resnet101', classes=1, activation='softmax', dropout=0.0)
     # elif 'DeepLab_ResNet101' in parent_model_path:
     #     model = DeepLab(backbone='resnet', output_stride=16, num_classes=1, freeze_bn=True)
     else:
         raise NotImplementedError
 
-    parent_state_dict = torch.load(parent_model_path, map_location=lambda storage, loc: storage)
+    parent_states = {}
+    for k, v in datasets.items():
+        parent_states[k] = {}
+        parent_states[k]['states'] = [torch.load(os.path.join(base_path, p), map_location=lambda storage, loc: storage)
+                                      for p in v['paths']]
 
-    if 'DeepLab_ResNet101' in parent_model_path:
-        parent_state_dict = parent_state_dict['state_dict']
-        parent_state_dict['decoder.last_conv.8.weight'] = model.state_dict()['decoder.last_conv.8.weight'].clone()
-        parent_state_dict['decoder.last_conv.8.bias'] = model.state_dict()['decoder.last_conv.8.bias'].clone()
+        parent_states[k]['splits'] = [np.loadtxt(p, dtype=str).tolist()
+                                    for p in v['val_split_files']]
+
+    if not learn_batch_norm_params:
+        for name, m in model.named_modules():
+            if isinstance(m, torch.nn.BatchNorm2d):
+                m.weight.requires_grad = False
+                m.bias.requires_grad = False
+
+    # if 'DeepLab_ResNet101' in parent_model_path:
+    #     parent_state_dict = parent_state_dict['state_dict']
+    #     parent_state_dict['decoder.last_conv.8.weight'] = model.state_dict()['decoder.last_conv.8.weight'].clone()
+    #     parent_state_dict['decoder.last_conv.8.bias'] = model.state_dict()['decoder.last_conv.8.bias'].clone()
     # model.load_state_dict(parent_state_dict)
-    return model, parent_state_dict
+    return model, parent_states
 
 
 def early_stopping(loss_hist, patience, min_loss_improv):
@@ -286,3 +316,12 @@ def eval_davis_seq(results_dir, seq_name):
     for m in ['J', 'F']:
         evaluation[m] = db_eval_sequence(segmentations, annotations, measure=m)
     return evaluation
+
+
+def setup_davis_eval(data_cfg: dict):
+    davis_cfg.YEAR = 2016
+    davis_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+    davis_cfg.PATH.DATA = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, data_cfg['root_dir']))
+    davis_cfg.PATH.SEQUENCES = os.path.join(davis_cfg.PATH.DATA, "JPEGImages", davis_cfg.RESOLUTION)
+    davis_cfg.PATH.ANNOTATIONS = os.path.join(davis_cfg.PATH.DATA, "Annotations", davis_cfg.RESOLUTION)
+    davis_cfg.PATH.PALETTE = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, 'data/palette.txt'))

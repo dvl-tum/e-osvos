@@ -19,7 +19,7 @@ from tensorboardX import SummaryWriter
 from util import visualize as viz
 from util.helper_func import (datasets_and_loaders, early_stopping,
                               init_parent_model, eval_loader, train_val,
-                              eval_davis, eval_davis_seq)
+                              eval_davis, eval_davis_seq, setup_davis_eval)
 
 torch_ingredient.add_config('cfgs/torch.yaml')
 ex = sacred.Experiment('osvos-online', ingredients=[torch_ingredient])
@@ -29,7 +29,8 @@ ex.add_named_config('VGG', 'cfgs/online_vgg.yaml')
 
 train_val = ex.capture(train_val)
 early_stopping = ex.capture(early_stopping, prefix='train_early_stopping')
-datasets_and_loaders = ex.capture(datasets_and_loaders, prefix='data')
+datasets_and_loaders = ex.capture(datasets_and_loaders, prefix='data_cfg')
+setup_davis_eval = ex.capture(setup_davis_eval)
 
 
 @ex.capture
@@ -53,7 +54,7 @@ def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
 
 
 @ex.capture
-def init_optim(model, parent_model_cfg, optim_cfg):
+def init_optim(model, parent_model, optim_cfg):
     device = get_device()
 
     if optim_cfg['file_dir'] is not None:
@@ -66,7 +67,7 @@ def init_optim(model, parent_model_cfg, optim_cfg):
         optim.eval()
     else:
         lr = optim_cfg['lr']
-        if 'VGG' in parent_model_cfg['base_path']:
+        if 'VGG' in parent_model['base_path']:
             wd = optim_cfg['wd']
             mom = optim_cfg['mom']
             optim = torch.optim.SGD([
@@ -92,27 +93,22 @@ def init_optim(model, parent_model_cfg, optim_cfg):
 
 
 @ex.automain
-def main(parent_model_cfg, seed, validate_inter, vis_interval, _log, _config,
-         data, num_epochs, loss_func):
+def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
+         num_epochs: int, dataset: str, loss_func, parent_model: dict):
     device = get_device()
     set_random_seeds(seed)
 
-    model, parent_state_dicts = init_parent_model(parent_model_cfg)
+    setup_davis_eval()  # pylint: disable=E1120
+
+    model, parent_states = init_parent_model(**parent_model)
     model.to(device)
-    db_train, train_loader, db_test, test_loader = datasets_and_loaders()  # pylint: disable=E1120
+    db_train, train_loader, db_test, test_loader = datasets_and_loaders(dataset)  # pylint: disable=E1120
     if vis_interval is not None:
         vis_dict = init_vis(db_train)  # pylint: disable=E1120
 
     val_loader = None
     if validate_inter:
         val_loader = test_loader
-
-    train_split_X_val_seqs = []
-    for file_path in parent_model_cfg['split_val_file_path']:
-        seqs = [s.rstrip('\n') for s in open(file_path)]
-        train_split_X_val_seqs.append(seqs)
-
-    # results_dir = os.path.join(parent_model_cfg['base_path'], 'results')
 
     metrics_names = ['train_loss_hist', 'val_loss_hist', 'val_J_hist', 'val_acc_hist',
                      'val_F_hist', 'test_loss', 'init_test_loss', 'init_test_J',
@@ -130,9 +126,10 @@ def main(parent_model_cfg, seed, validate_inter, vis_interval, _log, _config,
         db_train.set_seq(seq_name)
         db_test.set_seq(seq_name)
 
-        for seqs_list, p_s_d in zip(train_split_X_val_seqs, parent_state_dicts):
-            if seq_name in seqs_list:
-                model.load_state_dict(p_s_d)
+        for state, split in zip(parent_states['val']['states'], parent_states['val']['splits']):
+            if seq_name in split:
+                model.load_state_dict(state)
+                break
         
         model.to(device)
         model.zero_grad()

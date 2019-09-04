@@ -18,9 +18,9 @@ from meta_stopping.utils import (compute_loss, dict_to_html,
 from pytorch_tools.ingredients import (save_model_to_db, set_random_seeds,
                                        torch_ingredient)
 from pytorch_tools.vis import LineVis, TextVis
-from davis import cfg as davis_cfg
 from util.helper_func import (datasets_and_loaders, early_stopping, grouper, train_val,
-                              init_parent_model, run_loader, eval_loader, update_dict)
+                              init_parent_model, run_loader, eval_loader, update_dict,
+                              setup_davis_eval)
 
 torch_ingredient.add_config('cfgs/torch.yaml')
 
@@ -31,7 +31,7 @@ ex.add_config('cfgs/meta.yaml')
 MetaOptimizer = ex.capture(MetaOptimizer, prefix='meta_optim_cfg')
 datasets_and_loaders = ex.capture(datasets_and_loaders, prefix='data_cfg')
 early_stopping = ex.capture(early_stopping, prefix='train_early_stopping')
-init_parent_model = ex.capture(init_parent_model)
+init_parent_model = ex.capture(init_parent_model, prefix='parent_model')
 train_val = ex.capture(train_val)
 
 
@@ -102,15 +102,6 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
     return vis_dict
 
 
-def setup_davis_eval(data_cfg: dict):
-    davis_cfg.YEAR = 2016
-    davis_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    davis_cfg.PATH.DATA = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, data_cfg['root_dir']))
-    davis_cfg.PATH.SEQUENCES = os.path.join(davis_cfg.PATH.DATA, "JPEGImages", davis_cfg.RESOLUTION)
-    davis_cfg.PATH.ANNOTATIONS = os.path.join(davis_cfg.PATH.DATA, "Annotations", davis_cfg.RESOLUTION)
-    davis_cfg.PATH.PALETTE = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, 'data/palette.txt'))
-
-
 def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
              meta_optim_param_grad: dict, random_frame_rng_state: torch.ByteTensor,
              _config: dict, dataset: str, return_dict: dict):
@@ -125,8 +116,10 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
     setup_davis_eval(_config['data_cfg'])
 
-    device = torch.device(f'cuda:{(2 * rank) + 2}')
-    meta_device = torch.device(f'cuda:{(2 * rank + 1) + 2}')
+    # device = torch.device(f'cuda:{(2 * rank) + 1}')
+    # meta_device = torch.device(f'cuda:{(2 * rank + 1) + 1}')
+    device = torch.device(f'cuda:{rank + 1}')
+    meta_device = torch.device(f'cuda:{rank + 1}')
 
     db_train, train_loader, db_test, test_loader, db_meta, meta_loader = datasets_and_loaders(dataset, **_config['data_cfg'])
 
@@ -136,8 +129,8 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
     # data_cfg['random_train_transform'] = False
     # db_train_matching_info, train_loader_matching_info, _, _, db_meta_matching_info, meta_loader_matching_info = datasets_and_loaders(dataset, **data_cfg)  # pylint: disable=E1120
 
-    model, parent_state_dict = init_parent_model(_config['parent_model_path'])
-    meta_model, _ = init_parent_model(_config['parent_model_path'])
+    model, parent_states = init_parent_model(**_config['parent_model'])
+    meta_model, _ = init_parent_model(**_config['parent_model'])
 
     meta_optim = MetaOptimizer(model, meta_model, **_config['meta_optim_cfg'])
     meta_optim.load_state_dict(meta_optim_state_dict)
@@ -167,7 +160,10 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
             meta_optim_param_grad_seq = {name: torch.zeros_like(param)
                                         for name, param in meta_optim.named_parameters()}
 
-            model.load_state_dict(parent_state_dict)
+            for state, split in zip(parent_states['train']['states'], parent_states['train']['splits']):
+                if seq_name in split:
+                    model.load_state_dict(state)
+                    break
             meta_optim.load_state_dict(meta_optim_state_dict)
             meta_optim.reset()
 
@@ -180,7 +176,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                 epoch_iter = count(start=1)
             else:
                 epoch_iter = range(1, num_epochs + 1)
-
+            
             torch.set_rng_state(random_frame_rng_state)
             db_train.set_random_frame_id()
             db_meta.set_random_frame_id()
@@ -232,6 +228,11 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                     train_inputs, train_gts = train_batch['image'], train_batch['gt']
                     train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
 
+                    # model.eval()
+                    model.train()
+                    for name, m in model.named_modules():
+                        if isinstance(m, torch.nn.BatchNorm2d):
+                            m.eval()
                     train_outputs = model(train_inputs)
 
                     if loss_func == 'cross_entropy':
@@ -256,6 +257,17 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                     # print('meta run', seq_name, meta_optim.train_loss.item())
                     meta_model, stop_train = meta_optim.step()
                     model.zero_grad()
+
+                    # for name, m in meta_model.named_modules():
+                    #     if isinstance(m, torch.nn.BatchNorm2d):
+                    #         print(m.training, m.track_running_stats, m.running_mean.abs().mean())
+                    #         break
+
+                    # meta_model.eval()
+                    meta_model.train()
+                    for name, m in meta_model.named_modules():
+                        if isinstance(m, torch.nn.BatchNorm2d):
+                            m.eval()
 
                     bptt_iter_loss = 0.0
                     for meta_batch in meta_loader:
@@ -336,7 +348,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
     return_dict['random_frame_rng_state'] = random_frame_rng_state
 
 
-def evaluate(rank, dataset, meta_optim_state_dict: dict, _config: dict, return_dict: dict):
+def evaluate(rank: int, dataset_key: str, datasets: dict, meta_optim_state_dict: dict, _config: dict, return_dict: dict):
     seed = _config['seed']
     loss_func = _config['loss_func']
 
@@ -345,16 +357,12 @@ def evaluate(rank, dataset, meta_optim_state_dict: dict, _config: dict, return_d
     torch.backends.cudnn.deterministic = True
     
     set_random_seeds(seed)
-    device = torch.device(f'cuda:{rank}')
+    device = torch.device(f'cuda:0')
     
     setup_davis_eval(_config['data_cfg'])
     
-    if 'test' in dataset:
-        model, parent_state_dict = init_parent_model(_config['val_parent_model_path'])
-        meta_model, _ = init_parent_model(_config['val_parent_model_path'])
-    else:
-        model, parent_state_dict = init_parent_model(_config['parent_model_path'])
-        meta_model, _ = init_parent_model(_config['parent_model_path'])
+    model, parent_states = init_parent_model(**_config['parent_model'])
+    meta_model, _ = init_parent_model(**_config['parent_model'])
 
     meta_optim = MetaOptimizer(model, meta_model, **_config['meta_optim_cfg'])
     meta_optim.load_state_dict(meta_optim_state_dict)
@@ -363,14 +371,15 @@ def evaluate(rank, dataset, meta_optim_state_dict: dict, _config: dict, return_d
     meta_model.to(device)
     meta_optim.to(device)
     
-    db_train, train_loader, db_test, test_loader, *_ = datasets_and_loaders(dataset, **_config['data_cfg'])  # pylint: disable=E1120
+    db_train, train_loader, db_test, test_loader, *_ = datasets_and_loaders(datasets[dataset_key],
+                                                                            **_config['data_cfg'])  # pylint: disable=E1120
 
     # data_cfg = copy.deepcopy(_config['data_cfg'])
     # data_cfg['batch_sizes']['train'] = 1
     # data_cfg['batch_sizes']['test'] = 1
     # data_cfg['random_train_transform'] = False
     # db_train_matching_info, train_loader_matching_info, db_test_matching_info, test_loader_matching_info, * \
-    #     _ = datasets_and_loaders(dataset, **_config['data_cfg'])  # pylint: disable=E1120
+    #     _ = datasets_and_loaders(datasets[dataset_key], **_config['data_cfg'])  # pylint: disable=E1120
 
     def early_stopping_func(loss_hist):
         return early_stopping(loss_hist, **_config['train_early_stopping_cfg'])
@@ -381,7 +390,11 @@ def evaluate(rank, dataset, meta_optim_state_dict: dict, _config: dict, return_d
         db_train.set_seq(seq_name)
         db_test.set_seq(seq_name)
 
-        model.load_state_dict(parent_state_dict)
+        for state, split in zip(parent_states[dataset_key]['states'], parent_states[dataset_key]['splits']):
+            if seq_name in split:
+                model.load_state_dict(state)
+                break
+        # model.load_state_dict(parent_state_dict)
         meta_optim.reset()
         meta_optim.eval()
 
@@ -425,16 +438,19 @@ def evaluate(rank, dataset, meta_optim_state_dict: dict, _config: dict, return_d
         #     meta_optim.matching_info = torch.tensor(seq_temporal_infos).mean() * 100
         # print('validate', seq_name, meta_optim.matching_info)
         model.zero_grad()
-        _, _, J, _, preds = eval_loader(model, test_loader, loss_func, return_preds=True)
-        init_test_J_seq.append(J)
+        
+        # for name, m in model.named_modules():
+        #     if isinstance(m, torch.nn.BatchNorm2d):
+        #         print(m.running_mean.abs().mean())
+        #         break
 
         _, _, J, _, _ = eval_loader(model, test_loader, loss_func, return_preds=True)
         init_J_seq.append(J)
 
-            seq_temporal_info = train_gts[0:1].sub(preds.float()).abs()
-            seq_temporal_info = seq_temporal_info.view(seq_temporal_info.size(0), -1).mean(dim=1)
-            seq_temporal_info = seq_temporal_info.max()
-            meta_optim.seq_temporal_info = seq_temporal_info * 100
+        # for name, m in model.named_modules():
+        #     if isinstance(m, torch.nn.BatchNorm2d):
+        #         print(m.running_mean.abs().mean())
+        #         break
 
         train_val(  # pylint: disable=E1120
             model, train_loader, None, meta_optim, _config['num_epochs'], seed,
@@ -473,11 +489,13 @@ def main(save_dir: str, num_processes: int, datasets: dict,
     #
     # Meta model
     #
-    model, parent_state_dict = init_parent_model()
+    model, _ = init_parent_model()
     meta_model, _ = init_parent_model()
-
-    model.load_state_dict(parent_state_dict)
-    meta_model.load_state_dict(parent_state_dict)
+    
+    if _config['meta_optim_cfg']['learn_model_init']:
+        raise NotImplementedError
+    # model.load_state_dict(parent_state_dict)
+    # meta_model.load_state_dict(parent_state_dict)
 
     meta_optim = MetaOptimizer(model, meta_model)  # pylint: disable=E1120
     meta_optim.init_zero_grad()
@@ -504,11 +522,11 @@ def main(save_dir: str, num_processes: int, datasets: dict,
         start_time = timeit.default_timer()
         
         # start train and val evaluation
-        for rank, (dataset_name, p) in enumerate(eval_processes.items()):
+        for rank, (dataset_key, p) in enumerate(eval_processes.items()):
             if 'process' not in p or not p['process'].is_alive():
                 p['num_meta_run'] = i
                 p['return_dict'] = process_manager.dict()
-                process_args = [rank, datasets[dataset_name], meta_optim.state_dict(),
+                process_args = [rank, dataset_key, datasets, meta_optim.state_dict(),
                                 _config, p['return_dict']]
                 p['process'] = mp.Process(target=evaluate, args=process_args)
                 p['process'].start()
