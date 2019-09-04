@@ -24,7 +24,7 @@ from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from meta_stopping.meta_optim import MetaOptimizer
+from meta_optim.meta_optim import MetaOptimizer
 
 
 def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
@@ -137,8 +137,8 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
                     optim.train_loss = train_loss.detach() - optim.prev_train_loss
                 optim.prev_train_loss = train_loss.detach()
 
-                # print('validate', train_loader.dataset.seqs, optim.train_loss.item())
                 optim.train_loss = train_loss.detach()
+
             with torch.no_grad():
                 optim.step()
             model.zero_grad()

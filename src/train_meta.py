@@ -12,9 +12,8 @@ import sacred
 import torch
 import torch.multiprocessing as mp
 from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
-from meta_stopping.meta_optim import MetaOptimizer
-from meta_stopping.utils import (compute_loss, dict_to_html,
-                                 flat_grads_from_model)
+from meta_optim.meta_optim import MetaOptimizer
+from meta_optim.utils import dict_to_html
 from pytorch_tools.ingredients import (save_model_to_db, set_random_seeds,
                                        torch_ingredient)
 from pytorch_tools.vis import LineVis, TextVis
