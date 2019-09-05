@@ -115,7 +115,7 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
 
             # model.eval()
             model.train()
-            for name, m in model.named_modules():
+            for m in model.modules():
                 if isinstance(m, torch.nn.BatchNorm2d):
                     m.eval()
             outputs = model(inputs)
@@ -134,8 +134,8 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
                 if epoch == 1:
                     optim.train_loss = torch.zeros_like(train_loss)
                 else:
-                    optim.train_loss = train_loss.detach() - optim.prev_train_loss
-                optim.prev_train_loss = train_loss.detach()
+                    optim.train_loss = train_loss.detach() - prev_train_loss
+                prev_train_loss = train_loss.detach()
 
                 optim.train_loss = train_loss.detach()
 
@@ -176,6 +176,7 @@ def datasets_and_loaders(dataset, root_dir, random_train_transform, batch_sizes,
                             seqs=dataset,
                             frame_id=frame_ids['train'],
                             transform=composed_transforms)
+    # sample epochs into a batch
     batch_sampler = EpochSampler(
         db_train, shuffles['train'], batch_sizes['train'])
     train_loader = DataLoader(
@@ -239,7 +240,7 @@ def init_parent_model(base_path, learn_batch_norm_params, **datasets):
                                     for p in v['val_split_files']]
 
     if not learn_batch_norm_params:
-        for name, m in model.named_modules():
+        for m in model.modules():
             if isinstance(m, torch.nn.BatchNorm2d):
                 m.weight.requires_grad = False
                 m.bias.requires_grad = False

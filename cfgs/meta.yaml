@@ -3,7 +3,7 @@ num_processes: 1
 env_suffix: null
 save_dir: models
 num_seq_epochs_per_step: 4                          # num of times a seq is processed and gradients are collected for the step
-num_epochs: 20                                       # if null run meta model until meta_optim returns stop_train=True
+num_epochs: 5                                       # if null run meta model until meta_optim returns stop_train=True
 bptt_epochs: 10
 meta_optim_cfg:
     num_layers: 2
@@ -60,7 +60,7 @@ data_cfg:
     batch_sizes:
         train: 8
         test: 8
-        meta: 1
+        meta: 1                                     # larger meta batch size will reduce number of possible bptt_epochs (GPU limits)
     shuffles:
         train: True
         test: False

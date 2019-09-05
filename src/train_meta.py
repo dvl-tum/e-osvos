@@ -3,11 +3,11 @@ import math
 import os
 import socket
 import timeit
-import numpy as np
 from datetime import datetime
 from itertools import count
 
 import networks.vgg_osvos as vo
+import numpy as np
 import sacred
 import torch
 import torch.multiprocessing as mp
@@ -17,9 +17,10 @@ from meta_optim.utils import dict_to_html
 from pytorch_tools.ingredients import (save_model_to_db, set_random_seeds,
                                        torch_ingredient)
 from pytorch_tools.vis import LineVis, TextVis
-from util.helper_func import (datasets_and_loaders, early_stopping, grouper, train_val,
-                              init_parent_model, run_loader, eval_loader, update_dict,
-                              setup_davis_eval)
+from util.helper_func import (datasets_and_loaders, early_stopping,
+                              eval_loader, grouper, init_parent_model,
+                              run_loader, setup_davis_eval, train_val,
+                              update_dict)
 
 torch_ingredient.add_config('cfgs/torch.yaml')
 
@@ -247,12 +248,12 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                     #     if isinstance(m, torch.nn.BatchNorm2d):
                     #         print(m.training, m.track_running_stats, m.running_mean.abs().mean())
                     #         break
- 
+
                     if epoch == 1:
                         meta_optim.train_loss = torch.zeros_like(train_loss)
                     else:
-                        meta_optim.train_loss = train_loss.detach() - meta_optim.prev_train_loss
-                    meta_optim.prev_train_loss = train_loss.detach()                        
+                        meta_optim.train_loss = train_loss.detach() - prev_train_loss
+                    prev_train_loss = train_loss.detach()
                     # print('meta run', seq_name, meta_optim.train_loss.item())
                     meta_model, stop_train = meta_optim.step()
                     model.zero_grad()
@@ -354,22 +355,22 @@ def evaluate(rank: int, dataset_key: str, datasets: dict, meta_optim_state_dict:
     torch.backends.cudnn.fastest = False
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
-    
+
     set_random_seeds(seed)
     device = torch.device(f'cuda:0')
-    
+
     setup_davis_eval(_config['data_cfg'])
-    
+
     model, parent_states = init_parent_model(**_config['parent_model'])
     meta_model, _ = init_parent_model(**_config['parent_model'])
 
     meta_optim = MetaOptimizer(model, meta_model, **_config['meta_optim_cfg'])
     meta_optim.load_state_dict(meta_optim_state_dict)
-    
+
     model.to(device)
     meta_model.to(device)
     meta_optim.to(device)
-    
+
     db_train, train_loader, db_test, test_loader, *_ = datasets_and_loaders(datasets[dataset_key],
                                                                             **_config['data_cfg'])  # pylint: disable=E1120
 
@@ -382,7 +383,7 @@ def evaluate(rank: int, dataset_key: str, datasets: dict, meta_optim_state_dict:
 
     def early_stopping_func(loss_hist):
         return early_stopping(loss_hist, **_config['train_early_stopping_cfg'])
-    
+
     init_J_seq = []
     J_seq = []
     for seq_name in db_train.seqs_dict.keys():
