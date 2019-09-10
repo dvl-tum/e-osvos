@@ -27,6 +27,26 @@ from torchvision import transforms
 from meta_optim.meta_optim import MetaOptimizer
 
 
+def compute_loss(loss_func, outputs, gts, loss_kwargs=None):
+    if loss_kwargs is None:
+        loss_kwargs = {}
+
+    if loss_func == 'cross_entropy':
+        return class_balanced_cross_entropy_loss(outputs, gts, **loss_kwargs)
+    elif loss_func == 'dice':
+        return dice_loss(outputs, gts, **loss_kwargs)
+    else:
+        raise NotImplementedError
+
+
+def epoch_iter(num_epochs: int):
+    # one epoch corresponds to one random transformed first frame of a sequence
+    if num_epochs is None:
+        return count(start=1)
+    else:
+        return range(1, num_epochs + 1)
+
+
 def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
     device = next(model.parameters()).device
 
@@ -42,13 +62,7 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
             model.eval()
             outputs = model.forward(inputs)
 
-            if loss_func == 'cross_entropy':
-                loss = class_balanced_cross_entropy_loss(outputs[-1], gts)
-            elif loss_func == 'dice':
-                loss = dice_loss(outputs[-1], gts, batch_average=False)
-            else:
-                raise NotImplementedError
-
+            loss = compute_loss(loss_func, outputs[-1], gts, {'batch_average': False})
             metrics['loss_batches'].append(loss)
 
             preds = torch.sigmoid(outputs[-1])
@@ -102,45 +116,25 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
     if early_stopping_func is None:
         early_stopping_func = lambda loss_hist: False
 
-    if num_epochs is None:
-        epoch_iter = count(start=1)
-    else:
-        epoch_iter = range(1, num_epochs + 1)
-
-    for epoch in epoch_iter:
+    for epoch in epoch_iter(num_epochs):
         set_random_seeds(seed + epoch)
         for _, sample_batched in enumerate(train_loader):
             inputs, gts = sample_batched['image'], sample_batched['gt']
             inputs, gts = inputs.to(device), gts.to(device)
 
-            # model.eval()
             model.train()
-            for m in model.modules():
-                if isinstance(m, torch.nn.BatchNorm2d):
-                    m.eval()
             outputs = model(inputs)
 
-            if loss_func == 'cross_entropy':
-                train_loss = class_balanced_cross_entropy_loss(outputs[-1], gts)
-            elif loss_func == 'dice':
-                train_loss = dice_loss(outputs[-1], gts)
-            else:
-                raise NotImplementedError
+            train_loss = compute_loss(loss_func, outputs[-1], gts)
             metrics['train_loss'].append(train_loss.item())
 
             train_loss.backward()
             ave_grad += 1
-            if isinstance(optim, MetaOptimizer):
-                if epoch == 1:
-                    optim.train_loss = torch.zeros_like(train_loss)
-                else:
-                    optim.train_loss = train_loss.detach() - prev_train_loss
-                prev_train_loss = train_loss.detach()
 
-                optim.train_loss = train_loss.detach()
-
+            # if optim is a model
             with torch.no_grad():
                 optim.step()
+
             model.zero_grad()
             ave_grad = 0
 
@@ -161,8 +155,8 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
     return metrics['train_loss'], metrics['val_loss'], metrics['val_acc'], metrics['val_J'], metrics['val_F']
 
 
-def datasets_and_loaders(dataset, root_dir, random_train_transform, batch_sizes,
-                         shuffles, frame_ids):
+def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
+                 shuffles, frame_ids):
     # train
     train_transforms = []
     if random_train_transform:
@@ -207,7 +201,7 @@ def datasets_and_loaders(dataset, root_dir, random_train_transform, batch_sizes,
         batch_size=batch_sizes['meta'],
         num_workers=0)
 
-    return db_train, train_loader, db_test, test_loader, db_meta, meta_loader
+    return train_loader, test_loader, meta_loader
 
 
 def init_parent_model(base_path, learn_batch_norm_params, **datasets):

@@ -17,7 +17,7 @@ from pytorch_tools.ingredients import (get_device, set_random_seeds,
 from pytorch_tools.vis import TextVis, LineVis
 from tensorboardX import SummaryWriter
 from util import visualize as viz
-from util.helper_func import (datasets_and_loaders, early_stopping,
+from util.helper_func import (data_loaders, early_stopping,
                               init_parent_model, eval_loader, train_val,
                               eval_davis, eval_davis_seq, setup_davis_eval)
 
@@ -29,7 +29,7 @@ ex.add_named_config('VGG', 'cfgs/online_vgg.yaml')
 
 train_val = ex.capture(train_val)
 early_stopping = ex.capture(early_stopping, prefix='train_early_stopping')
-datasets_and_loaders = ex.capture(datasets_and_loaders, prefix='data_cfg')
+data_loaders = ex.capture(data_loaders, prefix='data_cfg')
 setup_davis_eval = ex.capture(setup_davis_eval)
 
 
@@ -102,9 +102,9 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
 
     model, parent_states = init_parent_model(**parent_model)
     model.to(device)
-    db_train, train_loader, db_test, test_loader = datasets_and_loaders(dataset)  # pylint: disable=E1120
+    train_loader, test_loader, _ = data_loaders(dataset)  # pylint: disable=E1120
     if vis_interval is not None:
-        vis_dict = init_vis(db_train)  # pylint: disable=E1120
+        vis_dict = init_vis(train_loader.dataset)  # pylint: disable=E1120
 
     val_loader = None
     if validate_inter:
@@ -115,7 +115,7 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
                      'init_test_F', 'init_test_acc', 'test_J', 'test_F', 'test_acc']
     metrics = {n: [] for n in metrics_names}
 
-    for seq_name in db_train.seqs_dict.keys():
+    for seq_name in train_loader.dataset.seqs_dict.keys():
         _log.info(f"Train Online: {seq_name}")
         # img_save_dir = os.path.join(results_dir, seq_name)
         # if not os.path.exists(img_save_dir):
@@ -123,8 +123,8 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
 
         optim = init_optim(model)  # pylint: disable=E1120
 
-        db_train.set_seq(seq_name)
-        db_test.set_seq(seq_name)
+        train_loader.dataset.set_seq(seq_name)
+        test_loader.dataset.set_seq(seq_name)
 
         for state, split in zip(parent_states['val']['states'], parent_states['val']['splits']):
             if seq_name in split:
@@ -236,7 +236,7 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
                 f"&nbsp;&nbsp;MEAN: {m[..., best_mean_m_epoch].mean():.2f}</p>\n")
 
     results_str += "<p>SEQUENCES:<br>\n"
-    for seq_name, t_l_h, i_t_l, t_l, t_J, t_F, t_acc in zip(db_train.seqs_dict.keys(), metrics['train_loss_hist'], metrics['init_test_loss'], metrics['test_loss'], metrics['test_J'], metrics['test_F'], metrics['test_acc']):
+    for seq_name, t_l_h, i_t_l, t_l, t_J, t_F, t_acc in zip(train_loader.dataset.seqs_dict.keys(), metrics['train_loss_hist'], metrics['init_test_loss'], metrics['test_loss'], metrics['test_J'], metrics['test_F'], metrics['test_acc']):
         results_str += (f"{seq_name}<br>\n"
                         f"LOSS RUN TRAIN/INIT TEST/TEST: {t_l_h.mean():.2f}/{i_t_l:.2f}/{t_l:.2f}<br>\n"
                         f"TEST J/F/ACC: {t_J:.2f}/{t_F:.2f}/{t_acc:.2f}</p>\n")

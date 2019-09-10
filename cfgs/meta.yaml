@@ -13,6 +13,7 @@ meta_optim_cfg:
     init_weight_decay: 0.0001
     optim_func: Adam                                # optimizer that computes paramter update step witout learning rate
     learn_model_init: False
+    matching_input: False
 meta_optim_optim_cfg:
     model_init_lr: 0.00001
     log_init_lr_lr: 0.01
@@ -50,6 +51,7 @@ train_early_stopping_cfg:
 datasets:
     train: train_seqs                            # [train_seqs, test_seqs, blackswan, ...]
     val: test_seqs
+random_frame_ids_for_meta_run: True
 data_cfg:
     root_dir: data/DAVIS-2016
     random_train_transform: True
@@ -58,7 +60,7 @@ data_cfg:
         test: null
         meta: middle
     batch_sizes:
-        train: 8
+        train: 8                                    # train applies an epoch sampler. frame_id will be repeated bach size times.
         test: 8
         meta: 1                                     # larger meta batch size will reduce number of possible bptt_epochs (GPU limits)
     shuffles:
