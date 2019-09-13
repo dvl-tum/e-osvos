@@ -231,13 +231,13 @@ def init_parent_model(base_path, learn_batch_norm_params, **datasets):
                                       for p in v['paths']]
 
         parent_states[k]['splits'] = [np.loadtxt(p, dtype=str).tolist()
-                                    for p in v['val_split_files']]
+                                      for p in v['val_split_files']]
 
     if not learn_batch_norm_params:
         for m in model.modules():
             if isinstance(m, torch.nn.BatchNorm2d):
                 m.weight.requires_grad = False
-                m.bias.requires_grad = False
+                # m.bias.requires_grad = False
 
     # if 'DeepLab_ResNet101' in parent_model_path:
     #     parent_state_dict = parent_state_dict['state_dict']
