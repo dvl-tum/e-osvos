@@ -14,6 +14,7 @@ meta_optim_cfg:
     optim_func: Adam                                # optimizer that computes paramter update step witout learning rate
     learn_model_init: False
     matching_input: False
+    layer_norm: True
 meta_optim_optim_cfg:
     model_init_lr: 0.00001
     log_init_lr_lr: 0.01

@@ -48,9 +48,12 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
     legend = [
         'MEAN seq TRAIN loss',
         'MEAN seq META loss',
-        'MEAN seq loss',
-        'MEAN seq J',
-        'MEAN seq F',
+        'STD seq META loss',
+        'MAX seq META loss',
+        'MIN seq META loss',
+        # 'MEAN seq loss',
+        # 'MEAN seq J',
+        # 'MEAN seq F',
         'RUN TIME [min]']
     opts = dict(
         title=f"FINAL TRAIN METRICS (RUN: {_run._id})",
@@ -184,8 +187,8 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
     # device = torch.device(f'cuda:{(2 * rank) + 1}')
     # meta_device = torch.device(f'cuda:{(2 * rank + 1) + 1}')
-    device = torch.device(f'cuda:{rank + 1}')
-    meta_device = torch.device(f'cuda:{rank + 1}')
+    device = torch.device(f'cuda:{rank}')
+    meta_device = torch.device(f'cuda:{rank}')
 
     train_loader, _, meta_loader = data_loaders(dataset, **_config['data_cfg'])
 
@@ -246,6 +249,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                     train_inputs, train_gts = train_batch['image'], train_batch['gt']
                     train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
 
+                    model.zero_grad()
                     model.train()
                     train_outputs = model(train_inputs)
                     
@@ -255,7 +259,6 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
                     meta_optim.set_train_loss(train_loss)
                     meta_model, stop_train = meta_optim.step()
-                    model.zero_grad()
 
                     meta_model.train()
 
@@ -323,9 +326,10 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
             for name, grad in meta_optim_param_grad_seq.items():
                 meta_optim_param_grad[name] += grad.cpu() / _config['num_seq_epochs_per_step']
 
-    # compute mean over num_seq_epochs_per_step
-    seqs_metrics = {metric_name: {seq_name: torch.tensor(vv).mean() for seq_name, vv in v.items()}
-                    for metric_name, v in seqs_metrics.items()}
+    # # compute mean over num_seq_epochs_per_step
+    # seqs_metrics = {metric_name: {seq_name: torch.tensor(vv).mean()
+    #                               for seq_name, vv in v.items()}
+    #                 for metric_name, v in seqs_metrics.items()}
 
     return_dict['seqs_metrics'] = seqs_metrics
     return_dict['vis_data_seqs'] = vis_data_seqs
@@ -450,7 +454,7 @@ def main(save_dir: str, num_processes: int, datasets: dict,
     # meta_model.load_state_dict(parent_state_dict)
 
     meta_optim = MetaOptimizer(model, meta_model)  # pylint: disable=E1120
-    meta_optim.init_zero_grad()
+    # meta_optim.init_zero_grad()
 
     del model
     del meta_model
@@ -508,8 +512,13 @@ def main(save_dir: str, num_processes: int, datasets: dict,
             random_frame_rng_state = p['return_dict']['random_frame_rng_state']
 
         # visualize meta metrics and seq runs
-        meta_metrics = [torch.tensor(list(m.values())).mean()
-                        for m in seqs_metrics.values()]
+        # meta_metrics = [torch.tensor(list(m.values())).mean()
+        #                 for m in seqs_metrics.values()]
+        meta_metrics = [torch.tensor(list(seqs_metrics['train_loss'].values())).mean(),
+                        torch.tensor(list(seqs_metrics['meta_loss'].values())).mean(),
+                        torch.tensor(list(seqs_metrics['meta_loss'].values())).std(),
+                        torch.tensor(list(seqs_metrics['meta_loss'].values())).max(),
+                        torch.tensor(list(seqs_metrics['meta_loss'].values())).min()]
         meta_metrics.append((timeit.default_timer() - start_time) / 60)
 
         vis_dict['meta_metrics_vis'].plot(meta_metrics, i)
