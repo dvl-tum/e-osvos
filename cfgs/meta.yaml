@@ -8,7 +8,7 @@ bptt_epochs: 10
 meta_optim_cfg:
     num_layers: 2
     hidden_size: 256
-    lr_range: [0.00000001, 0.0001]                  # [1e-6, 1e-4]
+    lr_range: [0.00000001, 0.00001]                  # [1e-6, 1e-4]
     init_lr_mom: 0.5
     init_weight_decay: 0.0001
     optim_func: Adam                                # optimizer that computes paramter update step witout learning rate

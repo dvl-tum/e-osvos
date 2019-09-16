@@ -68,8 +68,8 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
             preds = torch.sigmoid(outputs[-1])
             preds = preds.ge(0.5)
             preds_all.append(preds)
-            # print(preds.eq(gts.byte()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()).shape)
-            metrics['acc_batches'].append(preds.eq(gts.byte()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()))
+            # print(preds.eq(gts.bool()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()).shape)
+            metrics['acc_batches'].append(preds.eq(gts.bool()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()))
 
             if img_save_dir is not None:
                 preds = 255 * preds

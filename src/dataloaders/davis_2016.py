@@ -89,6 +89,12 @@ class DAVIS2016(Dataset):
     def set_random_frame_id(self):
         self.frame_id = torch.randint(len(self.img_list), (1,)).item()
 
+    def set_next_frame_id(self):
+        if self.frame_id + 1 == len(self.img_list):
+            self.frame_id = 0
+        else:
+            self.frame_id += 1
+            
     def get_seq_id(self):
         return list(self.seqs_dict.keys()).index(self.seqs)
 
