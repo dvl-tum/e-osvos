@@ -5,6 +5,7 @@ import socket
 import timeit
 from datetime import datetime
 from itertools import count
+import shutil
 
 import networks.vgg_osvos as vo
 import numpy as np
@@ -20,6 +21,8 @@ from torch.utils.data import DataLoader
 from util.helper_func import (data_loaders, early_stopping, eval_loader, grouper,
                               init_parent_model, run_loader, setup_davis_eval,
                               train_val, update_dict, compute_loss, epoch_iter)
+from spatial_correlation_sampler import spatial_correlation_sample
+
 
 torch_ingredient.add_config('cfgs/torch.yaml')
 
@@ -36,7 +39,7 @@ train_val = ex.capture(train_val)
 
 @ex.capture
 def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
-             torch_cfg: dict, datasets: dict):
+             torch_cfg: dict, datasets: dict, resume_meta_run: int):
     run_name = f"{_run.experiment_info['name']}_{env_suffix}"
     vis_dict = {}
 
@@ -44,6 +47,8 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
                 width=300, height=1250)
     vis_dict['config_vis'] = TextVis(opts, env=run_name, **torch_cfg['vis'])
     vis_dict['config_vis'].plot(dict_to_html(_config))
+
+    resume  = False if resume_meta_run is None else True
 
     legend = [
         'MEAN seq TRAIN loss',
@@ -62,7 +67,8 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         width=750,
         height=300,
         legend=legend)
-    vis_dict['meta_metrics_vis'] = LineVis(opts, env=run_name, **torch_cfg['vis'])
+    vis_dict['meta_metrics_vis'] = LineVis(
+        opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     for dataset_name, dataset in datasets.items():
         loader, *_ = data_loaders(dataset)  # pylint: disable=E1120
@@ -75,7 +81,8 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
             width=750,
             height=750,
             legend=legend)
-        vis_dict[f'{dataset_name}_J_seq_vis'] = LineVis(opts, env=run_name, **torch_cfg['vis'])
+        vis_dict[f'{dataset_name}_J_seq_vis'] = LineVis(
+            opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     train_loader, *_ = data_loaders(datasets['train'])  # pylint: disable=E1120
     legend = ['TRAIN loss', 'META loss', 'LR MEAN', 'LR STD',
@@ -88,7 +95,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
             height=300,
             legend=legend)
         vis_dict[f"{seq_name}_model_metrics"] = LineVis(
-            opts, env=run_name,  **torch_cfg['vis'])
+            opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     model, _ = init_parent_model()
     legend = ['MEAN', 'STD'] + [f"{n}" for n, p in model.named_parameters()
@@ -100,12 +107,14 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         width=750,
         height=750,
         legend=legend)
-    vis_dict['init_lr_vis'] = LineVis(opts, env=run_name, **torch_cfg['vis'])
+    vis_dict['init_lr_vis'] = LineVis(
+        opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     return vis_dict
 
 
-def match_embed(model: torch.nn.Module, train_loader: DataLoader, match_loader: DataLoader):
+def match_embed(model: torch.nn.Module, train_loader: DataLoader,
+                match_loader: DataLoader):
     """
         Adds match_emb attribute to each param group of model. This attribute is
         then used by the meta optimzier.
@@ -116,60 +125,94 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader, match_loader: 
     for module in model.modules_with_requires_grad_params():
         module.meta_embed = None
         module.match_embed = None
+    
+    # get train frame without random transformation
+    match_loader_frame_id = match_loader.dataset.frame_id
+    match_loader.dataset.frame_id = None
+    train_batch = match_loader.dataset[train_loader.dataset.frame_id]
+    match_loader.dataset.frame_id = match_loader_frame_id
 
-    def _accum_meta_embed(self, inputs, outputs):
-        batch, feat, *_ = outputs.size()
-        if self.meta_embed is None:
-            self.meta_embed = outputs.view(batch, feat, -1).mean(dim=2)
-        else:
-            self.meta_embed = torch.cat(
-                [self.meta_embed, outputs.view(batch, feat, -1).mean(dim=2)])
+    train_inputs, train_gts = train_batch['image'], train_batch['gt']
+    train_inputs = train_inputs.to(device).unsqueeze(dim=0)
+    train_gts = train_gts.to(device).unsqueeze(dim=0)
 
-    with torch.no_grad():
-        for batch in match_loader:
-            inputs, gts = batch['image'], batch['gt']
-            inputs, gts = inputs.to(device), gts.to(device)
+    # def _accum_meta_embed(self, inputs, outputs):
+    #     batch, feat, *_ = outputs.size()
+        
+    #     if self.meta_embed is None:
+    #         self.meta_embed = outputs.view(batch, feat, -1).mean(dim=2)
+    #     else:
+    #         self.meta_embed = torch.cat(
+    #             [self.meta_embed, outputs.view(batch, feat, -1).mean(dim=2)])
 
-            outputs = model(inputs)[0]
-            preds = torch.sigmoid(outputs)
-            preds = preds.ge(0.5).float()
-
-            mean_img = inputs.mean().expand_as(inputs)
-            foreground_inputs = mean_img * (1 - preds) + inputs * preds
-
-            accum_meta_embed_hooks = [m.register_forward_hook(_accum_meta_embed)
-                                        for m in model.modules_with_requires_grad_params()]
-
-            model(foreground_inputs)
-
-            for hook in accum_meta_embed_hooks:
-                hook.remove()
+    # accum_meta_embed_hooks = [m.register_forward_hook(_accum_meta_embed)
+    #                           for m in model.modules_with_requires_grad_params()]
 
     def _match_embed(self, inputs, outputs):
-        batch, feat, *_ = outputs.size()
-        train_embed = outputs.view(batch, feat, -1).mean(dim=2).detach()
-        self.match_embed = train_embed.sub(self.meta_embed).abs().mean() * 100
+        batch, feat, h, w = outputs.size()
+        
+        scaled_train_gts = torch.nn.functional.interpolate(train_gts, (h, w))
+        match_embed = outputs[:-1]
+        train_embed = outputs[-1:].repeat(match_embed.size(0), 1, 1, 1)
+
+        train_foreground_embed = train_embed * scaled_train_gts
+        train_background_embed = train_embed * (1 - scaled_train_gts)
+        
+        corr_foreground = spatial_correlation_sample(
+            match_embed, train_foreground_embed,
+            kernel_size=3, stride=2, padding=1, patch_size=(h // 4, w // 4))
+        corr_foreground_mean = corr_foreground.view(corr_foreground.size(0), -1).mean(dim=1, keepdim=True)
+
+        corr_background = spatial_correlation_sample(
+            match_embed, train_background_embed,
+            kernel_size=3, stride=2, padding=1, patch_size=(h // 4, w // 4))
+        corr_background_mean = corr_background.view(corr_background.size(0), -1).mean(dim=1, keepdim=True)
+
+        match_embed = torch.cat([corr_foreground_mean, corr_background_mean], dim=1)
+    
+        if self.match_embed is None:
+            self.match_embed = match_embed
+        else:
+            self.match_embed = torch.cat([self.match_embed, match_embed], dim=0)
 
     match_embed_hooks = [m.register_forward_hook(_match_embed)
                          for m in model.modules_with_requires_grad_params()]
 
     with torch.no_grad():
-        # get train frame without random transformation
-        match_loader_frame_id = match_loader.dataset.frame_id
-        match_loader.dataset.frame_id = None
-        
-        batch = match_loader.dataset[train_loader.dataset.frame_id]
-        inputs, gts = batch['image'], batch['gt']
-        inputs, gts = inputs.to(device).unsqueeze(dim=0), gts.to(device).unsqueeze(dim=0)
-
-        mean_img = inputs.mean().expand_as(inputs)
-        foreground_inputs = mean_img * (1 - gts) + inputs * gts
-        model(foreground_inputs)
-        
-        match_loader.dataset.frame_id = match_loader_frame_id
+        for match_batch in match_loader:
+            match_inputs = match_batch['image'].to(device)
+            
+            inputs = torch.cat([match_inputs, train_inputs])
+            model(inputs)
 
     for hook in match_embed_hooks:
         hook.remove()
+
+    # def _match_embed(self, inputs, outputs):
+    #     batch, feat, *_ = outputs.size()
+    #     train_embed = outputs.view(batch, feat, -1).mean(dim=2).detach()
+    #     self.match_embed = train_embed.sub(self.meta_embed).abs().mean() * 100
+
+    # match_embed_hooks = [m.register_forward_hook(_match_embed)
+    #                      for m in model.modules_with_requires_grad_params()]
+
+    # with torch.no_grad():
+    #     # get train frame without random transformation
+    #     match_loader_frame_id = match_loader.dataset.frame_id
+    #     match_loader.dataset.frame_id = None
+        
+    #     batch = match_loader.dataset[train_loader.dataset.frame_id]
+    #     inputs, gts = batch['image'], batch['gt']
+    #     inputs, gts = inputs.to(device).unsqueeze(dim=0), gts.to(device).unsqueeze(dim=0)
+
+    #     mean_img = inputs.mean().expand_as(inputs)
+    #     foreground_inputs = mean_img * (1 - gts) + inputs * gts
+    #     model(foreground_inputs)
+        
+    #     match_loader.dataset.frame_id = match_loader_frame_id
+
+    # for hook in match_embed_hooks:
+    #     hook.remove()
 
 
 def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
@@ -197,7 +240,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
     meta_optim = MetaOptimizer(model, meta_model, **_config['meta_optim_cfg'])
     meta_optim.load_state_dict(meta_optim_state_dict)
-
+    
     model.to(device)
     meta_model.to(meta_device)
     meta_optim.to(meta_device)
@@ -389,7 +432,7 @@ def evaluate(rank: int, dataset_key: str, datasets: dict, meta_optim_state_dict:
         #     early_stopping_func=early_stopping_func,
         #     validate_inter=None,
         #     loss_func=loss_func)
-        
+
         for epoch in epoch_iter(_config['num_epochs']):
             set_random_seeds(_config['seed'] + epoch)
 
@@ -422,15 +465,29 @@ def evaluate(rank: int, dataset_key: str, datasets: dict, meta_optim_state_dict:
 
 
 @ex.automain
-def main(save_dir: str, num_processes: int, datasets: dict,
-         meta_optim_optim_cfg: dict, seed: int, _config: dict):
+def main(save_train: bool, resume_meta_run: int, env_suffix: str,
+         num_processes: int, datasets: dict, meta_optim_optim_cfg: dict,
+         seed: int, _config: dict):
     mp.set_start_method("spawn")
 
-    if not os.path.exists(save_dir):
-        os.makedirs(os.path.join(save_dir))
     set_random_seeds(seed)
 
     vis_dict = init_vis()  # pylint: disable=E1120
+
+    save_dir = os.path.join(f'models/meta/{env_suffix}')
+    if save_train:
+        if os.path.exists(save_dir):
+            if resume_meta_run is None:
+                shutil.rmtree(save_dir)
+                os.makedirs(save_dir)
+        else:
+            os.makedirs(save_dir)
+
+    if resume_meta_run is not None:
+        saved_meta_run = torch.load(
+            os.path.join(save_dir, f"meta_run_{resume_meta_run}.model"))
+        for n, win_name in saved_meta_run['vis_win_names'].items():
+            vis_dict[n].win = win_name
 
     train_loader, *_ = data_loaders(datasets['train'])  # pylint: disable=E1120
 
@@ -454,7 +511,8 @@ def main(save_dir: str, num_processes: int, datasets: dict,
     # meta_model.load_state_dict(parent_state_dict)
 
     meta_optim = MetaOptimizer(model, meta_model)  # pylint: disable=E1120
-    # meta_optim.init_zero_grad()
+    if resume_meta_run is not None:
+        meta_optim.load_state_dict(saved_meta_run['meta_optim_state_dict'])
 
     del model
     del meta_model
@@ -467,14 +525,21 @@ def main(save_dir: str, num_processes: int, datasets: dict,
                           'lr': meta_optim_optim_cfg['lr']}]
     meta_optim_optim = torch.optim.Adam(meta_optim_params,
                                         lr=meta_optim_optim_cfg['lr'])
+    if resume_meta_run is not None:
+        meta_optim_optim.load_state_dict(saved_meta_run['meta_optim_optim_state_dict'])
 
     seqs_metrics = {'train_loss': {}, 'meta_loss': {}, 'loss': {}, 'J': {}, 'F': {}}
     meta_optim_param_grad = process_manager.dict({name: torch.zeros_like(param).cpu()
                                                   for name, param in meta_optim.named_parameters()})
 
     random_frame_rng_state = torch.get_rng_state()
+    if resume_meta_run is not None:
+        random_frame_rng_state = saved_meta_run['random_frame_rng_state']
 
-    for i in count(start=1):
+    num_meta_run = 1
+    if resume_meta_run is not None:
+        num_meta_run = saved_meta_run['num_meta_run'] + 1
+    for i in count(start=num_meta_run):
         start_time = timeit.default_timer()
 
         # start train and val evaluation
@@ -559,5 +624,12 @@ def main(save_dir: str, num_processes: int, datasets: dict,
                 J_seq_vis.extend(p['return_dict']['J_seq'])
                 vis_dict[f'{dataset_name}_J_seq_vis'].plot(J_seq_vis, p['num_meta_run'])
 
-        # save_model_to_db(meta_optim, f"update_{i}.model", ex)
-        # torch.save(meta_optim, os.path.join(save_dir, 'meta', f"meta_run_{i + 1}.model"))
+        if save_train:
+            # save_model_to_db(meta_optim, f"update_{i}.model", ex)
+            save_meta_run = {'meta_optim_state_dict': meta_optim.state_dict(),
+                             'meta_optim_optim_state_dict': meta_optim_optim.state_dict(),
+                             'random_frame_rng_state': random_frame_rng_state,
+                             'vis_win_names': {n: v.win for n, v in vis_dict.items()},
+                             'num_meta_run': i}
+            torch.save(save_meta_run, os.path.join(save_dir, f"meta_run_{i}.model"))
+
