@@ -44,7 +44,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
     vis_dict = {}
 
     opts = dict(title=f"CONFIG and NON META BASELINE (RUN: {_run._id})",
-                width=300, height=1250)
+                width=500, height=1750)
     vis_dict['config_vis'] = TextVis(opts, env=run_name, **torch_cfg['vis'])
     vis_dict['config_vis'].plot(dict_to_html(_config))
 
@@ -85,8 +85,8 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
             opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     train_loader, *_ = data_loaders(datasets['train'])  # pylint: disable=E1120
-    legend = ['TRAIN loss', 'META loss', 'LR MEAN', 'LR STD',
-              'LR MOM MEAN', 'WEIGHT DECAY MEAN']
+    legend = ['TRAIN loss', 'META loss', 'LR MEAN', 'LR STD',]
+            #   'LR MOM MEAN', 'WEIGHT DECAY MEAN']
     for seq_name in train_loader.dataset.seqs_dict.keys():
         opts = dict(
             title=f"SEQ METRICS - {seq_name}",
@@ -149,6 +149,8 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
     #                           for m in model.modules_with_requires_grad_params()]
 
     def _match_embed(self, inputs, outputs):
+        if isinstance(outputs, list):
+            outputs = outputs[0]
         batch, feat, h, w = outputs.size()
         
         scaled_train_gts = torch.nn.functional.interpolate(train_gts, (h, w))
@@ -158,18 +160,25 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         train_foreground_embed = train_embed * scaled_train_gts
         train_background_embed = train_embed * (1 - scaled_train_gts)
         
+        # patch_size = (h // 4, w // 4)
+        # stride = 2
+        patch_size = (h * 2, w * 2)
+        stride = 1
+
         corr_foreground = spatial_correlation_sample(
             match_embed, train_foreground_embed,
-            kernel_size=3, stride=2, padding=1, patch_size=(h // 4, w // 4))
+            kernel_size=3, stride=stride, padding=1, patch_size=patch_size)
         corr_foreground_mean = corr_foreground.view(corr_foreground.size(0), -1).mean(dim=1, keepdim=True)
+        corr_foreground_mean /= scaled_train_gts.sum()
 
         corr_background = spatial_correlation_sample(
             match_embed, train_background_embed,
-            kernel_size=3, stride=2, padding=1, patch_size=(h // 4, w // 4))
+            kernel_size=3, stride=stride, padding=1, patch_size=patch_size)
         corr_background_mean = corr_background.view(corr_background.size(0), -1).mean(dim=1, keepdim=True)
+        corr_background_mean /= (1 - scaled_train_gts).sum()
 
         match_embed = torch.cat([corr_foreground_mean, corr_background_mean], dim=1)
-    
+        
         if self.match_embed is None:
             self.match_embed = match_embed
         else:
@@ -187,7 +196,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
 
     for hook in match_embed_hooks:
         hook.remove()
-
+    
     # def _match_embed(self, inputs, outputs):
     #     batch, feat, *_ = outputs.size()
     #     train_embed = outputs.view(batch, feat, -1).mean(dim=2).detach()
@@ -282,7 +291,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                 meta_loader.dataset.set_random_frame_id()
             random_frame_rng_state = torch.get_rng_state()
             
-            if meta_optim.matching_input:
+            if _config['meta_optim_cfg']['matching_input']:
                 match_embed(model, train_loader, meta_loader)
 
             for epoch in epoch_iter(_config['num_epochs']):
@@ -319,12 +328,12 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
                     # visualization
                     lr = meta_optim.state["log_lr"].exp()
-                    lr_mom = meta_optim.state["lr_mom_logit"].sigmoid()
-                    weight_decay = meta_optim.state["log_weight_decay"].exp()
+                    # lr_mom = meta_optim.state["lr_mom_logit"].sigmoid()
+                    # weight_decay = meta_optim.state["log_weight_decay"].exp()
 
                     vis_data = [train_loss.item(), bptt_loss.item(),
-                                lr.mean().item(), lr.std().item(),
-                                lr_mom.mean().item(), weight_decay.mean().item()]
+                                lr.mean().item(), lr.std().item(),]
+                                # lr_mom.mean().item(), weight_decay.mean().item()]
                     vis_data_seqs[seq_name].append(vis_data)
 
                     stop_train = stop_train or early_stopping(
@@ -466,8 +475,8 @@ def evaluate(rank: int, dataset_key: str, datasets: dict, meta_optim_state_dict:
 
 @ex.automain
 def main(save_train: bool, resume_meta_run: int, env_suffix: str,
-         num_processes: int, datasets: dict, meta_optim_optim_cfg: dict,
-         seed: int, _config: dict):
+         eval_datasets: bool, num_processes: int, datasets: dict,
+         meta_optim_optim_cfg: dict, seed: int, _config: dict):
     mp.set_start_method("spawn")
 
     set_random_seeds(seed)
@@ -497,7 +506,10 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
     seqs_per_process = math.ceil(len(train_loader.dataset.seqs_dict) / num_processes)
     process_manager = mp.Manager()
     meta_processes = [dict() for _ in range(num_processes)]
-    eval_processes = {n: {} for n in datasets.keys()}
+    
+    eval_processes = {}
+    if eval_datasets:
+        eval_processes = {n: {} for n in datasets.keys()}
 
     #
     # Meta model
@@ -507,8 +519,8 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
 
     if _config['meta_optim_cfg']['learn_model_init']:
         raise NotImplementedError
-    # model.load_state_dict(parent_state_dict)
-    # meta_model.load_state_dict(parent_state_dict)
+        # model.load_state_dict(parent_state_dict)
+        # meta_model.load_state_dict(parent_state_dict)
 
     meta_optim = MetaOptimizer(model, meta_model)  # pylint: disable=E1120
     if resume_meta_run is not None:
@@ -516,7 +528,8 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
 
     del model
     del meta_model
-
+    
+    # TODO: refactor
     meta_optim_params = [{'params': [p for n, p in meta_optim.named_parameters() if 'model_init' in n],
                           'lr': meta_optim_optim_cfg['model_init_lr']},
                          {'params': [p for n, p in meta_optim.named_parameters() if 'log_init_lr' in n],
@@ -579,11 +592,13 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
         # visualize meta metrics and seq runs
         # meta_metrics = [torch.tensor(list(m.values())).mean()
         #                 for m in seqs_metrics.values()]
-        meta_metrics = [torch.tensor(list(seqs_metrics['train_loss'].values())).mean(),
-                        torch.tensor(list(seqs_metrics['meta_loss'].values())).mean(),
-                        torch.tensor(list(seqs_metrics['meta_loss'].values())).std(),
-                        torch.tensor(list(seqs_metrics['meta_loss'].values())).max(),
-                        torch.tensor(list(seqs_metrics['meta_loss'].values())).min()]
+        train_loss = torch.tensor(list(seqs_metrics['train_loss'].values()))
+        meta_loss = torch.tensor(list(seqs_metrics['meta_loss'].values()))
+        meta_metrics = [train_loss.mean(),
+                        meta_loss.mean(),
+                        meta_loss.std(),
+                        meta_loss.max(),
+                        meta_loss.min()]
         meta_metrics.append((timeit.default_timer() - start_time) / 60)
 
         vis_dict['meta_metrics_vis'].plot(meta_metrics, i)
