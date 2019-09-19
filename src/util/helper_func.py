@@ -314,7 +314,7 @@ def eval_davis_seq(results_dir, seq_name):
 
 
 def setup_davis_eval(data_cfg: dict):
-    davis_cfg.YEAR = 2016
+    davis_cfg.YEAR = int(data_cfg['root_dir'][-4:])
     davis_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
     davis_cfg.PATH.DATA = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, data_cfg['root_dir']))
     davis_cfg.PATH.SEQUENCES = os.path.join(davis_cfg.PATH.DATA, "JPEGImages", davis_cfg.RESOLUTION)

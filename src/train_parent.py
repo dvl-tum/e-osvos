@@ -46,7 +46,6 @@ nEpochs = 500  # Number of epochs for training (nAveGrad * (50000)/(2079/trainBa
 useTest = True  # See evolution of the test set when training?
 testBatch = 8  # Testing Batch
 nTestInterval = 5  # Run on test set every nTestInterval epochs
-db_root_dir = Path.db_root_dir()
 vis_net = False  # Visualize the network?
 snapshot = 5  # Store a model every snapshot epochs
 nAveGrad = 1
@@ -61,8 +60,9 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
+db_root_dir = 'data/DAVIS-2017'
 
-davis_cfg.YEAR = 2016
+davis_cfg.YEAR = int(db_root_dir[-4:])
 davis_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 davis_cfg.PATH.DATA = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, db_root_dir))
 davis_cfg.PATH.SEQUENCES = os.path.join(davis_cfg.PATH.DATA, "JPEGImages", davis_cfg.RESOLUTION)
@@ -71,18 +71,19 @@ davis_cfg.PATH.PALETTE = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, 'data
 
 # train_dataset = 'pascal_voc'
 
-# train_dataset = 'train_seqs'
+train_dataset = 'train_seqs'
+test_dataset = 'val_seqs'
 # test_dataset = 'test_seqs'
 
-train_dataset = 'train_split_3_train'
-test_dataset = 'train_split_3_val'
+# train_dataset = 'train_split_3_train'
+# test_dataset = 'train_split_3_val'
 
 # Network definition
 # model_name = 'VGG'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34_group_norm_lr_1e-6'
+model_name = 'FPN_ResNet34_lr_1e-5'
 loss_func = 'dice'
 
 if 'VGG' in model_name:
@@ -120,19 +121,21 @@ elif 'FPN_ResNet34' in model_name:
     num_losses = 1
     lr = 1e-6
 
-    net = FPN('resnet34-group-norm', classes=1, activation='softmax')
+    net = FPN('resnet34', classes=1, activation='softmax')
 
 if resume_epoch:
     parent_state_dict = torch.load(
-        os.path.join(save_dir, model_name, train_dataset,
-                        f"{model_name}_epoch-{resume_epoch}.pth"),
+        os.path.join(save_dir, model_name, db_root_dir.split('/')[-1],
+            train_dataset, f"{model_name}_epoch-{resume_epoch}.pth"),
         map_location=lambda storage, loc: storage)
     net.load_state_dict(parent_state_dict)
 
 if not os.path.exists(os.path.join(save_dir, model_name)):
     os.makedirs(os.path.join(save_dir, model_name))
-if not os.path.exists(os.path.join(save_dir, model_name, train_dataset)):
-    os.makedirs(os.path.join(save_dir, model_name, train_dataset))
+if not os.path.exists(os.path.join(save_dir, model_name, db_root_dir.split('/')[-1])):
+    os.makedirs(os.path.join(save_dir, model_name, db_root_dir.split('/')[-1]))
+if not os.path.exists(os.path.join(save_dir, model_name, db_root_dir.split('/')[-1], train_dataset)):
+    os.makedirs(os.path.join(save_dir, model_name, db_root_dir.split('/')[-1], train_dataset))
 
 # parentModelName = 'parent'
 # parentEpoch = 240
@@ -275,7 +278,7 @@ for epoch in range(resume_epoch, nEpochs):
     # Save the model
     if (epoch % snapshot) == snapshot - 1 and epoch != 0:
         torch.save(net.state_dict(), os.path.join(
-            save_dir, model_name, train_dataset, model_name + '_epoch-' + str(epoch + 1) + '.pth'))
+            save_dir, model_name, db_root_dir.split('/')[-1], train_dataset, model_name + '_epoch-' + str(epoch + 1) + '.pth'))
 
     # One testing epoch
     if useTest and epoch % nTestInterval == (nTestInterval - 1):

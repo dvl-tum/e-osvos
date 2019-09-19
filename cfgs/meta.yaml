@@ -6,7 +6,7 @@ resume_meta_run: null
 num_seq_epochs_per_step: 4                          # num of times a seq is processed and gradients are collected for the step
 num_epochs: 5                                       # if null run meta model until meta_optim returns stop_train=True
 bptt_epochs: 10
-evaluate: True                                      # evalute all datasets
+eval_datasets: True                                      # evalute all datasets
 meta_optim_cfg:
     num_layers: 2
     hidden_size: 256
