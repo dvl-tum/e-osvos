@@ -295,14 +295,17 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                 match_embed(model, train_loader, meta_loader)
 
             for epoch in epoch_iter(_config['num_epochs']):
-                set_random_seeds(_config['seed'] + epoch)
+                if _config['increasing_seed_for_meta_run']:
+                    set_random_seeds(_config['seed'] + epoch + i)
+                else:
+                    set_random_seeds(_config['seed'] + epoch)
 
                 for train_batch in train_loader:
                     train_inputs, train_gts = train_batch['image'], train_batch['gt']
                     train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
 
                     model.zero_grad()
-                    model.train()
+                    model.train_no_batch_norm()
                     train_outputs = model(train_inputs)
                     
                     train_loss = compute_loss(loss_func, train_outputs[-1], train_gts)
@@ -450,7 +453,7 @@ def evaluate(rank: int, dataset_key: str, datasets: dict, meta_optim_state_dict:
                 train_inputs, train_gts = train_batch['image'], train_batch['gt']
                 train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
 
-                model.train()
+                model.train_no_batch_norm()
                 train_outputs = model(train_inputs)
 
                 train_loss = compute_loss(loss_func, train_outputs[-1], train_gts)

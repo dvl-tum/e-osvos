@@ -1,5 +1,3 @@
-from __future__ import division
-
 import os
 import random
 import numpy as np
@@ -22,19 +20,23 @@ class DAVIS2016(Dataset):
     def __init__(self,
                  seqs='train_seqs',  # ['train_seqs', 'test_seqs', 'blackswan', ...]
                  frame_id=None,
-                 input_res=None,
+                 crop_size=None,
+                #  ignore_label=0,
                  root_dir='data/DAVIS-2016',
                  transform=None,
-                 meanval=(104.00699, 116.66877, 122.67892)):
-        """Loads image to label pairs for tool pose estimation
+                 meanval=(104.00699, 116.66877, 122.67892),
+                 multi_object=False,): # [False, 'all', 'single_first', 'single_random']
+        """Loads image to label pairs.
         root_dir: dataset directory with subfolders "JPEGImages" and "Annotations"
         """
-        self.input_res = input_res
+        self.crop_size = crop_size
         self.root_dir = root_dir
         self.transform = transform
         self.meanval = meanval
         self.seqs = seqs
         self.frame_id = frame_id
+        # self.ignore_label = ignore_label
+        self.multi_object = multi_object
 
         seqs_dict = OrderedDict()
         img_list = []
@@ -147,26 +149,61 @@ class DAVIS2016(Dataset):
         """
         Make the image-ground-truth pair
         """
-        img = cv2.imread(os.path.join(self.root_dir, self.img_list[idx]))
+        img = cv2.imread(os.path.join(self.root_dir, self.img_list[idx]), cv2.IMREAD_COLOR)
+        label = cv2.imread(os.path.join(self.root_dir, self.labels[idx]), cv2.IMREAD_GRAYSCALE)
 
-        if self.labels[idx] is not None:
-            label = cv2.imread(os.path.join(self.root_dir, self.labels[idx]), 0)
-        else:
-            gt = np.zeros(img.shape[:-1], dtype=np.uint8)
-
-        if self.input_res is not None:
-            img = imresize(img, self.input_res)
-            if self.labels[idx] is not None:
-                label = imresize(label, self.input_res, interp='nearest')
+        if self.crop_size is not None:
+            crop_h, crop_w = self.crop_size
+            img_h, img_w = label.shape
+            
+            pad_h = max(crop_h - img_h, 0)
+            pad_w = max(crop_w - img_w, 0)
+            if pad_h > 0 or pad_w > 0:
+                img_pad = cv2.copyMakeBorder(img, 0, pad_h, 0, 
+                    pad_w, cv2.BORDER_CONSTANT, 
+                    value=(0.0, 0.0, 0.0))
+                label_pad = cv2.copyMakeBorder(label, 0, pad_h, 0, 
+                    pad_w, cv2.BORDER_CONSTANT,
+                    value=(0,))
+            else:
+                img_pad, label_pad = img, label
+            
+            img_h, img_w = label_pad.shape
+            h_off = random.randint(0, img_h - crop_h)
+            w_off = random.randint(0, img_w - crop_w)
+            img = img_pad[h_off : h_off + crop_h, w_off : w_off + crop_w]
+            label = label_pad[h_off : h_off + crop_h, w_off : w_off + crop_w]
 
         img = np.array(img, dtype=np.float32)
         img = np.subtract(img, np.array(self.meanval, dtype=np.float32))
 
-        if self.labels[idx] is not None:
-            gt = np.array(label, dtype=np.float32)
-            gt = gt/np.max([gt.max(), 1e-8])
+        label = np.array(label, dtype=np.float32)
+        label = label / np.max([label.max(), 1e-8])
 
-        return img, gt
+        # multi object
+        # ignore_label_mask = label == self.ignore_label
+        # unique_labels = np.unique(label)
+        if self.multi_object:
+            if self.multi_object not in ['all', 'single_first', 'single_random']:
+                raise NotImplementedError
+            
+            # all objects stacked in third axis
+            unique_labels = np.unique(label)
+            label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)
+                                    for l in np.unique(label)], axis=2)
+
+            # single object from stack
+            # if only one object on the frame this object is selected
+            if self.multi_object == 'single_first':
+                label = label[:, :, 0]
+            elif self.multi_object == 'single_random':
+                label = label[:, :, random.randint(0, len(unique_labels) - 1)]
+        else:
+            label = np.where(label != 0.0, label.max(), 0.0).astype(np.float32)
+        # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)
+
+        # print(os.path.join(self.root_dir, self.img_list[idx]), img.shape, label.shape)
+        return img, label
 
     def get_img_size(self):
         img = cv2.imread(os.path.join(self.root_dir, self.img_list[0]))

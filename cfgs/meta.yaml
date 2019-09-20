@@ -55,6 +55,7 @@ train_early_stopping_cfg:
 datasets:
     train: train_seqs                            # [train_seqs, test_seqs, blackswan, ...]
     val: test_seqs
+increasing_seed_for_meta_run: False              # increases seed random seed after each meta run. supposed to enrich the training and improve generalization.
 random_frame_ids_for_meta_run: True
 data_cfg:
     root_dir: data/DAVIS-2016

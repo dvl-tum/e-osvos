@@ -6,14 +6,29 @@ import torch.nn.functional as F
 class FPN(smp.FPN):
 
     def forward(self, inputs):
-        inputs = F.pad(input=inputs, pad=(4, 5, 0, 0), mode='constant', value=0)
+        b, c, h, w = inputs.shape
+
+        # TODO: solve nicer
+        if w == 854:
+            pad = (4, 5, 0, 0)
+            crop = 5
+        elif w == 910:
+            pad = (7, 8, 0, 0)
+            crop = 9
+        elif w == 1152:
+            pad = (0, 0, 0, 0)
+            crop = 0
+        else:
+            raise NotImplementedError
+        
+        inputs = F.pad(input=inputs, pad=pad, mode='constant', value=0)
         outputs = super(FPN, self).forward(inputs)
-        return [outputs[..., 5:-5]]
+        if crop:
+            return [outputs[..., crop: -crop]]
+        else:
+            return [outputs]
 
-        # outputs = super(FPN, self).forward(inputs)
-        # return [outputs[..., 1:-1, 1:-1]]
-
-    def train(self, mode=True):
+    def train_no_batch_norm(self, mode=True):
         super(FPN, self).train(mode)
 
         for m in self.modules():

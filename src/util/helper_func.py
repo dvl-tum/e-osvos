@@ -58,7 +58,6 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
             imgs, gts, fnames = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
             inputs, gts = imgs.to(device), gts.to(device)
 
-            # model.train()
             model.eval()
             outputs = model.forward(inputs)
 
@@ -122,7 +121,7 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
             inputs, gts = sample_batched['image'], sample_batched['gt']
             inputs, gts = inputs.to(device), gts.to(device)
 
-            model.train()
+            model.train_no_batch_norm()
             outputs = model(inputs)
 
             train_loss = compute_loss(loss_func, outputs[-1], gts)

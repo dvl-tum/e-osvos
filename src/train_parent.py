@@ -36,21 +36,21 @@ if torch.cuda.is_available():
 
 # Setting of parameters
 # Parameters in p are used for the name of the model
-p = {
-    'trainBatch': 8,  # Number of Images in each mini-batch
-}
 
 # # Setting other parameters
 resume_epoch = False  # Default is False, change if want to resume
-nEpochs = 500  # Number of epochs for training (nAveGrad * (50000)/(2079/trainBatch))
+nEpochs = 500  # Number of epochs for training (nAveGrad * (50000)/(2079/train_batch))
 useTest = True  # See evolution of the test set when training?
-testBatch = 8  # Testing Batch
+train_batch = 8  # Testing Batch
+test_batch = 8  # Testing Batch
 nTestInterval = 5  # Run on test set every nTestInterval epochs
 vis_net = False  # Visualize the network?
 snapshot = 5  # Store a model every snapshot epochs
 nAveGrad = 1
 seed = 123
 log_to_tb = True
+train_crop_size = None
+train_multi_object = False
 
 save_dir = Path.save_root_dir()
 if not os.path.exists(save_dir):
@@ -68,6 +68,11 @@ davis_cfg.PATH.DATA = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, db_root_
 davis_cfg.PATH.SEQUENCES = os.path.join(davis_cfg.PATH.DATA, "JPEGImages", davis_cfg.RESOLUTION)
 davis_cfg.PATH.ANNOTATIONS = os.path.join(davis_cfg.PATH.DATA, "Annotations", davis_cfg.RESOLUTION)
 davis_cfg.PATH.PALETTE = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, 'data/palette.txt'))
+
+# train is cropped. but for davis 2017 test batch has changing heights and widths
+if davis_cfg.YEAR == 2017:
+    train_crop_size = (480, 854)
+    train_multi_object = 'single_first'
 
 # train_dataset = 'pascal_voc'
 
@@ -147,7 +152,7 @@ print(f'NUM MODEL PARAMS - {model_name}: {sum([p.numel() for p in net.parameters
 
 # Logging into Tensorboard
 if log_to_tb:
-    log_dir = os.path.join('log/tf_runs', model_name, train_dataset)
+    log_dir = os.path.join('log/tf_runs', model_name, db_root_dir.split('/')[-1], train_dataset)
     writer = SummaryWriter(log_dir=log_dir)
 
 net.to(device)
@@ -192,18 +197,19 @@ if 'pascal_voc' not in train_dataset:
                                             tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
                                             tr.ToTensor()])
     # Training dataset and its iterator
-    db_train = davis_2016.DAVIS2016(seqs=train_dataset, input_res=None,
-                                    root_dir=db_root_dir, transform=composed_transforms)
+    db_train = davis_2016.DAVIS2016(seqs=train_dataset, crop_size=train_crop_size,
+                                    root_dir=db_root_dir, transform=composed_transforms,
+                                    multi_object=train_multi_object)
 
     # Testing dataset and its iterator
-    db_test = davis_2016.DAVIS2016(seqs=test_dataset, root_dir=db_root_dir, transform=tr.ToTensor())
+    db_test = davis_2016.DAVIS2016(seqs=test_dataset, root_dir=db_root_dir,
+                                   transform=tr.ToTensor())
 else:
     db_train = pascal_voc.VOC2012(split='train')
     db_test = pascal_voc.VOC2012(split='val')
 
-trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num_workers=2)
-test_loader = DataLoader(db_test, batch_size=testBatch,
-                         shuffle=False, num_workers=2)
+trainloader = DataLoader(db_train, batch_size=train_batch, shuffle=True, num_workers=2)
+test_loader = DataLoader(db_test, batch_size=test_batch, shuffle=False, num_workers=2)
 
 
 num_img_tr = len(trainloader)
