@@ -72,7 +72,7 @@ davis_cfg.PATH.PALETTE = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, 'data
 # train is cropped. but for davis 2017 test batch has changing heights and widths
 if davis_cfg.YEAR == 2017:
     train_crop_size = (480, 854)
-    train_multi_object = 'single_first'
+    # train_multi_object = 'single_first'
 
 # train_dataset = 'pascal_voc'
 
@@ -291,7 +291,7 @@ for epoch in range(resume_epoch, nEpochs):
         with torch.no_grad():
             metrics_names = ['test_loss', 'test_acc', 'test_J', 'test_F']
             metrics = {n: [] for n in metrics_names}
-             
+
             net.eval()
             if train_dataset == 'pascal_voc':
                 test_loss_batches, test_acc_batches = run_loader(net, test_loader, loss_func)

@@ -61,7 +61,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         # 'MEAN seq F',
         'RUN TIME [min]']
     opts = dict(
-        title=f"FINAL TRAIN METRICS (RUN: {_run._id})",
+        title=f"TRAIN METRICS (RUN: {_run._id})",
         xlabel='NUM META RUNS',
         ylabel='FINAL METRICS',
         width=750,
@@ -75,7 +75,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         legend = ['INIT MEAN', 'MEAN'] + [f"{seq_name}"
                   for seq_name in loader.dataset.seqs_dict.keys()]
         opts = dict(
-            title=f"{dataset_name.upper()} J (RUN: {_run._id})",
+            title=f"EVAL: {dataset_name.upper()} J (RUN: {_run._id})",
             xlabel='NUM META RUNS',
             ylabel=f'{dataset_name.upper()} J',
             width=750,
@@ -85,6 +85,18 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
             opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     train_loader, *_ = data_loaders(datasets['train'])  # pylint: disable=E1120
+
+    legend = [f"{seq_name}" for seq_name in train_loader.dataset.seqs_dict.keys()]
+    opts = dict(
+        title=f"META LOSS (RUN: {_run._id})",
+        xlabel='NUM META RUNS',
+        ylabel=f'META LOSS',
+        width=750,
+        height=750,
+        legend=legend)
+    vis_dict[f'meta_loss_seq_vis'] = LineVis(
+        opts, env=run_name, resume=resume, **torch_cfg['vis'])
+
     legend = ['TRAIN loss', 'META loss', 'LR MEAN', 'LR STD',]
             #   'LR MOM MEAN', 'WEIGHT DECAY MEAN']
     for seq_name in train_loader.dataset.seqs_dict.keys():
@@ -239,8 +251,12 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
     # device = torch.device(f'cuda:{(2 * rank) + 1}')
     # meta_device = torch.device(f'cuda:{(2 * rank + 1) + 1}')
-    device = torch.device(f'cuda:{rank}')
-    meta_device = torch.device(f'cuda:{rank}')
+    if _config['eval_datasets']:
+        device = torch.device(f'cuda:{rank + 1}')
+        meta_device = torch.device(f'cuda:{rank + 1}')
+    else:
+        device = torch.device(f'cuda:{rank}')
+        meta_device = torch.device(f'cuda:{rank}')
 
     train_loader, _, meta_loader = data_loaders(dataset, **_config['data_cfg'])
 
@@ -249,7 +265,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
     meta_optim = MetaOptimizer(model, meta_model, **_config['meta_optim_cfg'])
     meta_optim.load_state_dict(meta_optim_state_dict)
-    
+
     model.to(device)
     meta_model.to(meta_device)
     meta_optim.to(meta_device)
@@ -259,7 +275,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
     vis_data_seqs = {}
 
-    for _ in range(_config['num_seq_epochs_per_step']):
+    for _ in range(_config['num_seq_epochs_per_meta_run']):
         for seq_name in seq_names:
             train_loader.dataset.set_seq(seq_name)
             meta_loader.dataset.set_seq(seq_name)
@@ -286,16 +302,33 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
             # meta_optim_optim.load_state_dict(meta_optim_optim_state_dict)
 
             torch.set_rng_state(random_frame_rng_state)
-            if _config['random_frame_ids_for_meta_run']:
+            
+            # TODO> refactor
+            if _config['change_frame_ids_per_seq_epoch']['train'] == 'random':
                 train_loader.dataset.set_random_frame_id()
+            elif _config['change_frame_ids_per_seq_epoch']['train'] == 'next':
+                train_loader.dataset.set_next_frame_id()
+
+            if _config['change_frame_ids_per_seq_epoch']['meta'] == 'random':
                 meta_loader.dataset.set_random_frame_id()
+            elif _config['change_frame_ids_per_seq_epoch']['meta'] == 'next':
+                meta_loader.dataset.set_next_frame_id()
+            
+            if _config['change_frame_ids_per_seq_epoch']['train'] == 'random' or _config['change_frame_ids_per_seq_epoch']['meta'] == 'random':
+                # ensure train and meta frame ids are not the same
+                if train_loader.dataset.frame_id == meta_loader.dataset.frame_id:
+                    if train_loader.dataset.frame_id + 1 == len(train_loader.dataset.img_list):
+                        meta_loader.dataset.frame_id -= 1    
+                    else:
+                        meta_loader.dataset.frame_id += 1
+
             random_frame_rng_state = torch.get_rng_state()
             
             if _config['meta_optim_cfg']['matching_input']:
                 match_embed(model, train_loader, meta_loader)
 
             for epoch in epoch_iter(_config['num_epochs']):
-                if _config['increasing_seed_for_meta_run']:
+                if _config['increase_seed_per_meta_run']:
                     set_random_seeds(_config['seed'] + epoch + i)
                 else:
                     set_random_seeds(_config['seed'] + epoch)
@@ -315,7 +348,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                     meta_optim.set_train_loss(train_loss)
                     meta_model, stop_train = meta_optim.step()
 
-                    meta_model.train()
+                    meta_model.train_no_batch_norm()
 
                     bptt_iter_loss = 0.0
                     for meta_batch in meta_loader:
@@ -379,9 +412,9 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
             # normalize over epochs
             for name, grad in meta_optim_param_grad_seq.items():
-                meta_optim_param_grad[name] += grad.cpu() / _config['num_seq_epochs_per_step']
+                meta_optim_param_grad[name] += grad.cpu() / _config['num_seq_epochs_per_meta_run']
 
-    # # compute mean over num_seq_epochs_per_step
+    # # compute mean over num_seq_epochs_per_meta_run
     # seqs_metrics = {metric_name: {seq_name: torch.tensor(vv).mean()
     #                               for seq_name, vv in v.items()}
     #                 for metric_name, v in seqs_metrics.items()}
@@ -436,7 +469,7 @@ def evaluate(rank: int, dataset_key: str, datasets: dict, meta_optim_state_dict:
         _, _, J, _, _ = eval_loader(model, test_loader, loss_func, return_preds=True)
         init_J_seq.append(J)
 
-        if meta_optim.matching_input:
+        if _config['meta_optim_cfg']['matching_input']:
             match_embed(model, train_loader, test_loader)
 
         # train_val(  # pylint: disable=E1120
@@ -509,7 +542,7 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
     seqs_per_process = math.ceil(len(train_loader.dataset.seqs_dict) / num_processes)
     process_manager = mp.Manager()
     meta_processes = [dict() for _ in range(num_processes)]
-    
+
     eval_processes = {}
     if eval_datasets:
         eval_processes = {n: {} for n in datasets.keys()}
@@ -531,7 +564,7 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
 
     del model
     del meta_model
-    
+
     # TODO: refactor
     meta_optim_params = [{'params': [p for n, p in meta_optim.named_parameters() if 'model_init' in n],
                           'lr': meta_optim_optim_cfg['model_init_lr']},
@@ -603,8 +636,12 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
                         meta_loss.max(),
                         meta_loss.min()]
         meta_metrics.append((timeit.default_timer() - start_time) / 60)
-
         vis_dict['meta_metrics_vis'].plot(meta_metrics, i)
+
+        meta_loss_seq = []
+        for seq_name in train_loader.dataset.seqs_dict.keys():
+            meta_loss_seq.append(torch.tensor(seqs_metrics['meta_loss'][seq_name]).mean())
+        vis_dict[f'meta_loss_seq_vis'].plot(meta_loss_seq, i)
 
         meta_init_lr = [meta_optim.log_init_lr.exp().mean(),
                         meta_optim.log_init_lr.exp().std()]
