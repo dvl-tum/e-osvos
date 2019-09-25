@@ -10,21 +10,22 @@ import numpy as np
 import torch
 from dataloaders import custom_transforms
 from dataloaders import davis_2016 as db
+from davis import Annotation, DAVISLoader, Segmentation
 from davis import cfg as davis_cfg
-from davis import (Annotation, DAVISLoader, Segmentation, db_eval,
-                   db_eval_sequence)
+from davis import db_eval, db_eval_sequence
 from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
+from meta_optim.meta_optim import MetaOptimizer
 from networks.drn_seg import DRNSeg
-from networks.unet import Unet
 from networks.fpn import FPN
+from networks.unet import Unet
 from networks.vgg_osvos import OSVOSVgg
 # from networks.deeplab import DeepLab
 from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
 from torch.utils.data import DataLoader
+from torch.utils.data.sampler import Sampler
 from torchvision import transforms
-from meta_optim.meta_optim import MetaOptimizer
 
 
 def compute_loss(loss_func, outputs, gts, loss_kwargs=None):
@@ -104,7 +105,8 @@ def eval_loader(model, loader, loss_func, img_save_dir=None, return_preds=False)
 
 def train_val(model, train_loader, val_loader, optim, num_epochs,
               seed, _log, early_stopping_func=None,
-              validate_inter=None, loss_func='cross_entropy'):
+              validate_inter=None, loss_func='cross_entropy',
+              lr_scheduler=None):
     device = next(model.parameters()).device
 
     metrics_names = ['train_loss', 'val_loss', 'val_J', 'val_F', 'val_acc']
@@ -121,7 +123,7 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
             inputs, gts = sample_batched['image'], sample_batched['gt']
             inputs, gts = inputs.to(device), gts.to(device)
 
-            model.train_no_batch_norm()
+            model.train()
             outputs = model(inputs)
 
             train_loss = compute_loss(loss_func, outputs[-1], gts)
@@ -130,9 +132,15 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
             train_loss.backward()
             ave_grad += 1
 
+            if isinstance(optim, MetaOptimizer):
+                optim.set_train_loss(train_loss)
+
             # if optim is a model
             with torch.no_grad():
                 optim.step()
+
+            if lr_scheduler is not None:
+                lr_scheduler.step()
 
             model.zero_grad()
             ave_grad = 0
@@ -184,10 +192,11 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
         db_test,
         shuffle=shuffles['test'],
         batch_size=batch_sizes['test'],
-        num_workers=0)
+        num_workers=0,
+        sampler=SequentialSubsetSampler(db_test))
 
     if 'meta' not in batch_sizes:
-        return db_train, train_loader, db_test, test_loader
+        return train_loader, test_loader
 
     # meta
     db_meta = db.DAVIS2016(root_dir=root_dir,
@@ -203,21 +212,21 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
     return train_loader, test_loader, meta_loader
 
 
-def init_parent_model(base_path, learn_batch_norm_params, **datasets):
-    if 'VGG' in base_path:
-        model = OSVOSVgg(pretrained=0)
-    elif 'DRN_D_22' in base_path:
-        model = DRNSeg('DRN_D_22', 1, pretrained=True)
-    elif 'UNET_ResNet18' in base_path:
-        model = Unet('resnet18', classes=1, activation='softmax')
-    elif 'FPN_ResNet34_group_norm' in base_path:
-        model = FPN('resnet34-group-norm', classes=1, activation='softmax', dropout=0.0)
-    elif 'UNET_ResNet34' in base_path:
-        model = Unet('resnet34', classes=1, activation='softmax')
-    elif 'FPN_ResNet34' in base_path:
-        model = FPN('resnet34', classes=1, activation='softmax', dropout=0.0)
+def init_parent_model(base_path, batch_norm, **datasets):
+    # if 'VGG' in base_path:
+    #     model = OSVOSVgg(pretrained=0)
+    # elif 'DRN_D_22' in base_path:
+    #     model = DRNSeg('DRN_D_22', 1, pretrained=True)
+    # elif 'UNET_ResNet18' in base_path:
+    #     model = Unet('resnet18', classes=1, activation='softmax')
+    # elif 'FPN_ResNet34_group_norm' in base_path:
+    #     model = FPN('resnet34-group-norm', classes=1, activation='softmax', dropout=0.0)
+    # elif 'UNET_ResNet34' in base_path:
+    #     model = Unet('resnet34', classes=1, activation='softmax')
+    if 'FPN_ResNet34' in base_path:
+        model = FPN('resnet34', classes=1, activation='softmax', dropout=0.0, batch_norm=batch_norm)
     elif 'FPN_ResNet101' in base_path:
-        model = FPN('resnet101', classes=1, activation='softmax', dropout=0.0)
+        model = FPN('resnet101', classes=1, activation='softmax', dropout=0.0, batch_norm=batch_norm)
     # elif 'DeepLab_ResNet101' in parent_model_path:
     #     model = DeepLab(backbone='resnet', output_stride=16, num_classes=1, freeze_bn=True)
     else:
@@ -231,12 +240,6 @@ def init_parent_model(base_path, learn_batch_norm_params, **datasets):
 
         parent_states[k]['splits'] = [np.loadtxt(p, dtype=str).tolist()
                                       for p in v['val_split_files']]
-
-    if not learn_batch_norm_params:
-        for m in model.modules():
-            if isinstance(m, torch.nn.BatchNorm2d):
-                m.weight.requires_grad = False
-                # m.bias.requires_grad = False
 
     # if 'DeepLab_ResNet101' in parent_model_path:
     #     parent_state_dict = parent_state_dict['state_dict']
@@ -313,9 +316,32 @@ def eval_davis_seq(results_dir, seq_name):
 
 
 def setup_davis_eval(data_cfg: dict):
+    # TODO: refactor and not take YEAR from root_dir string
     davis_cfg.YEAR = int(data_cfg['root_dir'][-4:])
     davis_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
     davis_cfg.PATH.DATA = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, data_cfg['root_dir']))
     davis_cfg.PATH.SEQUENCES = os.path.join(davis_cfg.PATH.DATA, "JPEGImages", davis_cfg.RESOLUTION)
     davis_cfg.PATH.ANNOTATIONS = os.path.join(davis_cfg.PATH.DATA, "Annotations", davis_cfg.RESOLUTION)
     davis_cfg.PATH.PALETTE = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, 'data/palette.txt'))
+
+
+class SequentialSubsetSampler(Sampler):
+    r"""Samples elements sequentially from a given list of indices, without replacement.
+
+    Arguments:
+        indices (sequence): a sequence of indices
+    """
+
+    def __init__(self, dataset, indices=None):
+        self.dataset = dataset
+        self.indices = indices
+
+    def __iter__(self):
+        if self.indices is None:
+            return iter(range(len(self.dataset)))
+        return (i for i in self.indices)
+
+    def __len__(self):
+        if self.indices is None:
+            return len(self.dataset)
+        return len(self.indices)

@@ -2,6 +2,10 @@ seed: 1
 env_suffix: null
 vis_interval: 1
 parent_model:
+    batch_norm:
+        accum_stats: True
+        learn_weight: True
+        learn_bias: True
     # base_path: models/FPN_ResNet34_group_norm
     base_path: models/FPN_ResNet34_batch_norm_fix
     val:
@@ -12,14 +16,15 @@ parent_model:
             - data/DAVIS-2016/test_seqs.txt
 optim_cfg:
     file_dir: models/meta/meta_run_78.model
-    lr: 0.00001                                          # 1e-5
-loss_func: dice                                       # ['cross_entropy', 'dice']
+    lr: 0.00001                                             # 1e-5
+    exp_lr_decay_final_lr: null                             # gamma is calculated such that this lr is reached after num_epochs.
+loss_func: dice                                             # ['cross_entropy', 'dice']
 validate_inter: False
 num_epochs: null
 train_early_stopping:
     patience: null
     min_loss_improv: 0
-dataset: train_seqs                              # [train_seqs, test_seqs, blackswan, ...]
+dataset: train_seqs                                         # [train_seqs, test_seqs, blackswan, ...]
 data_cfg:
     root_dir: data/DAVIS-2016
     random_train_transform: True

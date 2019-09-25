@@ -11,7 +11,7 @@ import imageio
 import numpy as np
 import sacred
 import torch
-from meta_stopping.utils import dict_to_html
+from meta_optim.utils import dict_to_html
 from pytorch_tools.ingredients import (get_device, set_random_seeds,
                                        torch_ingredient)
 from pytorch_tools.vis import TextVis, LineVis
@@ -34,7 +34,7 @@ setup_davis_eval = ex.capture(setup_davis_eval)
 
 
 @ex.capture
-def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
+def init_vis(db_train, validate_inter, env_suffix, _config, _run, torch_cfg):
     vis_dict = {}
     run_name = f"{_run.experiment_info['name']}_{env_suffix}"
 
@@ -44,7 +44,7 @@ def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
 
     opts = dict(
         title=f"OSVOS ONLINE",
-        xlabel='VALS',
+        xlabel=f"VALIDATIONS (* {validate_inter} = NUM EPOCHS)",
         width=750,
         height=300,
         legend=['LOSS', 'J'])
@@ -54,9 +54,10 @@ def init_vis(db_train, env_suffix, _config, _run, torch_cfg):
 
 
 @ex.capture
-def init_optim(model, parent_model, optim_cfg):
+def init_optim(model, num_epochs, parent_model, optim_cfg):
     device = get_device()
 
+    lr_scheduler = None
     if optim_cfg['file_dir'] is not None:
         optim = torch.load(optim_cfg['file_dir'],
                            map_location=lambda storage, loc: storage)
@@ -89,7 +90,11 @@ def init_optim(model, parent_model, optim_cfg):
         else:
             optim = torch.optim.Adam(model.parameters(), lr=lr)
 
-    return optim
+        if optim_cfg['exp_lr_decay_final_lr'] is not None:
+            gamma = (optim_cfg['exp_lr_decay_final_lr'] / lr) ** (1 / num_epochs)
+            lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optim, gamma)
+
+    return optim, lr_scheduler
 
 
 @ex.automain
@@ -102,7 +107,7 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
 
     model, parent_states = init_parent_model(**parent_model)
     model.to(device)
-    train_loader, test_loader, _ = data_loaders(dataset)  # pylint: disable=E1120
+    train_loader, test_loader = data_loaders(dataset)  # pylint: disable=E1120
     if vis_interval is not None:
         vis_dict = init_vis(train_loader.dataset)  # pylint: disable=E1120
 
@@ -121,7 +126,7 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
         # if not os.path.exists(img_save_dir):
         #     os.makedirs(img_save_dir)
 
-        optim = init_optim(model)  # pylint: disable=E1120
+        optim, lr_scheduler = init_optim(model)  # pylint: disable=E1120
 
         train_loader.dataset.set_seq(seq_name)
         test_loader.dataset.set_seq(seq_name)
@@ -130,7 +135,7 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
             if seq_name in split:
                 model.load_state_dict(state)
                 break
-        
+
         model.to(device)
         model.zero_grad()
 
@@ -145,7 +150,8 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
             model, train_loader, val_loader, optim,
             early_stopping_func=early_stopping,
             validate_inter=validate_inter,
-            loss_func=loss_func)
+            loss_func=loss_func,
+            lr_scheduler=lr_scheduler)
         metrics['train_loss_hist'].append(train_loss)
         metrics['val_loss_hist'].append(val_loss)
         metrics['val_acc_hist'].append(val_acc)
@@ -158,7 +164,7 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
         metrics['test_J'].append(test_J)
         metrics['test_F'].append(test_F)
         metrics['test_acc'].append(test_acc_batches.mean())
-    
+
     metrics = {n: m if 'hist' in n else torch.tensor(m)
                for n, m in metrics.items()}
 

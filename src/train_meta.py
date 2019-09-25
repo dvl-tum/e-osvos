@@ -1,11 +1,11 @@
 import copy
 import math
 import os
+import shutil
 import socket
 import timeit
 from datetime import datetime
 from itertools import count
-import shutil
 
 import networks.vgg_osvos as vo
 import numpy as np
@@ -17,12 +17,12 @@ from meta_optim.utils import dict_to_html
 from pytorch_tools.ingredients import (save_model_to_db, set_random_seeds,
                                        torch_ingredient)
 from pytorch_tools.vis import LineVis, TextVis
-from torch.utils.data import DataLoader
-from util.helper_func import (data_loaders, early_stopping, eval_loader, grouper,
-                              init_parent_model, run_loader, setup_davis_eval,
-                              train_val, update_dict, compute_loss, epoch_iter)
 from spatial_correlation_sampler import spatial_correlation_sample
-
+from torch.utils.data import DataLoader
+from util.helper_func import (compute_loss, data_loaders, early_stopping,
+                              epoch_iter, eval_davis_seq, eval_loader, grouper,
+                              init_parent_model, run_loader, setup_davis_eval,
+                              train_val, update_dict)
 
 torch_ingredient.add_config('cfgs/torch.yaml')
 
@@ -39,16 +39,17 @@ train_val = ex.capture(train_val)
 
 @ex.capture
 def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
-             torch_cfg: dict, datasets: dict, resume_meta_run: int):
+             torch_cfg: dict, datasets: dict, resume_meta_run_epoch: int):
     run_name = f"{_run.experiment_info['name']}_{env_suffix}"
     vis_dict = {}
+
+    resume  = False if resume_meta_run_epoch is None else True
 
     opts = dict(title=f"CONFIG and NON META BASELINE (RUN: {_run._id})",
                 width=500, height=1750)
     vis_dict['config_vis'] = TextVis(opts, env=run_name, **torch_cfg['vis'])
-    vis_dict['config_vis'].plot(dict_to_html(_config))
-
-    resume  = False if resume_meta_run is None else True
+    if not resume:
+        vis_dict['config_vis'].plot(dict_to_html(_config))
 
     legend = [
         'MEAN seq TRAIN loss',
@@ -137,7 +138,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
     for module in model.modules_with_requires_grad_params():
         module.meta_embed = None
         module.match_embed = None
-    
+
     # get train frame without random transformation
     match_loader_frame_id = match_loader.dataset.frame_id
     match_loader.dataset.frame_id = None
@@ -150,7 +151,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
 
     # def _accum_meta_embed(self, inputs, outputs):
     #     batch, feat, *_ = outputs.size()
-        
+
     #     if self.meta_embed is None:
     #         self.meta_embed = outputs.view(batch, feat, -1).mean(dim=2)
     #     else:
@@ -163,15 +164,15 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
     def _match_embed(self, inputs, outputs):
         if isinstance(outputs, list):
             outputs = outputs[0]
-        batch, feat, h, w = outputs.size()
-        
+        _, _, h, w = outputs.size()
+
         scaled_train_gts = torch.nn.functional.interpolate(train_gts, (h, w))
         match_embed = outputs[:-1]
         train_embed = outputs[-1:].repeat(match_embed.size(0), 1, 1, 1)
 
         train_foreground_embed = train_embed * scaled_train_gts
-        train_background_embed = train_embed * (1 - scaled_train_gts)
-        
+        # train_background_embed = train_embed * (1 - scaled_train_gts)
+
         # patch_size = (h // 4, w // 4)
         # stride = 2
         patch_size = (h * 2, w * 2)
@@ -179,18 +180,21 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
 
         corr_foreground = spatial_correlation_sample(
             match_embed, train_foreground_embed,
-            kernel_size=3, stride=stride, padding=1, patch_size=patch_size)
-        corr_foreground_mean = corr_foreground.view(corr_foreground.size(0), -1).mean(dim=1, keepdim=True)
-        corr_foreground_mean /= scaled_train_gts.sum()
+            kernel_size=1, stride=stride, padding=0, patch_size=patch_size)
+        # corr_foreground_mean = corr_foreground.view(corr_foreground.size(0), -1).mean(dim=1, keepdim=True)
+        # corr_foreground_mean /= scaled_train_gts.sum()
+        corr_foreground = corr_foreground.max(dim=1)[0]
+        corr_foreground = corr_foreground.max(dim=1)[0]
+        corr_foreground_mean = corr_foreground.view(corr_foreground.size(0), -1)
+        # corr_background = spatial_correlation_sample(
+        #     match_embed, train_background_embed,
+        #     kernel_size=3, stride=stride, padding=1, patch_size=patch_size)
+        # corr_background_mean = corr_background.view(corr_background.size(0), -1).mean(dim=1, keepdim=True)
+        # corr_background_mean /= (1 - scaled_train_gts).sum()
 
-        corr_background = spatial_correlation_sample(
-            match_embed, train_background_embed,
-            kernel_size=3, stride=stride, padding=1, patch_size=patch_size)
-        corr_background_mean = corr_background.view(corr_background.size(0), -1).mean(dim=1, keepdim=True)
-        corr_background_mean /= (1 - scaled_train_gts).sum()
+        # match_embed = torch.cat([corr_foreground_mean, corr_background_mean], dim=1)
+        match_embed = corr_foreground_mean
 
-        match_embed = torch.cat([corr_foreground_mean, corr_background_mean], dim=1)
-        
         if self.match_embed is None:
             self.match_embed = match_embed
         else:
@@ -202,13 +206,13 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
     with torch.no_grad():
         for match_batch in match_loader:
             match_inputs = match_batch['image'].to(device)
-            
+
             inputs = torch.cat([match_inputs, train_inputs])
             model(inputs)
 
     for hook in match_embed_hooks:
         hook.remove()
-    
+
     # def _match_embed(self, inputs, outputs):
     #     batch, feat, *_ = outputs.size()
     #     train_embed = outputs.view(batch, feat, -1).mean(dim=2).detach()
@@ -221,7 +225,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
     #     # get train frame without random transformation
     #     match_loader_frame_id = match_loader.dataset.frame_id
     #     match_loader.dataset.frame_id = None
-        
+
     #     batch = match_loader.dataset[train_loader.dataset.frame_id]
     #     inputs, gts = batch['image'], batch['gt']
     #     inputs, gts = inputs.to(device).unsqueeze(dim=0), gts.to(device).unsqueeze(dim=0)
@@ -229,7 +233,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
     #     mean_img = inputs.mean().expand_as(inputs)
     #     foreground_inputs = mean_img * (1 - gts) + inputs * gts
     #     model(foreground_inputs)
-        
+
     #     match_loader.dataset.frame_id = match_loader_frame_id
 
     # for hook in match_embed_hooks:
@@ -252,8 +256,8 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
     # device = torch.device(f'cuda:{(2 * rank) + 1}')
     # meta_device = torch.device(f'cuda:{(2 * rank + 1) + 1}')
     if _config['eval_datasets']:
-        device = torch.device(f'cuda:{rank + 1}')
-        meta_device = torch.device(f'cuda:{rank + 1}')
+        device = torch.device(f"cuda:{rank + len(_config['datasets'])}")
+        meta_device = torch.device(f"cuda:{rank + len(_config['datasets'])}")
     else:
         device = torch.device(f'cuda:{rank}')
         meta_device = torch.device(f'cuda:{rank}')
@@ -302,7 +306,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
             # meta_optim_optim.load_state_dict(meta_optim_optim_state_dict)
 
             torch.set_rng_state(random_frame_rng_state)
-            
+
             # TODO> refactor
             if _config['change_frame_ids_per_seq_epoch']['train'] == 'random':
                 train_loader.dataset.set_random_frame_id()
@@ -313,17 +317,17 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                 meta_loader.dataset.set_random_frame_id()
             elif _config['change_frame_ids_per_seq_epoch']['meta'] == 'next':
                 meta_loader.dataset.set_next_frame_id()
-            
+
             if _config['change_frame_ids_per_seq_epoch']['train'] == 'random' or _config['change_frame_ids_per_seq_epoch']['meta'] == 'random':
                 # ensure train and meta frame ids are not the same
                 if train_loader.dataset.frame_id == meta_loader.dataset.frame_id:
                     if train_loader.dataset.frame_id + 1 == len(train_loader.dataset.img_list):
-                        meta_loader.dataset.frame_id -= 1    
+                        meta_loader.dataset.frame_id -= 1
                     else:
                         meta_loader.dataset.frame_id += 1
 
             random_frame_rng_state = torch.get_rng_state()
-            
+
             if _config['meta_optim_cfg']['matching_input']:
                 match_embed(model, train_loader, meta_loader)
 
@@ -338,9 +342,9 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                     train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
 
                     model.zero_grad()
-                    model.train_no_batch_norm()
+                    model.train()
                     train_outputs = model(train_inputs)
-                    
+
                     train_loss = compute_loss(loss_func, train_outputs[-1], train_gts)
                     train_loss_hist.append(train_loss.item())
                     train_loss.backward()
@@ -348,7 +352,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                     meta_optim.set_train_loss(train_loss)
                     meta_model, stop_train = meta_optim.step()
 
-                    meta_model.train_no_batch_norm()
+                    meta_model.train()
 
                     bptt_iter_loss = 0.0
                     for meta_batch in meta_loader:
@@ -424,16 +428,17 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
     return_dict['random_frame_rng_state'] = random_frame_rng_state
 
 
-def evaluate(rank: int, dataset_key: str, datasets: dict, meta_optim_state_dict: dict, _config: dict, return_dict: dict):
+def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: dict, return_dict: dict):
     seed = _config['seed']
     loss_func = _config['loss_func']
+    datasets = _config['datasets']
 
     torch.backends.cudnn.fastest = False
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
     set_random_seeds(seed)
-    device = torch.device(f'cuda:0')
+    device = torch.device(f'cuda:{rank}')
 
     setup_davis_eval(_config['data_cfg'])
 
@@ -447,70 +452,135 @@ def evaluate(rank: int, dataset_key: str, datasets: dict, meta_optim_state_dict:
     meta_model.to(device)
     meta_optim.to(device)
 
-    train_loader, test_loader, _ = data_loaders(datasets[dataset_key], **_config['data_cfg'])  # pylint: disable=E1120
+    train_loader, test_loader, meta_loader = data_loaders(  # pylint: disable=E1120
+        datasets[dataset_key], **_config['data_cfg'])
 
     def early_stopping_func(loss_hist):
         return early_stopping(loss_hist, **_config['train_early_stopping_cfg'])
+
+    if _config['eval_online_adapt_step'] is not None:
+        assert _config['meta_optim_cfg']['matching_input'], (
+            'Online adaptation must have meta_optim_cfg.matching_input=True. ')
 
     init_J_seq = []
     J_seq = []
     for seq_name in train_loader.dataset.seqs_dict.keys():
         train_loader.dataset.set_seq(seq_name)
         test_loader.dataset.set_seq(seq_name)
+        meta_loader.dataset.set_seq(seq_name)
 
+        # initial metrics
         for state, split in zip(parent_states[dataset_key]['states'], parent_states[dataset_key]['splits']):
             if seq_name in split:
                 model.load_state_dict(state)
                 break
-
-        meta_optim.reset()
-        meta_optim.eval()
-
-        _, _, J, _, _ = eval_loader(model, test_loader, loss_func, return_preds=True)
+        _, _, J, _,  = eval_loader(model, test_loader, loss_func)
         init_J_seq.append(J)
 
-        if _config['meta_optim_cfg']['matching_input']:
-            match_embed(model, train_loader, test_loader)
+        # evaluation with online adaptation
+        if _config['eval_online_adapt_step'] is None:
+            # one iteration with original meta frame and evaluation of entire sequence
+            eval_online_adapt_step = len(test_loader.dataset)
+            meta_frame_iter = [meta_loader.dataset.frame_id]
+        else:
+            eval_online_adapt_step = _config['eval_online_adapt_step']
+            meta_frame_iter = range(eval_online_adapt_step,
+                                   len(test_loader.dataset),
+                                   eval_online_adapt_step)
 
-        # train_val(  # pylint: disable=E1120
-        #     model, train_loader, None, meta_optim, _config['num_epochs'], seed,
-        #     early_stopping_func=early_stopping_func,
-        #     validate_inter=None,
-        #     loss_func=loss_func)
+        import tempfile
+        import imageio
+        preds_save_dir = tempfile.mkdtemp()
+        os.makedirs(os.path.join(preds_save_dir, seq_name))
 
-        for epoch in epoch_iter(_config['num_epochs']):
-            set_random_seeds(_config['seed'] + epoch)
+        # meta_frame_id might be a str, e.g., 'middle'
+        for i, meta_frame_id in enumerate(meta_frame_iter):
+            # range [min, max[
+            if i == 0:
+                # save gt of first frame as prediction of first frame
+                for batch in train_loader:
+                    gts, fnames = batch['gt'], batch['fname']
+                    gts = 255 * gts
+                    gts = np.transpose(gts.cpu().numpy(), (0, 2, 3, 1)).astype(np.uint8)
+                    pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(fnames[0]) + '.png')
+                    imageio.imsave(pred_path, gts[0])
 
-            train_loss_hist = []
-            for train_batch in train_loader:
-                train_inputs, train_gts = train_batch['image'], train_batch['gt']
-                train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
+                eval_frame_range_min = 1
+                eval_frame_range_max = eval_online_adapt_step // 2 + 1
+            else:
+                # eval_frame_range_min = (meta_frame_id - eval_online_adapt_step // 2) + 1
+                eval_frame_range_min = eval_frame_range_max
 
-                model.train_no_batch_norm()
-                train_outputs = model(train_inputs)
+            eval_frame_range_max += eval_online_adapt_step
+            if eval_frame_range_max + (eval_online_adapt_step // 2 + 1) > len(test_loader.dataset):
+                eval_frame_range_max = len(test_loader.dataset)
 
-                train_loss = compute_loss(loss_func, train_outputs[-1], train_gts)
-                train_loss_hist.append(train_loss.detach())
+            # print(meta_frame_id, eval_frame_range_min, eval_frame_range_max, list(
+            #     range(eval_frame_range_min, eval_frame_range_max)), len(test_loader.dataset))
 
-                model.zero_grad()
-                train_loss.backward()
-
-                meta_optim.set_train_loss(train_loss)
-                with torch.no_grad():
-                    meta_optim.step()
-
-                if early_stopping_func(train_loss_hist):
+            for state, split in zip(parent_states[dataset_key]['states'], parent_states[dataset_key]['splits']):
+                if seq_name in split:
+                    model.load_state_dict(state)
                     break
 
-        _, _, J, _ = eval_loader(model, test_loader, loss_func)
+            meta_optim.reset()
+            meta_optim.eval()
+
+            meta_loader_frame_id = meta_loader.dataset.frame_id
+            meta_loader.dataset.frame_id = meta_frame_id
+            if _config['meta_optim_cfg']['matching_input']:
+                match_embed(model, train_loader, meta_loader)
+            meta_loader.dataset.frame_id = meta_loader_frame_id
+
+            train_val(  # pylint: disable=E1120
+                model, train_loader, None, meta_optim, _config['num_epochs'], seed,
+                early_stopping_func=early_stopping_func,
+                validate_inter=None,
+                loss_func=loss_func)
+
+            # for epoch in epoch_iter(_config['num_epochs']):
+            #     set_random_seeds(_config['seed'] + epoch)
+
+            #     train_loss_hist = []
+            #     for train_batch in train_loader:
+            #         train_inputs, train_gts = train_batch['image'], train_batch['gt']
+            #         train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
+
+            #         model.train()
+            #         train_outputs = model(train_inputs)
+
+            #         train_loss = compute_loss(loss_func, train_outputs[-1], train_gts)
+            #         train_loss_hist.append(train_loss.detach())
+
+            #         model.zero_grad()
+            #         train_loss.backward()
+
+            #         meta_optim.set_train_loss(train_loss)
+            #         with torch.no_grad():
+            #             meta_optim.step()
+
+            #         if early_stopping_func(train_loss_hist):
+            #             break
+
+            # eval_loader
+            test_loader.sampler.indices = range(eval_frame_range_min, eval_frame_range_max)
+            run_loader(model, test_loader, loss_func, os.path.join(preds_save_dir, seq_name))
+            test_loader.sampler.indices = None
+            # print(len(preds))
+
+        # _, _, J, _ = eval_loader(model, test_loader, loss_func)
+        evaluation = eval_davis_seq(preds_save_dir, seq_name)
+        J = evaluation['J']['mean'][0]
         J_seq.append(J)
+
+        shutil.rmtree(preds_save_dir)
 
     return_dict['init_J_seq'] = init_J_seq
     return_dict['J_seq'] = J_seq
 
 
 @ex.automain
-def main(save_train: bool, resume_meta_run: int, env_suffix: str,
+def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
          eval_datasets: bool, num_processes: int, datasets: dict,
          meta_optim_optim_cfg: dict, seed: int, _config: dict):
     mp.set_start_method("spawn")
@@ -522,15 +592,15 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
     save_dir = os.path.join(f'models/meta/{env_suffix}')
     if save_train:
         if os.path.exists(save_dir):
-            if resume_meta_run is None:
+            if resume_meta_run_epoch is None:
                 shutil.rmtree(save_dir)
                 os.makedirs(save_dir)
         else:
             os.makedirs(save_dir)
 
-    if resume_meta_run is not None:
+    if resume_meta_run_epoch is not None:
         saved_meta_run = torch.load(
-            os.path.join(save_dir, f"meta_run_{resume_meta_run}.model"))
+            os.path.join(save_dir, f"meta_run_{resume_meta_run_epoch}.model"))
         for n, win_name in saved_meta_run['vis_win_names'].items():
             vis_dict[n].win = win_name
 
@@ -539,6 +609,12 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
     #
     # processes
     #
+    if num_processes == 'auto':
+        num_processes = torch.cuda.device_count()
+
+        if eval_datasets:
+            num_processes -= len(datasets)
+
     seqs_per_process = math.ceil(len(train_loader.dataset.seqs_dict) / num_processes)
     process_manager = mp.Manager()
     meta_processes = [dict() for _ in range(num_processes)]
@@ -559,7 +635,7 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
         # meta_model.load_state_dict(parent_state_dict)
 
     meta_optim = MetaOptimizer(model, meta_model)  # pylint: disable=E1120
-    if resume_meta_run is not None:
+    if resume_meta_run_epoch is not None:
         meta_optim.load_state_dict(saved_meta_run['meta_optim_state_dict'])
 
     del model
@@ -574,7 +650,7 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
                           'lr': meta_optim_optim_cfg['lr']}]
     meta_optim_optim = torch.optim.Adam(meta_optim_params,
                                         lr=meta_optim_optim_cfg['lr'])
-    if resume_meta_run is not None:
+    if resume_meta_run_epoch is not None:
         meta_optim_optim.load_state_dict(saved_meta_run['meta_optim_optim_state_dict'])
 
     seqs_metrics = {'train_loss': {}, 'meta_loss': {}, 'loss': {}, 'J': {}, 'F': {}}
@@ -582,11 +658,11 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
                                                   for name, param in meta_optim.named_parameters()})
 
     random_frame_rng_state = torch.get_rng_state()
-    if resume_meta_run is not None:
+    if resume_meta_run_epoch is not None:
         random_frame_rng_state = saved_meta_run['random_frame_rng_state']
 
     num_meta_run = 1
-    if resume_meta_run is not None:
+    if resume_meta_run_epoch is not None:
         num_meta_run = saved_meta_run['num_meta_run'] + 1
     for i in count(start=num_meta_run):
         start_time = timeit.default_timer()
@@ -596,7 +672,7 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
             if 'process' not in p or not p['process'].is_alive():
                 p['num_meta_run'] = i
                 p['return_dict'] = process_manager.dict()
-                process_args = [rank, dataset_key, datasets, meta_optim.state_dict(),
+                process_args = [rank, dataset_key, meta_optim.state_dict(),
                                 _config, p['return_dict']]
                 p['process'] = mp.Process(target=evaluate, args=process_args)
                 p['process'].start()
@@ -687,4 +763,3 @@ def main(save_train: bool, resume_meta_run: int, env_suffix: str,
                              'vis_win_names': {n: v.win for n, v in vis_dict.items()},
                              'num_meta_run': i}
             torch.save(save_meta_run, os.path.join(save_dir, f"meta_run_{i}.model"))
-

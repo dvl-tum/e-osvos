@@ -5,6 +5,18 @@ import torch.nn.functional as F
 
 class FPN(smp.FPN):
 
+    def __init__(self, *args, batch_norm=None, **kwargs):
+        super(FPN, self).__init__(*args, **kwargs)
+
+        self._accum_batch_norm_stats = True
+        if batch_norm is not None:
+            self._accum_batch_norm_stats = batch_norm['accum_stats']
+
+            for m in self.modules():
+                if isinstance(m, torch.nn.BatchNorm2d):
+                    m.weight.requires_grad = batch_norm['learn_weight']
+                    m.bias.requires_grad = batch_norm['learn_bias']
+
     def forward(self, inputs):
         b, c, h, w = inputs.shape
 
@@ -20,7 +32,7 @@ class FPN(smp.FPN):
             crop = 0
         else:
             raise NotImplementedError
-        
+
         inputs = F.pad(input=inputs, pad=pad, mode='constant', value=0)
         outputs = super(FPN, self).forward(inputs)
         if crop:
@@ -28,12 +40,13 @@ class FPN(smp.FPN):
         else:
             return [outputs]
 
-    def train_no_batch_norm(self, mode=True):
+    def train(self, mode=True):
         super(FPN, self).train(mode)
 
-        for m in self.modules():
-            if isinstance(m, torch.nn.BatchNorm2d):
-                m.eval()
+        if not self._accum_batch_norm_stats:
+            for m in self.modules():
+                if isinstance(m, torch.nn.BatchNorm2d):
+                    m.eval()
 
     def modules_with_requires_grad_params(self):
         # _parameters includes only direct parameters of a module and not all

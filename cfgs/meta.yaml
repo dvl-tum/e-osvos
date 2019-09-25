@@ -1,23 +1,36 @@
 seed: 1
-num_processes: 1
+# if 'auto' the number of processes is number of GPUs minus number of datasets. each dataset has one GPU for evaliation.
+num_processes: 'auto'
 env_suffix: null
-save_train: False                                   # saves training in 'models/meta/{env_suffix}'
-resume_meta_run: null
-num_seq_epochs_per_meta_run: 4                          # num of times a seq is processed and gradients are collected for the step
-change_frame_ids_per_seq_epoch:                     # [False, 'random', 'next']
+# saves training in 'models/meta/{env_suffix}'
+save_train: False
+resume_meta_run_epoch: null
+# num of times a seq is processed and gradients are collected for the step
+num_seq_epochs_per_meta_run: 4
+# [False, 'random', 'next']
+change_frame_ids_per_seq_epoch:
     train: False
     meta: False
-increase_seed_per_meta_run: False                   # increases seed random seed after each meta run. supposed to enrich the training and improve generalization.
-num_epochs: 5                                       # if null run meta model until meta_optim returns stop_train=True
+# increases seed random seed after each meta run. supposed to enrich the training and improve generalization.
+increase_seed_per_meta_run: False
+# if null run meta model until meta_optim returns stop_train=True
+num_epochs: 5
 bptt_epochs: 10
-eval_datasets: True                                      # evalute all datasets
+# evalute all datasets
+eval_datasets: True
+# number of frames after which the model is fine-tuned (on the first frame) again.
+# only for evaluation.
+# choose uneven frames to have meta matching frame in the middle of eval frame interval.
+eval_online_adapt_step: null
 meta_optim_cfg:
     num_layers: 2
     hidden_size: 256
-    lr_range: [0.00000001, 0.00001]                  # [1e-6, 1e-4]
+    # [1e-6, 1e-4]
+    lr_range: [0.00000001, 0.00001]
     init_lr_mom: 0.5
     init_weight_decay: 0.0001
-    optim_func: Adam                                # optimizer that computes paramter update step witout learning rate
+    # optimizer that computes paramter update step witout learning rate
+    optim_func: Adam
     learn_model_init: False
     layer_norm: True
     grad_input: False
@@ -27,12 +40,15 @@ meta_optim_optim_cfg:
     log_init_lr_lr: 0.01
     lr: 0.0001
     step_in_seq: False
-    grad_clip: null                                 # average the gradient every num_ave_grad iterations
+    grad_clip: null
 loss_func: dice
 # parent_model_path: models/FPN_ResNet34_batch_norm_fix/train_split_1_train/FPN_ResNet34_batch_norm_fix_epoch-40.pth
 # val_parent_model_path: models/FPN_ResNet34_batch_norm_fix/train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
 parent_model:
-    learn_batch_norm_params: False
+    batch_norm:
+        accum_stats: False
+        learn_weight: False
+        learn_bias: True
     # base_path: models/FPN_ResNet34_group_norm
     base_path: models/FPN_ResNet34_batch_norm_fix
     train:
@@ -56,20 +72,24 @@ parent_model:
 train_early_stopping_cfg:
     patience: null
     min_loss_improv: 0.001
+# [train_seqs, test_seqs, blackswan, ...]
 datasets:
-    train: train_seqs                            # [train_seqs, test_seqs, blackswan, ...]
+    train: train_seqs
     val: test_seqs
 data_cfg:
     root_dir: data/DAVIS-2016
     random_train_transform: True
-    frame_ids:                                      # integer or str for frame mode, e.g., 'random', 'middle'
+    # integer or str for frame mode, e.g., 'random', 'middle'
+    frame_ids:
         train: 0
         test: null
         meta: middle
     batch_sizes:
-        train: 8                                    # train applies an epoch sampler. frame_id will be repeated bach size times.
+        # train applies an epoch sampler. frame_id will be repeated bach_size times.
+        train: 8
         test: 8
-        meta: 1                                     # larger meta batch size will reduce number of possible bptt_epochs (GPU limits)
+        # larger meta batch size will reduce number of possible bptt_epochs (GPU limits)
+        meta: 1
     shuffles:
         train: True
         test: False
