@@ -1,12 +1,14 @@
 seed: 1
-# if 'auto' the number of processes is number of GPUs minus number of datasets. each dataset has one GPU for evaliation.
-num_processes: 'auto'
+# if 'auto' the number of processes is number of GPUs minus number of datasets. each dataset has one GPU for evaluation.
+num_meta_processes: 'auto'
+# number of random sequences used for collecting gradients for a single meta update
+meta_batch_size: 5
 env_suffix: null
 # saves training in 'models/meta/{env_suffix}'
 save_train: False
 resume_meta_run_epoch: null
-# num of times a seq is processed and gradients are collected for the step
-num_seq_epochs_per_meta_run: 4
+# num of train meta frame pairs per seq per meta batch
+num_frame_pairs_per_seq: 4
 # [False, 'random', 'next']
 change_frame_ids_per_seq_epoch:
     train: False

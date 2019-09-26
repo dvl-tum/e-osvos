@@ -3,10 +3,12 @@ import math
 import os
 import shutil
 import socket
+import tempfile
 import timeit
 from datetime import datetime
 from itertools import count
 
+import imageio
 import networks.vgg_osvos as vo
 import numpy as np
 import sacred
@@ -63,8 +65,8 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         'RUN TIME [min]']
     opts = dict(
         title=f"TRAIN METRICS (RUN: {_run._id})",
-        xlabel='NUM META RUNS',
-        ylabel='FINAL METRICS',
+        xlabel='META ITERS',
+        ylabel='METRICS',
         width=750,
         height=300,
         legend=legend)
@@ -77,7 +79,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
                   for seq_name in loader.dataset.seqs_dict.keys()]
         opts = dict(
             title=f"EVAL: {dataset_name.upper()} J (RUN: {_run._id})",
-            xlabel='NUM META RUNS',
+            xlabel='META EPOCHS',
             ylabel=f'{dataset_name.upper()} J',
             width=750,
             height=750,
@@ -90,7 +92,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
     legend = [f"{seq_name}" for seq_name in train_loader.dataset.seqs_dict.keys()]
     opts = dict(
         title=f"META LOSS (RUN: {_run._id})",
-        xlabel='NUM META RUNS',
+        xlabel='META EPOCHS',
         ylabel=f'META LOSS',
         width=750,
         height=750,
@@ -115,7 +117,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
                          if p.requires_grad]
     opts = dict(
         title=f"INIT LR (RUN: {_run._id})",
-        xlabel='NUM META RUNS',
+        xlabel='META ITERS',
         ylabel='LR',
         width=750,
         height=750,
@@ -186,6 +188,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         corr_foreground = corr_foreground.max(dim=1)[0]
         corr_foreground = corr_foreground.max(dim=1)[0]
         corr_foreground_mean = corr_foreground.view(corr_foreground.size(0), -1)
+
         # corr_background = spatial_correlation_sample(
         #     match_embed, train_background_embed,
         #     kernel_size=3, stride=stride, padding=1, patch_size=patch_size)
@@ -279,7 +282,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
     vis_data_seqs = {}
 
-    for _ in range(_config['num_seq_epochs_per_meta_run']):
+    for _ in range(_config['num_frame_pairs_per_seq']):
         for seq_name in seq_names:
             train_loader.dataset.set_seq(seq_name)
             meta_loader.dataset.set_seq(seq_name)
@@ -307,7 +310,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
             torch.set_rng_state(random_frame_rng_state)
 
-            # TODO> refactor
+            # TODO: refactor
             if _config['change_frame_ids_per_seq_epoch']['train'] == 'random':
                 train_loader.dataset.set_random_frame_id()
             elif _config['change_frame_ids_per_seq_epoch']['train'] == 'next':
@@ -416,9 +419,9 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
             # normalize over epochs
             for name, grad in meta_optim_param_grad_seq.items():
-                meta_optim_param_grad[name] += grad.cpu() / _config['num_seq_epochs_per_meta_run']
+                meta_optim_param_grad[name] += grad.cpu() / _config['num_frame_pairs_per_seq']
 
-    # # compute mean over num_seq_epochs_per_meta_run
+    # # compute mean over num_frame_pairs_per_seq
     # seqs_metrics = {metric_name: {seq_name: torch.tensor(vv).mean()
     #                               for seq_name, vv in v.items()}
     #                 for metric_name, v in seqs_metrics.items()}
@@ -488,8 +491,6 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
                                    len(test_loader.dataset),
                                    eval_online_adapt_step)
 
-        import tempfile
-        import imageio
         preds_save_dir = tempfile.mkdtemp()
         os.makedirs(os.path.join(preds_save_dir, seq_name))
 
@@ -581,8 +582,9 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
 
 @ex.automain
 def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
-         eval_datasets: bool, num_processes: int, datasets: dict,
-         meta_optim_optim_cfg: dict, seed: int, _config: dict):
+         eval_datasets: bool, num_meta_processes: int, datasets: dict,
+         meta_optim_optim_cfg: dict, meta_batch_size: int, seed: int,
+         _config: dict):
     mp.set_start_method("spawn")
 
     set_random_seeds(seed)
@@ -609,15 +611,15 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
     #
     # processes
     #
-    if num_processes == 'auto':
-        num_processes = torch.cuda.device_count()
+    if num_meta_processes == 'auto':
+        num_meta_processes = torch.cuda.device_count()
 
         if eval_datasets:
-            num_processes -= len(datasets)
+            num_meta_processes -= len(datasets)
 
-    seqs_per_process = math.ceil(len(train_loader.dataset.seqs_dict) / num_processes)
+    seqs_per_process = math.ceil(meta_batch_size / num_meta_processes)
     process_manager = mp.Manager()
-    meta_processes = [dict() for _ in range(num_processes)]
+    meta_processes = [dict() for _ in range(num_meta_processes)]
 
     eval_processes = {}
     if eval_datasets:
@@ -635,11 +637,11 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
         # meta_model.load_state_dict(parent_state_dict)
 
     meta_optim = MetaOptimizer(model, meta_model)  # pylint: disable=E1120
+    # models were only needed to setup MetaOptimizer. in this outer loop
+    # the MetaOptimizer is only updated and never applied.
+    del model, meta_model
     if resume_meta_run_epoch is not None:
         meta_optim.load_state_dict(saved_meta_run['meta_optim_state_dict'])
-
-    del model
-    del meta_model
 
     # TODO: refactor
     meta_optim_params = [{'params': [p for n, p in meta_optim.named_parameters() if 'model_init' in n],
@@ -653,7 +655,11 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
     if resume_meta_run_epoch is not None:
         meta_optim_optim.load_state_dict(saved_meta_run['meta_optim_optim_state_dict'])
 
-    seqs_metrics = {'train_loss': {}, 'meta_loss': {}, 'loss': {}, 'J': {}, 'F': {}}
+    if resume_meta_run_epoch is None:
+        seqs_metrics = {'train_loss': {},
+                        'meta_loss': {}, 'loss': {}, 'J': {}, 'F': {}}
+    else:
+        seqs_metrics = saved_meta_run['seqs_metrics']
     meta_optim_param_grad = process_manager.dict({name: torch.zeros_like(param).cpu()
                                                   for name, param in meta_optim.named_parameters()})
 
@@ -661,89 +667,99 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
     if resume_meta_run_epoch is not None:
         random_frame_rng_state = saved_meta_run['random_frame_rng_state']
 
-    num_meta_run = 1
+    train_seq_names = list(train_loader.dataset.seqs_dict.keys())
+    meta_iters_per_epoch = math.ceil(len(train_seq_names) / meta_batch_size)
+
+    meta_epoch = 1
     if resume_meta_run_epoch is not None:
-        num_meta_run = saved_meta_run['num_meta_run'] + 1
-    for i in count(start=num_meta_run):
-        start_time = timeit.default_timer()
+        meta_epoch = saved_meta_run['meta_epoch'] + 1
+    for i in count(start=meta_epoch):
 
         # start train and val evaluation
         for rank, (dataset_key, p) in enumerate(eval_processes.items()):
             if 'process' not in p or not p['process'].is_alive():
-                p['num_meta_run'] = i
+                p['meta_epoch'] = i
                 p['return_dict'] = process_manager.dict()
                 process_args = [rank, dataset_key, meta_optim.state_dict(),
                                 _config, p['return_dict']]
                 p['process'] = mp.Process(target=evaluate, args=process_args)
                 p['process'].start()
 
-        # set meta optim gradients to zero
-        for p in meta_optim_param_grad.values():
-            p.zero_()
+        random_train_seq_idx = torch.randperm(len(train_seq_names))
+        for meta_iter, batch_seq_idx in enumerate(grouper(meta_batch_size, random_train_seq_idx)):
+            batch_seq_names = [train_seq_names[idx.item()]
+                               for idx in batch_seq_idx]
+            start_time = timeit.default_timer()
 
-        # start meta run processes
-        groups = grouper(seqs_per_process, train_loader.dataset.seqs_dict.keys())
-        for rank, (p, seq_names) in enumerate(zip(meta_processes, groups)):
-            # filter None values from grouper
-            seq_names = [n for n in seq_names if n is not None]
+            # set meta optim gradients to zero
+            for p in meta_optim_param_grad.values():
+                p.zero_()
 
-            p['return_dict'] = process_manager.dict()
+            # start meta run processes
+            groups = grouper(seqs_per_process, batch_seq_names)
+            for rank, (p, seq_names) in enumerate(zip(meta_processes, groups)):
+                # filter None values from grouper
+                seq_names = [n for n in seq_names if n is not None]
 
-            process_args = [i, rank, seq_names, meta_optim.state_dict(),
-                            meta_optim_param_grad, random_frame_rng_state,
-                            _config, datasets['train'], p['return_dict']]
-            p['process'] = mp.Process(target=meta_run, args=process_args)
-            p['process'].start()
+                p['return_dict'] = process_manager.dict()
 
-        # join meta run processes
-        for p in meta_processes:
-            p['process'].join()
-            update_dict(seqs_metrics, p['return_dict']['seqs_metrics'])
-            random_frame_rng_state = p['return_dict']['random_frame_rng_state']
+                process_args = [i, rank, seq_names, meta_optim.state_dict(),
+                                meta_optim_param_grad, random_frame_rng_state,
+                                _config, datasets['train'], p['return_dict']]
+                p['process'] = mp.Process(target=meta_run, args=process_args)
+                p['process'].start()
 
-        # visualize meta metrics and seq runs
-        # meta_metrics = [torch.tensor(list(m.values())).mean()
-        #                 for m in seqs_metrics.values()]
-        train_loss = torch.tensor(list(seqs_metrics['train_loss'].values()))
-        meta_loss = torch.tensor(list(seqs_metrics['meta_loss'].values()))
-        meta_metrics = [train_loss.mean(),
-                        meta_loss.mean(),
-                        meta_loss.std(),
-                        meta_loss.max(),
-                        meta_loss.min()]
-        meta_metrics.append((timeit.default_timer() - start_time) / 60)
-        vis_dict['meta_metrics_vis'].plot(meta_metrics, i)
+            # join meta run processes
+            for p in meta_processes:
+                p['process'].join()
+                update_dict(seqs_metrics, p['return_dict']['seqs_metrics'])
+                random_frame_rng_state = p['return_dict']['random_frame_rng_state']
+
+            # optimize meta_optim
+            meta_optim.zero_grad()
+            for name, param in meta_optim.named_parameters():
+                param.grad = meta_optim_param_grad[name] / len(train_seq_names)
+
+                grad_clip = meta_optim_optim_cfg['grad_clip']
+                if grad_clip is not None:
+                    param.grad.clamp_(-1.0 * grad_clip, grad_clip)
+
+            meta_optim_optim.step()
+
+            # visualize meta metrics and seq runs
+            # meta_metrics = [torch.tensor(list(m.values())).mean()
+            #                 for m in seqs_metrics.values()]
+            train_loss = torch.tensor(list(seqs_metrics['train_loss'].values()))
+            meta_loss = torch.tensor(list(seqs_metrics['meta_loss'].values()))
+            meta_metrics = [train_loss.mean(),
+                            meta_loss.mean(),
+                            meta_loss.std(),
+                            meta_loss.max(),
+                            meta_loss.min()]
+            meta_metrics.append((timeit.default_timer() - start_time) / 60)
+            vis_dict['meta_metrics_vis'].plot(
+                meta_metrics, (i - 1) * meta_iters_per_epoch + meta_iter + 1)
+
+            meta_init_lr = [meta_optim.log_init_lr.exp().mean(),
+                            meta_optim.log_init_lr.exp().std()]
+            meta_init_lr += meta_optim.log_init_lr.exp().detach().numpy().tolist()
+            vis_dict['init_lr_vis'].plot(
+                meta_init_lr, (i - 1) * meta_iters_per_epoch + meta_iter + 1)
+
+            for p in meta_processes:
+                for seq_name, vis_data in p['return_dict']['vis_data_seqs'].items():
+                    # Visdom throws no error for infinte or NaN values
+                    assert not np.isnan(np.array(vis_data)).any() and \
+                        np.isfinite(np.array(vis_data)).all()
+
+                    vis_dict[f"{seq_name}_model_metrics"].reset()
+                    for epoch, vis_datum in enumerate(vis_data):
+                        vis_dict[f"{seq_name}_model_metrics"].plot(vis_datum, epoch + 1)
 
         meta_loss_seq = []
-        for seq_name in train_loader.dataset.seqs_dict.keys():
+        for seq_name in train_seq_names:
             meta_loss_seq.append(torch.tensor(seqs_metrics['meta_loss'][seq_name]).mean())
         vis_dict[f'meta_loss_seq_vis'].plot(meta_loss_seq, i)
-
-        meta_init_lr = [meta_optim.log_init_lr.exp().mean(),
-                        meta_optim.log_init_lr.exp().std()]
-        meta_init_lr += meta_optim.log_init_lr.exp().detach().numpy().tolist()
-        vis_dict['init_lr_vis'].plot(meta_init_lr, i)
-
-        for p in meta_processes:
-            for seq_name, vis_data in p['return_dict']['vis_data_seqs'].items():
-                # Visdom throws no error for infinte or NaN values
-                assert not np.isnan(np.array(vis_data)).any() and \
-                    np.isfinite(np.array(vis_data)).all()
-
-                vis_dict[f"{seq_name}_model_metrics"].reset()
-                for epoch, vis_datum in enumerate(vis_data):
-                    vis_dict[f"{seq_name}_model_metrics"].plot(vis_datum, epoch + 1)
-
-        # optimize meta_optim
-        meta_optim.zero_grad()
-        for name, param in meta_optim.named_parameters():
-            param.grad = meta_optim_param_grad[name] / len(train_loader.dataset.seqs_dict)
-
-            grad_clip = meta_optim_optim_cfg['grad_clip']
-            if grad_clip is not None:
-                param.grad.clamp_(-1.0 * grad_clip, grad_clip)
-
-        meta_optim_optim.step()
 
         # join and visualize evaluation
         for dataset_name, p in eval_processes.items():
@@ -753,7 +769,7 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
                 J_seq_vis = [torch.tensor(p['return_dict']['init_J_seq']).mean(),
                             torch.tensor(p['return_dict']['J_seq']).mean()]
                 J_seq_vis.extend(p['return_dict']['J_seq'])
-                vis_dict[f'{dataset_name}_J_seq_vis'].plot(J_seq_vis, p['num_meta_run'])
+                vis_dict[f'{dataset_name}_J_seq_vis'].plot(J_seq_vis, p['meta_epoch'])
 
         if save_train:
             # save_model_to_db(meta_optim, f"update_{i}.model", ex)
@@ -761,5 +777,6 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
                              'meta_optim_optim_state_dict': meta_optim_optim.state_dict(),
                              'random_frame_rng_state': random_frame_rng_state,
                              'vis_win_names': {n: v.win for n, v in vis_dict.items()},
-                             'num_meta_run': i}
+                             'meta_epoch': i,
+                             'seqs_metrics': seqs_metrics}
             torch.save(save_meta_run, os.path.join(save_dir, f"meta_run_{i}.model"))
