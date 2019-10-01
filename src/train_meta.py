@@ -181,7 +181,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         stride = 1
 
         corr_foreground = spatial_correlation_sample(
-            match_embed, train_foreground_embed,
+            match_embed.cpu(), train_foreground_embed.cpu(),
             kernel_size=1, stride=stride, padding=0, patch_size=patch_size)
         # corr_foreground_mean = corr_foreground.view(corr_foreground.size(0), -1).mean(dim=1, keepdim=True)
         # corr_foreground_mean /= scaled_train_gts.sum()
@@ -196,7 +196,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         # corr_background_mean /= (1 - scaled_train_gts).sum()
 
         # match_embed = torch.cat([corr_foreground_mean, corr_background_mean], dim=1)
-        match_embed = corr_foreground_mean
+        match_embed = corr_foreground_mean.to(train_embed.device)
 
         if self.match_embed is None:
             self.match_embed = match_embed
@@ -408,6 +408,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
 
             loss_batches, _ = run_loader(model, meta_loader, loss_func)
             seqs_metrics['meta_loss'][seq_name].append(loss_batches.mean())
+
 
             # loss_batches, _, J, F = eval_loader(model, test_loader, loss_func)
             # next_meta_frame_ids[seq_name] = loss_batches.argmax().item()

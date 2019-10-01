@@ -8,7 +8,7 @@ env_suffix: null
 save_train: False
 resume_meta_run_epoch: null
 # num of train meta frame pairs per seq per meta batch
-num_frame_pairs_per_seq: 4
+num_frame_pairs_per_seq: 1
 # [False, 'random', 'next']
 change_frame_ids_per_seq_epoch:
     train: False
