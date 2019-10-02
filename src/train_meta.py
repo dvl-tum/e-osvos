@@ -141,6 +141,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         module.meta_embed = None
         module.match_embed = None
 
+    # TODO: refactor
     # get train frame without random transformation
     match_loader_frame_id = match_loader.dataset.frame_id
     match_loader.dataset.frame_id = None
@@ -169,19 +170,18 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         _, _, h, w = outputs.size()
 
         scaled_train_gts = torch.nn.functional.interpolate(train_gts, (h, w))
-        match_embed = outputs[:-1]
-        train_embed = outputs[-1:].repeat(match_embed.size(0), 1, 1, 1)
+        match_embedding = outputs[:-1]
+        train_embedding = outputs[-1:].repeat(match_embedding.size(0), 1, 1, 1)
 
-        train_foreground_embed = train_embed * scaled_train_gts
+        train_foreground_embedding = train_embedding * scaled_train_gts
         # train_background_embed = train_embed * (1 - scaled_train_gts)
 
         # patch_size = (h // 4, w // 4)
         # stride = 2
         patch_size = (h * 2, w * 2)
         stride = 1
-
         corr_foreground = spatial_correlation_sample(
-            match_embed.cpu(), train_foreground_embed.cpu(),
+            match_embedding.cpu(), train_foreground_embedding.cpu(),
             kernel_size=1, stride=stride, padding=0, patch_size=patch_size)
         # corr_foreground_mean = corr_foreground.view(corr_foreground.size(0), -1).mean(dim=1, keepdim=True)
         # corr_foreground_mean /= scaled_train_gts.sum()
@@ -190,13 +190,13 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         corr_foreground_mean = corr_foreground.view(corr_foreground.size(0), -1)
 
         # corr_background = spatial_correlation_sample(
-        #     match_embed, train_background_embed,
+        #     match_embedding, train_background_embedding,
         #     kernel_size=3, stride=stride, padding=1, patch_size=patch_size)
         # corr_background_mean = corr_background.view(corr_background.size(0), -1).mean(dim=1, keepdim=True)
         # corr_background_mean /= (1 - scaled_train_gts).sum()
 
         # match_embed = torch.cat([corr_foreground_mean, corr_background_mean], dim=1)
-        match_embed = corr_foreground_mean.to(train_embed.device)
+        match_embed = corr_foreground_mean.to(train_embedding.device)
 
         if self.match_embed is None:
             self.match_embed = match_embed
@@ -315,11 +315,15 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                 train_loader.dataset.set_random_frame_id()
             elif _config['change_frame_ids_per_seq_epoch']['train'] == 'next':
                 train_loader.dataset.set_next_frame_id()
+                if train_loader.dataset.frame_id + 1 == len(train_loader.dataset.img_list):
+                    train_loader.dataset.frame_id = 0
 
             if _config['change_frame_ids_per_seq_epoch']['meta'] == 'random':
                 meta_loader.dataset.set_random_frame_id()
             elif _config['change_frame_ids_per_seq_epoch']['meta'] == 'next':
                 meta_loader.dataset.set_next_frame_id()
+                if meta_loader.dataset.frame_id + 1 == len(meta_loader.dataset.img_list):
+                    meta_loader.dataset.frame_id = 0
 
             if _config['change_frame_ids_per_seq_epoch']['train'] == 'random' or _config['change_frame_ids_per_seq_epoch']['meta'] == 'random':
                 # ensure train and meta frame ids are not the same
@@ -349,6 +353,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                     train_outputs = model(train_inputs)
 
                     train_loss = compute_loss(loss_func, train_outputs[-1], train_gts)
+
                     train_loss_hist.append(train_loss.item())
                     train_loss.backward()
 
@@ -364,7 +369,8 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                             meta_device), meta_gts.to(meta_device)
 
                         meta_outputs = meta_model(meta_inputs)
-                        bptt_iter_loss += compute_loss(loss_func, meta_outputs[-1], meta_gts)
+                        meta_loss = compute_loss(loss_func, meta_outputs[-1], meta_gts)
+                        bptt_iter_loss += meta_loss
 
                     bptt_loss += bptt_iter_loss - prev_bptt_iter_loss
                     prev_bptt_iter_loss = bptt_iter_loss.detach()
@@ -466,6 +472,11 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
         assert _config['meta_optim_cfg']['matching_input'], (
             'Online adaptation must have meta_optim_cfg.matching_input=True. ')
 
+    if _config['save_eval_preds']:
+        preds_save_dir = os.path.join(f"log/eval/{_config['env_suffix']}")
+        if not os.path.exists(preds_save_dir):
+            os.makedirs(preds_save_dir)
+
     init_J_seq = []
     J_seq = []
     for seq_name in train_loader.dataset.seqs_dict.keys():
@@ -492,20 +503,30 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
                                    len(test_loader.dataset),
                                    eval_online_adapt_step)
 
-        preds_save_dir = tempfile.mkdtemp()
-        os.makedirs(os.path.join(preds_save_dir, seq_name))
+        if not _config['save_eval_preds']:
+            preds_save_dir = tempfile.mkdtemp()
+
+        preds_save_dir_seq = os.path.join(preds_save_dir, seq_name)
+        if not os.path.exists(preds_save_dir_seq):
+            os.makedirs(preds_save_dir_seq)
 
         # meta_frame_id might be a str, e.g., 'middle'
         for i, meta_frame_id in enumerate(meta_frame_iter):
             # range [min, max[
             if i == 0:
                 # save gt of first frame as prediction of first frame
-                for batch in train_loader:
-                    gts, fnames = batch['gt'], batch['fname']
-                    gts = 255 * gts
-                    gts = np.transpose(gts.cpu().numpy(), (0, 2, 3, 1)).astype(np.uint8)
-                    pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(fnames[0]) + '.png')
-                    imageio.imsave(pred_path, gts[0])
+                # TODO: refactor
+                # get train frame without random transformation
+                test_loader_frame_id = test_loader.dataset.frame_id
+                test_loader.dataset.frame_id = None
+                train_batch = test_loader.dataset[train_loader.dataset.frame_id]
+                test_loader.dataset.frame_id = test_loader_frame_id
+
+                gts, fnames = train_batch['gt'], train_batch['fname']
+                gts = 255 * gts
+                gts = np.transpose(gts.cpu().numpy(), (1, 2, 0)).astype(np.uint8)
+                pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(fnames) + '.png')
+                imageio.imsave(pred_path, gts)
 
                 eval_frame_range_min = 1
                 eval_frame_range_max = eval_online_adapt_step // 2 + 1
@@ -516,9 +537,6 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
             eval_frame_range_max += eval_online_adapt_step
             if eval_frame_range_max + (eval_online_adapt_step // 2 + 1) > len(test_loader.dataset):
                 eval_frame_range_max = len(test_loader.dataset)
-
-            # print(meta_frame_id, eval_frame_range_min, eval_frame_range_max, list(
-            #     range(eval_frame_range_min, eval_frame_range_max)), len(test_loader.dataset))
 
             for state, split in zip(parent_states[dataset_key]['states'], parent_states[dataset_key]['splits']):
                 if seq_name in split:
@@ -568,14 +586,14 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
             test_loader.sampler.indices = range(eval_frame_range_min, eval_frame_range_max)
             run_loader(model, test_loader, loss_func, os.path.join(preds_save_dir, seq_name))
             test_loader.sampler.indices = None
-            # print(len(preds))
 
         # _, _, J, _ = eval_loader(model, test_loader, loss_func)
         evaluation = eval_davis_seq(preds_save_dir, seq_name)
         J = evaluation['J']['mean'][0]
         J_seq.append(J)
 
-        shutil.rmtree(preds_save_dir)
+        if not _config['save_eval_preds']:
+            shutil.rmtree(preds_save_dir)
 
     return_dict['init_J_seq'] = init_J_seq
     return_dict['J_seq'] = J_seq
@@ -657,8 +675,8 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
         meta_optim_optim.load_state_dict(saved_meta_run['meta_optim_optim_state_dict'])
 
     if resume_meta_run_epoch is None:
-        seqs_metrics = {'train_loss': {},
-                        'meta_loss': {}, 'loss': {}, 'J': {}, 'F': {}}
+        seqs_metrics = {'train_loss': {}, 'meta_loss': {}, 'loss': {},
+                        'J': {}, 'F': {}}
     else:
         seqs_metrics = saved_meta_run['seqs_metrics']
     meta_optim_param_grad = process_manager.dict({name: torch.zeros_like(param).cpu()
@@ -675,7 +693,6 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
     if resume_meta_run_epoch is not None:
         meta_epoch = saved_meta_run['meta_epoch'] + 1
     for i in count(start=meta_epoch):
-
         # start train and val evaluation
         for rank, (dataset_key, p) in enumerate(eval_processes.items()):
             if 'process' not in p or not p['process'].is_alive():
@@ -689,7 +706,8 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
         random_train_seq_idx = torch.randperm(len(train_seq_names))
         for meta_iter, batch_seq_idx in enumerate(grouper(meta_batch_size, random_train_seq_idx)):
             batch_seq_names = [train_seq_names[idx.item()]
-                               for idx in batch_seq_idx]
+                               for idx in batch_seq_idx
+                               if idx is not None]
             start_time = timeit.default_timer()
 
             # set meta optim gradients to zero
@@ -719,6 +737,7 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
             # optimize meta_optim
             meta_optim.zero_grad()
             for name, param in meta_optim.named_parameters():
+                # normalize over batch
                 param.grad = meta_optim_param_grad[name] / len(train_seq_names)
 
                 grad_clip = meta_optim_optim_cfg['grad_clip']

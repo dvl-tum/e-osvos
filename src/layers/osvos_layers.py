@@ -27,23 +27,42 @@ def class_balanced_cross_entropy_loss(output, label, size_average=False, batch_a
 
     labels = torch.ge(label, 0.5).float()
 
-    num_labels_pos = torch.sum(labels)
-    num_labels_neg = torch.sum(1.0 - labels)
-    num_total = num_labels_pos + num_labels_neg
+    # TODO: refactor
+    if not batch_average:
+        batch_size = output.size(0)
+        num_labels_pos = torch.sum(labels.view(batch_size, -1), dim=1, keepdim=True)
+        num_labels_neg = torch.sum(1.0 - labels.view(batch_size, -1), dim=1, keepdim=True)
+        num_total = num_labels_pos + num_labels_neg
 
-    output_gt_zero = torch.ge(output, 0).float()
-    loss_val = torch.mul(output, (labels - output_gt_zero)) - torch.log(
-        1 + torch.exp(output - 2 * torch.mul(output, output_gt_zero)))
+        output_gt_zero = torch.ge(output, 0).float()
+        loss_val = torch.mul(output, (labels - output_gt_zero)) - torch.log(
+            1 + torch.exp(output - 2 * torch.mul(output, output_gt_zero)))
 
-    loss_pos = torch.sum(-torch.mul(labels, loss_val))
-    loss_neg = torch.sum(-torch.mul(1.0 - labels, loss_val))
+        loss_pos = torch.sum(-torch.mul(labels, loss_val).view(batch_size, -1), dim=1, keepdim=True)
+        loss_neg = torch.sum(-torch.mul(1.0 - labels, loss_val).view(batch_size, -1), dim=1, keepdim=True)
 
-    final_loss = num_labels_neg / num_total * loss_pos + num_labels_pos / num_total * loss_neg
+        final_loss = num_labels_neg / num_total * loss_pos + num_labels_pos / num_total * loss_neg
+
+        if size_average:
+            final_loss /= np.prod(label.size())
+    else:
+        num_labels_pos = torch.sum(labels)
+        num_labels_neg = torch.sum(1.0 - labels)
+        num_total = num_labels_pos + num_labels_neg
+
+        output_gt_zero = torch.ge(output, 0).float()
+        loss_val = torch.mul(output, (labels - output_gt_zero)) - torch.log(
+            1 + torch.exp(output - 2 * torch.mul(output, output_gt_zero)))
+
+        loss_pos = torch.sum(-torch.mul(labels, loss_val))
+        loss_neg = torch.sum(-torch.mul(1.0 - labels, loss_val))
+
+        final_loss = num_labels_neg / num_total * loss_pos + num_labels_pos / num_total * loss_neg
+
+        final_loss /= label.size()[0]
 
     if size_average:
         final_loss /= np.prod(label.size())
-    elif batch_average:
-        final_loss /= label.size()[0]
 
     return final_loss
 
@@ -86,13 +105,13 @@ def class_balanced_cross_entropy_loss_theoretical(output, label, size_average=Tr
 def dice_loss(output, label, batch_average=True):
     pred = torch.sigmoid(output)
     smooth = 1.
-    
+
     if len(torch.unique(label)) > 2:
         raise NotImplementedError
     # unlabeled_mask = label.eq(255)
     # label[unlabeled_mask] = 0
     # output[unlabeled_mask] = 0
-    
+
     # TODO: refactor
     if batch_average:
         pred_flat = pred.view(-1)

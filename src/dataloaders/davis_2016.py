@@ -92,11 +92,16 @@ class DAVIS2016(Dataset):
         self.frame_id = torch.randint(len(self.img_list), (1,)).item()
 
     def set_next_frame_id(self):
+        if self.frame_id == 'middle':
+            self.frame_id = len(self.img_list) // 2
+        elif self.frame_id == 'random':
+            self.frame_id = torch.randint(len(self.img_list), (1,)).item()
+
         if self.frame_id + 1 == len(self.img_list):
             self.frame_id = 0
         else:
             self.frame_id += 1
-            
+
     def get_seq_id(self):
         return list(self.seqs_dict.keys()).index(self.seqs)
 
@@ -155,19 +160,19 @@ class DAVIS2016(Dataset):
         if self.crop_size is not None:
             crop_h, crop_w = self.crop_size
             img_h, img_w = label.shape
-            
+
             pad_h = max(crop_h - img_h, 0)
             pad_w = max(crop_w - img_w, 0)
             if pad_h > 0 or pad_w > 0:
-                img_pad = cv2.copyMakeBorder(img, 0, pad_h, 0, 
-                    pad_w, cv2.BORDER_CONSTANT, 
+                img_pad = cv2.copyMakeBorder(img, 0, pad_h, 0,
+                    pad_w, cv2.BORDER_CONSTANT,
                     value=(0.0, 0.0, 0.0))
-                label_pad = cv2.copyMakeBorder(label, 0, pad_h, 0, 
+                label_pad = cv2.copyMakeBorder(label, 0, pad_h, 0,
                     pad_w, cv2.BORDER_CONSTANT,
                     value=(0,))
             else:
                 img_pad, label_pad = img, label
-            
+
             img_h, img_w = label_pad.shape
             h_off = random.randint(0, img_h - crop_h)
             w_off = random.randint(0, img_w - crop_w)
@@ -186,7 +191,7 @@ class DAVIS2016(Dataset):
         if self.multi_object:
             if self.multi_object not in ['all', 'single_first', 'single_random']:
                 raise NotImplementedError
-            
+
             # all objects stacked in third axis
             unique_labels = np.unique(label)
             label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)

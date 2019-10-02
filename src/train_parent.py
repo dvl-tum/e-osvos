@@ -60,7 +60,7 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
-db_root_dir = 'data/DAVIS-2017'
+db_root_dir = 'data/DAVIS-2016'
 
 davis_cfg.YEAR = int(db_root_dir[-4:])
 davis_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -76,20 +76,21 @@ if davis_cfg.YEAR == 2017:
 
 # train_dataset = 'pascal_voc'
 
-train_dataset = 'train_seqs'
-test_dataset = 'val_seqs'
+# train_dataset = 'train_seqs'
+# test_dataset = 'val_seqs'
 # test_dataset = 'test_seqs'
 
-# train_dataset = 'train_split_3_train'
-# test_dataset = 'train_split_3_val'
+train_dataset = 'train_split_1_train'
+test_dataset = 'train_split_1_val'
 
 # Network definition
 # model_name = 'VGG'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34_lr_1e-5'
-loss_func = 'dice'
+model_name = 'FPN_ResNet34_cross_entropy_lr_1e-5'
+loss_func = 'cross_entropy'
+# loss_func = 'dice'
 
 if 'VGG' in model_name:
     load_caffe_vgg = True
@@ -124,7 +125,7 @@ elif 'UNET_ResNet34' in model_name:
     net = Unet('resnet34', classes=1, activation='softmax')
 elif 'FPN_ResNet34' in model_name:
     num_losses = 1
-    lr = 1e-6
+    lr = 1e-5
 
     net = FPN('resnet34', classes=1, activation='softmax')
 

@@ -20,6 +20,7 @@ num_epochs: 5
 bptt_epochs: 10
 # evalute all datasets
 eval_datasets: True
+save_eval_preds: False
 # number of frames after which the model is fine-tuned (on the first frame) again.
 # only for evaluation.
 # choose uneven frames to have meta matching frame in the middle of eval frame interval.
@@ -27,7 +28,7 @@ eval_online_adapt_step: null
 meta_optim_cfg:
     num_layers: 2
     hidden_size: 256
-    # [1e-6, 1e-4]
+    # [1e-6, 1e-5]
     lr_range: [0.00000001, 0.00001]
     init_lr_mom: 0.5
     init_weight_decay: 0.0001
@@ -35,6 +36,7 @@ meta_optim_cfg:
     optim_func: Adam
     learn_model_init: False
     layer_norm: True
+    train_input: True
     grad_input: False
     matching_input: False
 meta_optim_optim_cfg:
@@ -44,6 +46,9 @@ meta_optim_optim_cfg:
     step_in_seq: False
     grad_clip: null
 loss_func: dice
+datasets:
+    train: train_seqs
+    val: test_seqs
 # parent_model_path: models/FPN_ResNet34_batch_norm_fix/train_split_1_train/FPN_ResNet34_batch_norm_fix_epoch-40.pth
 # val_parent_model_path: models/FPN_ResNet34_batch_norm_fix/train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
 parent_model:
@@ -53,6 +58,7 @@ parent_model:
         learn_bias: True
     # base_path: models/FPN_ResNet34_group_norm
     base_path: models/FPN_ResNet34_batch_norm_fix
+    # base_path: models/FPN_ResNet34_cross_entropy_lr_1e-5/DAVIS-2016
     train:
         paths:
             # - train_split_1_train/FPN_ResNet34_group_norm_epoch-80.pth
@@ -61,23 +67,32 @@ parent_model:
             - train_split_1_train/FPN_ResNet34_batch_norm_fix_epoch-40.pth
             - train_split_2_train/FPN_ResNet34_batch_norm_fix_epoch-230.pth
             - train_split_3_train/FPN_ResNet34_batch_norm_fix_epoch-295.pth
+        #    - train_split_1_train/FPN_ResNet34_cross_entropy_lr_1e-5_epoch-500.pth
+        #    - train_split_2_train/FPN_ResNet34_cross_entropy_lr_1e-5_epoch-500.pth
+        #    - train_split_3_train/FPN_ResNet34_cross_entropy_lr_1e-5_epoch-500.pth
         val_split_files:
             - data/DAVIS-2016/train_split_1_val.txt
             - data/DAVIS-2016/train_split_2_val.txt
             - data/DAVIS-2016/train_split_3_val.txt
-    val:
-        paths:
-        #    - train_seqs/FPN_ResNet34_group_norm_epoch-455.pth
-           - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
-        val_split_files:
-            - data/DAVIS-2016/test_seqs.txt
+    # train:
+    #     paths:
+    #     #    - train_seqs/FPN_ResNet34_group_norm_epoch-455.pth
+    #        # - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
+    #        # - train_split_1_train/FPN_ResNet34_batch_norm_fix_epoch-40.pth
+    #        - train_split_1_train/FPN_ResNet34_cross_entropy_lr_1e-5_epoch-45.pth
+    #     val_split_files:
+    #         # - data/DAVIS-2016/test_seqs.txt
+    #         - data/DAVIS-2016/train_split_1_val.txt
+    # val:
+    #     paths:
+    #     #    - train_seqs/FPN_ResNet34_group_norm_epoch-455.pth
+    #        - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
+    #     val_split_files:
+    #         - data/DAVIS-2016/test_seqs.txt
 train_early_stopping_cfg:
     patience: null
     min_loss_improv: 0.001
 # [train_seqs, test_seqs, blackswan, ...]
-datasets:
-    train: train_seqs
-    val: test_seqs
 data_cfg:
     root_dir: data/DAVIS-2016
     random_train_transform: True
