@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import cv2
 from scipy.ndimage import distance_transform_edt
@@ -58,3 +59,8 @@ def construct_name(p, prefix):
         else:
             name = name + '_' + str(key) + '-' + str(p[key][0])
     return name
+
+
+def listdir_nohidden(path):
+    return [f for f in os.listdir(path) if not f.startswith('.')]
+    

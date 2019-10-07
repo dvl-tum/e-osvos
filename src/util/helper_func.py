@@ -8,10 +8,9 @@ import davis
 import imageio
 import numpy as np
 import torch
-from dataloaders import custom_transforms
-from dataloaders import davis_2016 as db
+from data import custom_transforms
+from data import DAVIS
 from davis import Annotation, DAVISLoader, Segmentation
-from davis import cfg as davis_cfg
 from davis import db_eval, db_eval_sequence
 from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
 from meta_optim.meta_optim import MetaOptimizer
@@ -56,7 +55,7 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
     preds_all = []
     with torch.no_grad():
         for sample_batched in loader:
-            imgs, gts, fnames = sample_batched['image'], sample_batched['gt'], sample_batched['fname']
+            imgs, gts, file_names = sample_batched['image'], sample_batched['gt'], sample_batched['file_name']
             inputs, gts = imgs.to(device), gts.to(device)
 
             model.eval()
@@ -75,8 +74,8 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
                 preds = 255 * preds
                 preds = np.transpose(preds.cpu().numpy(), (0, 2, 3, 1)).astype(np.uint8)
 
-                for fname, pred in zip(fnames, preds):
-                    pred_path = os.path.join(img_save_dir, os.path.basename(fname) + '.png')
+                for file_name, pred in zip(file_names, preds):
+                    pred_path = os.path.join(img_save_dir, os.path.basename(file_name) + '.png')
                     imageio.imsave(pred_path, pred)
 
     metrics = {n: torch.cat(m).cpu() for n, m in metrics.items()}
@@ -173,10 +172,10 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
     train_transforms.append(custom_transforms.ToTensor())
     composed_transforms = transforms.Compose(train_transforms)
 
-    db_train = db.DAVIS2016(root_dir=root_dir,
-                            seqs=dataset,
-                            frame_id=frame_ids['train'],
-                            transform=composed_transforms)
+    db_train = DAVIS(root_dir=root_dir,
+                     seqs_key=dataset,
+                     frame_id=frame_ids['train'],
+                     transform=composed_transforms)
     # sample epochs into a batch
     batch_sampler = EpochSampler(
         db_train, shuffles['train'], batch_sizes['train'])
@@ -184,10 +183,10 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
         db_train, batch_sampler=batch_sampler, num_workers=0)
 
     # test
-    db_test = db.DAVIS2016(root_dir=root_dir,
-                           seqs=dataset,
-                           frame_id=frame_ids['test'],
-                           transform=custom_transforms.ToTensor())
+    db_test = DAVIS(root_dir=root_dir,
+                    seqs_key=dataset,
+                    frame_id=frame_ids['test'],
+                    transform=custom_transforms.ToTensor())
     test_loader = DataLoader(
         db_test,
         shuffle=shuffles['test'],
@@ -199,10 +198,10 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
         return train_loader, test_loader
 
     # meta
-    db_meta = db.DAVIS2016(root_dir=root_dir,
-                           seqs=dataset,
-                           frame_id=frame_ids['meta'],
-                           transform=custom_transforms.ToTensor())
+    db_meta = DAVIS(root_dir=root_dir,
+                    seqs_key=dataset,
+                    frame_id=frame_ids['meta'],
+                    transform=custom_transforms.ToTensor())
     meta_loader = DataLoader(
         db_meta,
         shuffle=shuffles['meta'],
@@ -313,16 +312,6 @@ def eval_davis_seq(results_dir, seq_name):
     for m in ['J', 'F']:
         evaluation[m] = db_eval_sequence(segmentations, annotations, measure=m)
     return evaluation
-
-
-def setup_davis_eval(data_cfg: dict):
-    # TODO: refactor and not take YEAR from root_dir string
-    davis_cfg.YEAR = int(data_cfg['root_dir'][-4:])
-    davis_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-    davis_cfg.PATH.DATA = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, data_cfg['root_dir']))
-    davis_cfg.PATH.SEQUENCES = os.path.join(davis_cfg.PATH.DATA, "JPEGImages", davis_cfg.RESOLUTION)
-    davis_cfg.PATH.ANNOTATIONS = os.path.join(davis_cfg.PATH.DATA, "Annotations", davis_cfg.RESOLUTION)
-    davis_cfg.PATH.PALETTE = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, 'data/palette.txt'))
 
 
 class SequentialSubsetSampler(Sampler):
