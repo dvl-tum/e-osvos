@@ -85,7 +85,7 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
 
 
 def eval_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
-    seq_name = loader.dataset.seqs
+    seq_name = loader.dataset.seq_key
 
     if img_save_dir is None:
         img_save_dir = tempfile.mkdtemp()
@@ -162,7 +162,7 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
 
 
 def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
-                 shuffles, frame_ids):
+                 shuffles, frame_ids, num_workers):
     # train
     train_transforms = []
     if random_train_transform:
@@ -180,7 +180,7 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
     batch_sampler = EpochSampler(
         db_train, shuffles['train'], batch_sizes['train'])
     train_loader = DataLoader(
-        db_train, batch_sampler=batch_sampler, num_workers=0)
+        db_train, batch_sampler=batch_sampler, num_workers=num_workers)
 
     # test
     db_test = DAVIS(root_dir=root_dir,
@@ -191,7 +191,7 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
         db_test,
         shuffle=shuffles['test'],
         batch_size=batch_sizes['test'],
-        num_workers=0,
+        num_workers=num_workers,
         sampler=SequentialSubsetSampler(db_test))
 
     if 'meta' not in batch_sizes:
@@ -206,7 +206,7 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
         db_meta,
         shuffle=shuffles['meta'],
         batch_size=batch_sizes['meta'],
-        num_workers=0)
+        num_workers=num_workers)
 
     return train_loader, test_loader, meta_loader
 

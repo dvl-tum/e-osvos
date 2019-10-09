@@ -11,17 +11,20 @@ from .vos_dataset import VOSDataset
 
 
 class DAVIS(VOSDataset):
-    """DAVIS dataset constructed using the PyTorch built-in functionalities"""
+    """DAVIS 16 and 17 datasets.
+
+        The root_dir naming specifies whether it is 16 or 17.
+    """
 
     def __init__(self,
                  seqs_key='train_seqs',  # ['train_seqs', 'test_seqs', 'blackswan', ...]
                  frame_id=None,
                  crop_size=None,
-                #  ignore_label=0,
                  root_dir='data/DAVIS-2016',
                  transform=None,
                  meanval=(104.00699, 116.66877, 122.67892),
-                 multi_object=False,): # [False, 'all', 'single_first', 'single_random']
+                 multi_object=False, # [False, 'all', 'single_first', 'single_random']
+                 ):
         """Loads image to label pairs.
         root_dir: dataset directory with subfolders "JPEGImages" and "Annotations"
         """
@@ -34,7 +37,7 @@ class DAVIS(VOSDataset):
         # self.ignore_label = ignore_label
         self.multi_object = multi_object
         self.year = int(re.sub("[^0-9]", "", self.root_dir))
-        
+
         seqs = OrderedDict()
         imgs = []
         labels = []
@@ -46,7 +49,7 @@ class DAVIS(VOSDataset):
                 seqs_keys = [seq.strip() for seq in f.readlines()]
         else:
             seqs_keys = [seqs_key]
-                    
+
         # Initialize the per sequence images for online training
         for k in seqs_keys:
             images = np.sort(listdir_nohidden(os.path.join(root_dir, 'JPEGImages/480p/', k)))

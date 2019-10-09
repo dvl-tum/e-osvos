@@ -172,6 +172,14 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         match_embedding = outputs[:-1]
         train_embedding = outputs[-1:].repeat(match_embedding.size(0), 1, 1, 1)
 
+        # l2 normalization
+        match_embedding_norm = torch.norm(match_embedding, p=2, dim=1).detach()
+        match_embedding = match_embedding.div(match_embedding_norm.expand_as(match_embedding))
+
+        train_embedding_norm = torch.norm(train_embedding, p=2, dim=1).detach()
+        train_embedding = train_embedding.div(train_embedding_norm.expand_as(train_embedding))
+
+        # foreground/background
         train_foreground_embedding = train_embedding * scaled_train_gts
         # train_background_embed = train_embed * (1 - scaled_train_gts)
 
@@ -631,6 +639,9 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
         if eval_datasets:
             num_meta_processes -= len(datasets)
 
+    if meta_batch_size == 'full':
+        meta_batch_size = train_loader.dataset.num_seqs
+
     seqs_per_process = math.ceil(meta_batch_size / num_meta_processes)
     process_manager = mp.Manager()
     meta_processes = [dict() for _ in range(num_meta_processes)]
@@ -693,7 +704,7 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
             if 'process' not in p or not p['process'].is_alive():
                 p['meta_epoch'] = i
                 p['return_dict'] = process_manager.dict()
-                process_args = [rank, dataset_key, meta_optim.state_dict(),
+                process_args = [0, dataset_key, meta_optim.state_dict(),
                                 _config, p['return_dict']]
                 p['process'] = mp.Process(target=evaluate, args=process_args)
                 p['process'].start()
