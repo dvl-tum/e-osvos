@@ -15,17 +15,16 @@ import numpy as np
 
 import torch
 import torch.optim as optim
-from dataloaders import custom_transforms as tr
-from dataloaders import davis_2016
-from dataloaders import pascal_voc
+from data import custom_transforms as tr
+from data import DAVIS, VOC2012
 from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
 from mypath import Path
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from davis import cfg as davis_cfg
 from util import visualize as viz
-from util.helper_func import (run_loader, eval_loader, eval_davis_seq, setup_davis_eval)
+from util.helper_func import run_loader, eval_loader, eval_davis_seq
+
 
 # Select which GPU, -1 if CPU
 gpu_id = 0
@@ -49,7 +48,6 @@ snapshot = 5  # Store a model every snapshot epochs
 nAveGrad = 1
 seed = 123
 log_to_tb = True
-train_crop_size = None
 train_multi_object = False
 
 save_dir = Path.save_root_dir()
@@ -61,18 +59,6 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 db_root_dir = 'data/DAVIS-2016'
-
-davis_cfg.YEAR = int(db_root_dir[-4:])
-davis_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-davis_cfg.PATH.DATA = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, db_root_dir))
-davis_cfg.PATH.SEQUENCES = os.path.join(davis_cfg.PATH.DATA, "JPEGImages", davis_cfg.RESOLUTION)
-davis_cfg.PATH.ANNOTATIONS = os.path.join(davis_cfg.PATH.DATA, "Annotations", davis_cfg.RESOLUTION)
-davis_cfg.PATH.PALETTE = os.path.abspath(os.path.join(davis_cfg.PATH.ROOT, 'data/palette.txt'))
-
-# train is cropped. but for davis 2017 test batch has changing heights and widths
-if davis_cfg.YEAR == 2017:
-    train_crop_size = (480, 854)
-    # train_multi_object = 'single_first'
 
 # train_dataset = 'pascal_voc'
 
@@ -198,16 +184,19 @@ if 'pascal_voc' not in train_dataset:
                                             tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
                                             tr.ToTensor()])
     # Training dataset and its iterator
-    db_train = davis_2016.DAVIS2016(seqs=train_dataset, crop_size=train_crop_size,
-                                    root_dir=db_root_dir, transform=composed_transforms,
-                                    multi_object=train_multi_object)
+    db_train = DAVIS(seqs=train_dataset, root_dir=db_root_dir,
+                     transform=composed_transforms,
+                     multi_object=train_multi_object)
 
     # Testing dataset and its iterator
-    db_test = davis_2016.DAVIS2016(seqs=test_dataset, root_dir=db_root_dir,
-                                   transform=tr.ToTensor())
+    db_test = DAVIS(seqs=test_dataset, root_dir=db_root_dir, transform=tr.ToTensor())
+
+    # train is cropped. but for davis 2017 test batch has changing heights and widths
+    if db_train.year == 2017:
+        db_train.crop_size = (480, 854)
 else:
-    db_train = pascal_voc.VOC2012(split='train')
-    db_test = pascal_voc.VOC2012(split='val')
+    db_train = VOC2012(split='train')
+    db_test = VOC2012(split='val')
 
 trainloader = DataLoader(db_train, batch_size=train_batch, shuffle=True, num_workers=2)
 test_loader = DataLoader(db_test, batch_size=test_batch, shuffle=False, num_workers=2)
@@ -301,7 +290,7 @@ for epoch in range(resume_epoch, nEpochs):
                 metrics['test_J'].append(0.0)
                 metrics['test_F'].append(0.0)
             else:
-                for seq_name in db_test.seqs_dict.keys():
+                for seq_name in db_test.seqs_names:
                     db_test.set_seq(seq_name)
                     test_loss_batches, test_acc_batches, test_J, test_F = eval_loader(
                         net, test_loader, loss_func)

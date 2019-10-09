@@ -32,11 +32,11 @@ class ScaleNRotate(object):
             rot = self.rots[random.randint(0, len(self.rots))]
             sc = self.scales[random.randint(0, len(self.scales))]
 
-        for elem in sample.keys():
-            if 'fname' in elem:
+        for k in sample.keys():
+            if 'file_name' in k:
                 continue
 
-            tmp = sample[elem]
+            tmp = sample[k]
 
             h, w = tmp.shape[:2]
             center = (w / 2, h / 2)
@@ -49,7 +49,7 @@ class ScaleNRotate(object):
                 flagval = cv2.INTER_CUBIC
             tmp = cv2.warpAffine(tmp, M, (w, h), flags=flagval)
 
-            sample[elem] = tmp
+            sample[k] = tmp
 
         return sample
 
@@ -67,10 +67,10 @@ class Resize(object):
         # Fixed range of scales
         sc = self.scales[random.randint(0, len(self.scales) - 1)]
 
-        for elem in sample.keys():
-            if 'fname' in elem:
+        for k in sample.keys():
+            if 'file_name' in k:
                 continue
-            tmp = sample[elem]
+            tmp = sample[k]
 
             if tmp.ndim == 2:
                 flagval = cv2.INTER_NEAREST
@@ -79,7 +79,7 @@ class Resize(object):
 
             tmp = cv2.resize(tmp, None, fx=sc, fy=sc, interpolation=flagval)
 
-            sample[elem] = tmp
+            sample[k] = tmp
 
         return sample
 
@@ -90,12 +90,12 @@ class RandomHorizontalFlip(object):
     def __call__(self, sample):
 
         if random.random() < 0.5:
-            for elem in sample.keys():
-                if 'fname' in elem:
+            for k in sample.keys():
+                if 'file_name' in k:
                     continue
-                tmp = sample[elem]
+                tmp = sample[k]
                 tmp = cv2.flip(tmp, flipCode=1)
-                sample[elem] = tmp
+                sample[k] = tmp
 
         return sample
 
@@ -105,10 +105,10 @@ class ToTensor(object):
 
     def __call__(self, sample):
 
-        for elem in sample.keys():
-            if 'fname' in elem:
+        for k in sample.keys():
+            if 'file_name' in k:
                 continue
-            tmp = sample[elem]
+            tmp = sample[k]
 
             if tmp.ndim == 2:
                 tmp = tmp[:, :, np.newaxis]
@@ -118,6 +118,6 @@ class ToTensor(object):
             # torch image: C X H X W
 
             tmp = tmp.transpose((2, 0, 1))
-            sample[elem] = torch.from_numpy(tmp)
+            sample[k] = torch.from_numpy(tmp)
 
         return sample

@@ -1,7 +1,8 @@
 seed: 1
 # if 'auto' the number of processes is number of GPUs minus number of datasets. each dataset has one GPU for evaluation.
 num_meta_processes: 'auto'
-# number of random sequences used for collecting gradients for a single meta update
+# number of random sequences used for collecting gradients for a single meta update: [int, 'full']
+# 'full': use al sequences for full batch update
 meta_batch_size: 5
 env_suffix: null
 # saves training in 'models/meta/{env_suffix}'
@@ -36,6 +37,7 @@ meta_optim_cfg:
     train_input: True
     grad_input: False
     matching_input: False
+    gt_input: False
 meta_optim_optim_cfg:
     model_init_lr: 0.00001
     log_init_lr_lr: 0.01
@@ -97,6 +99,7 @@ train_early_stopping_cfg:
 data_cfg:
     root_dir: data/DAVIS-2016
     random_train_transform: True
+    num_workers: 0
     # integer or str for frame mode, e.g., 'random', 'middle'
     frame_ids:
         train: 0

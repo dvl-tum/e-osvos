@@ -19,7 +19,7 @@ from tensorboardX import SummaryWriter
 from util import visualize as viz
 from util.helper_func import (data_loaders, early_stopping,
                               init_parent_model, eval_loader, train_val,
-                              eval_davis, eval_davis_seq, setup_davis_eval)
+                              eval_davis, eval_davis_seq)
 
 torch_ingredient.add_config('cfgs/torch.yaml')
 ex = sacred.Experiment('osvos-online', ingredients=[torch_ingredient])
@@ -30,7 +30,6 @@ ex.add_named_config('VGG', 'cfgs/online_vgg.yaml')
 train_val = ex.capture(train_val)
 early_stopping = ex.capture(early_stopping, prefix='train_early_stopping')
 data_loaders = ex.capture(data_loaders, prefix='data_cfg')
-setup_davis_eval = ex.capture(setup_davis_eval)
 
 
 @ex.capture
@@ -103,8 +102,6 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
     device = get_device()
     set_random_seeds(seed)
 
-    setup_davis_eval()  # pylint: disable=E1120
-
     model, parent_states = init_parent_model(**parent_model)
     model.to(device)
     train_loader, test_loader = data_loaders(dataset)  # pylint: disable=E1120
@@ -120,7 +117,7 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
                      'init_test_F', 'init_test_acc', 'test_J', 'test_F', 'test_acc']
     metrics = {n: [] for n in metrics_names}
 
-    for seq_name in train_loader.dataset.seqs_dict.keys():
+    for seq_name in train_loader.dataset.seqs_names:
         _log.info(f"Train Online: {seq_name}")
         # img_save_dir = os.path.join(results_dir, seq_name)
         # if not os.path.exists(img_save_dir):
@@ -242,7 +239,7 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
                 f"&nbsp;&nbsp;MEAN: {m[..., best_mean_m_epoch].mean():.2f}</p>\n")
 
     results_str += "<p>SEQUENCES:<br>\n"
-    for seq_name, t_l_h, i_t_l, t_l, t_J, t_F, t_acc in zip(train_loader.dataset.seqs_dict.keys(), metrics['train_loss_hist'], metrics['init_test_loss'], metrics['test_loss'], metrics['test_J'], metrics['test_F'], metrics['test_acc']):
+    for seq_name, t_l_h, i_t_l, t_l, t_J, t_F, t_acc in zip(train_loader.dataset.seqs_names, metrics['train_loss_hist'], metrics['init_test_loss'], metrics['test_loss'], metrics['test_J'], metrics['test_F'], metrics['test_acc']):
         results_str += (f"{seq_name}<br>\n"
                         f"LOSS RUN TRAIN/INIT TEST/TEST: {t_l_h.mean():.2f}/{i_t_l:.2f}/{t_l:.2f}<br>\n"
                         f"TEST J/F/ACC: {t_J:.2f}/{t_F:.2f}/{t_acc:.2f}</p>\n")

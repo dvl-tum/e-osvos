@@ -23,8 +23,7 @@ from spatial_correlation_sampler import spatial_correlation_sample
 from torch.utils.data import DataLoader
 from util.helper_func import (compute_loss, data_loaders, early_stopping,
                               epoch_iter, eval_davis_seq, eval_loader, grouper,
-                              init_parent_model, run_loader, setup_davis_eval,
-                              train_val, update_dict)
+                              init_parent_model, run_loader, train_val, update_dict)
 
 torch_ingredient.add_config('cfgs/torch.yaml')
 
@@ -77,7 +76,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
     for dataset_name, dataset in datasets.items():
         loader, *_ = data_loaders(dataset)  # pylint: disable=E1120
         legend = ['INIT MEAN', 'MEAN'] + [f"{seq_name}"
-                  for seq_name in loader.dataset.seqs_dict.keys()]
+                  for seq_name in loader.dataset.seqs_names]
         opts = dict(
             title=f"EVAL: {dataset_name.upper()} J (RUN: {_run._id})",
             xlabel='META EPOCHS',
@@ -90,7 +89,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
 
     train_loader, *_ = data_loaders(datasets['train'])  # pylint: disable=E1120
 
-    legend = [f"{seq_name}" for seq_name in train_loader.dataset.seqs_dict.keys()]
+    legend = [f"{seq_name}" for seq_name in train_loader.dataset.seqs_names]
     opts = dict(
         title=f"META LOSS (RUN: {_run._id})",
         xlabel='META EPOCHS',
@@ -103,7 +102,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
 
     legend = ['TRAIN loss', 'META loss', 'LR MEAN', 'LR STD',]
             #   'LR MOM MEAN', 'WEIGHT DECAY MEAN']
-    for seq_name in train_loader.dataset.seqs_dict.keys():
+    for seq_name in train_loader.dataset.seqs_names:
         opts = dict(
             title=f"SEQ METRICS - {seq_name}",
             xlabel='EPOCHS',
@@ -174,6 +173,14 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         match_embedding = outputs[:-1]
         train_embedding = outputs[-1:].repeat(match_embedding.size(0), 1, 1, 1)
 
+        # l2 normalization
+        match_embedding_norm = torch.norm(match_embedding, p=2, dim=1).detach()
+        match_embedding = match_embedding.div(match_embedding_norm.expand_as(match_embedding))
+
+        train_embedding_norm = torch.norm(train_embedding, p=2, dim=1).detach()
+        train_embedding = train_embedding.div(train_embedding_norm.expand_as(train_embedding))
+
+        # foreground/background
         train_foreground_embedding = train_embedding * scaled_train_gts
         # train_background_embed = train_embed * (1 - scaled_train_gts)
 
@@ -255,8 +262,6 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
     torch.backends.cudnn.deterministic = True
 
     set_random_seeds(_config['seed'])
-
-    setup_davis_eval(_config['data_cfg'])
 
     # device = torch.device(f'cuda:{(2 * rank) + 1}')
     # meta_device = torch.device(f'cuda:{(2 * rank + 1) + 1}')
@@ -453,8 +458,6 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
     set_random_seeds(seed)
     device = torch.device(f'cuda:{rank}')
 
-    setup_davis_eval(_config['data_cfg'])
-
     model, parent_states = init_parent_model(**_config['parent_model'])
     meta_model, _ = init_parent_model(**_config['parent_model'])
 
@@ -482,7 +485,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
 
     init_J_seq = []
     J_seq = []
-    for seq_name in train_loader.dataset.seqs_dict.keys():
+    for seq_name in train_loader.dataset.seqs_names:
         train_loader.dataset.set_seq(seq_name)
         test_loader.dataset.set_seq(seq_name)
         meta_loader.dataset.set_seq(seq_name)
@@ -525,10 +528,10 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
                 train_batch = test_loader.dataset[train_loader.dataset.frame_id]
                 test_loader.dataset.frame_id = test_loader_frame_id
 
-                gts, fnames = train_batch['gt'], train_batch['fname']
+                gts, file_names = train_batch['gt'], train_batch['file_name']
                 gts = 255 * gts
                 gts = np.transpose(gts.cpu().numpy(), (1, 2, 0)).astype(np.uint8)
-                pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(fnames) + '.png')
+                pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(file_names) + '.png')
                 imageio.imsave(pred_path, gts)
 
                 eval_frame_range_min = 1
@@ -647,6 +650,9 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
         if eval_datasets:
             num_meta_processes -= len(datasets)
 
+    if meta_batch_size == 'full':
+        meta_batch_size = train_loader.dataset.num_seqs
+
     seqs_per_process = math.ceil(meta_batch_size / num_meta_processes)
     process_manager = mp.Manager()
     meta_processes = [dict() for _ in range(num_meta_processes)]
@@ -697,7 +703,7 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
     if resume_meta_run_epoch is not None:
         random_frame_rng_state = saved_meta_run['random_frame_rng_state']
 
-    train_seq_names = list(train_loader.dataset.seqs_dict.keys())
+    train_seq_names = train_loader.dataset.seqs_names
     meta_iters_per_epoch = math.ceil(len(train_seq_names) / meta_batch_size)
 
     meta_epoch = 1
@@ -709,7 +715,7 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
             if 'process' not in p or not p['process'].is_alive():
                 p['meta_epoch'] = i
                 p['return_dict'] = process_manager.dict()
-                process_args = [rank, dataset_key, meta_optim.state_dict(),
+                process_args = [0, dataset_key, meta_optim.state_dict(),
                                 _config, p['return_dict']]
                 p['process'] = mp.Process(target=evaluate, args=process_args)
                 p['process'].start()

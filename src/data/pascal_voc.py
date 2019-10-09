@@ -73,7 +73,7 @@ class VOC2012(Dataset):
                 sample = self.transform_tr(sample)
             elif split == 'val':
                 sample = self.transform_val(sample)
-        sample['fname'] = []
+        sample['file_name'] = []
         return sample
 
     def _make_img_gt_point_pair(self, index):
