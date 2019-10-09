@@ -43,6 +43,7 @@ train_val = ex.capture(train_val)
 def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
              torch_cfg: dict, datasets: dict, resume_meta_run_epoch: int):
     run_name = f"{_run.experiment_info['name']}_{env_suffix}"
+    datasets = {k: v for k, v in datasets.items() if v is not None}
     vis_dict = {}
 
     resume  = False if resume_meta_run_epoch is None else True
@@ -180,6 +181,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         # stride = 2
         patch_size = (h * 2, w * 2)
         stride = 1
+
         corr_foreground = spatial_correlation_sample(
             match_embedding.cpu(), train_foreground_embedding.cpu(),
             kernel_size=1, stride=stride, padding=0, patch_size=patch_size)
@@ -259,8 +261,9 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
     # device = torch.device(f'cuda:{(2 * rank) + 1}')
     # meta_device = torch.device(f'cuda:{(2 * rank + 1) + 1}')
     if _config['eval_datasets']:
-        device = torch.device(f"cuda:{rank + len(_config['datasets'])}")
-        meta_device = torch.device(f"cuda:{rank + len(_config['datasets'])}")
+        datasets = {k: v for k, v in _config['datasets'].items() if v is not None}
+        device = torch.device(f"cuda:{rank + len(datasets)}")
+        meta_device = torch.device(f"cuda:{rank + len(datasets)}")
     else:
         device = torch.device(f'cuda:{rank}')
         meta_device = torch.device(f'cuda:{rank}')
@@ -546,11 +549,14 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
             meta_optim.reset()
             meta_optim.eval()
 
-            meta_loader_frame_id = meta_loader.dataset.frame_id
-            meta_loader.dataset.frame_id = meta_frame_id
             if _config['meta_optim_cfg']['matching_input']:
+                meta_loader_frame_id = meta_loader.dataset.frame_id
+                meta_loader.dataset.frame_id = meta_frame_id
                 match_embed(model, train_loader, meta_loader)
-            meta_loader.dataset.frame_id = meta_loader_frame_id
+                meta_loader.dataset.frame_id = meta_loader_frame_id
+
+                # for module in model.modules_with_requires_grad_params():
+                #     print(dataset_key, seq_name, module.match_embed.mean(dim=0, keepdim=True).detach().mean())
 
             train_val(  # pylint: disable=E1120
                 model, train_loader, None, meta_optim, _config['num_epochs'], seed,
@@ -605,6 +611,7 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
          meta_optim_optim_cfg: dict, meta_batch_size: int, seed: int,
          _config: dict):
     mp.set_start_method("spawn")
+    datasets = {k: v for k, v in datasets.items() if v is not None}
 
     set_random_seeds(seed)
 
@@ -622,8 +629,12 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
     if resume_meta_run_epoch is not None:
         saved_meta_run = torch.load(
             os.path.join(save_dir, f"meta_run_{resume_meta_run_epoch}.model"))
-        for n, win_name in saved_meta_run['vis_win_names'].items():
-            vis_dict[n].win = win_name
+        for n in vis_dict.keys():
+            if n in saved_meta_run['vis_win_names']:
+                if saved_meta_run['vis_win_names'][n] is None:
+                    vis_dict[n].removed = True
+                else:
+                    vis_dict[n].win = saved_meta_run['vis_win_names'][n]
 
     train_loader, *_ = data_loaders(datasets['train'])  # pylint: disable=E1120
 
@@ -738,7 +749,7 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
             meta_optim.zero_grad()
             for name, param in meta_optim.named_parameters():
                 # normalize over batch
-                param.grad = meta_optim_param_grad[name] / len(train_seq_names)
+                param.grad = meta_optim_param_grad[name] / len(batch_seq_names)
 
                 grad_clip = meta_optim_optim_cfg['grad_clip']
                 if grad_clip is not None:

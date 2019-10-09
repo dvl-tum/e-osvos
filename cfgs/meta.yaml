@@ -18,9 +18,6 @@ increase_seed_per_meta_run: False
 # if null run meta model until meta_optim returns stop_train=True
 num_epochs: 5
 bptt_epochs: 10
-# evalute all datasets
-eval_datasets: True
-save_eval_preds: False
 # number of frames after which the model is fine-tuned (on the first frame) again.
 # only for evaluation.
 # choose uneven frames to have meta matching frame in the middle of eval frame interval.
@@ -46,9 +43,13 @@ meta_optim_optim_cfg:
     step_in_seq: False
     grad_clip: null
 loss_func: dice
+# evalute all datasets
+eval_datasets: True
+save_eval_preds: False
 datasets:
     train: train_seqs
     val: test_seqs
+    test: null
 # parent_model_path: models/FPN_ResNet34_batch_norm_fix/train_split_1_train/FPN_ResNet34_batch_norm_fix_epoch-40.pth
 # val_parent_model_path: models/FPN_ResNet34_batch_norm_fix/train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
 parent_model:
@@ -83,12 +84,12 @@ parent_model:
     #     val_split_files:
     #         # - data/DAVIS-2016/test_seqs.txt
     #         - data/DAVIS-2016/train_split_1_val.txt
-    # val:
-    #     paths:
-    #     #    - train_seqs/FPN_ResNet34_group_norm_epoch-455.pth
-    #        - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
-    #     val_split_files:
-    #         - data/DAVIS-2016/test_seqs.txt
+    val:
+        paths:
+        #    - train_seqs/FPN_ResNet34_group_norm_epoch-455.pth
+           - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
+        val_split_files:
+            - data/DAVIS-2016/test_seqs.txt
 train_early_stopping_cfg:
     patience: null
     min_loss_improv: 0.001
