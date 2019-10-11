@@ -10,11 +10,8 @@ from .helpers import *
 from .vos_dataset import VOSDataset
 
 
-class DAVIS(VOSDataset):
-    """DAVIS 16 and 17 datasets.
-
-        The root_dir naming specifies whether it is 16 or 17.
-    """
+class YouTube(VOSDataset):
+    """YouTube-VOS dataset. https://youtube-vos.org/"""
 
     def __init__(self,
                  seqs_key='train_seqs',  # ['train_seqs', 'test_seqs', 'blackswan', ...]
@@ -23,9 +20,9 @@ class DAVIS(VOSDataset):
                  root_dir='data/DAVIS-2016',
                  transform=None,
                  meanval=(104.00699, 116.66877, 122.67892),
-                 multi_object=False, # [False, 'all', 'single_id']
-                 ):
+                 multi_object=False,): # [False, 'all', 'single_first', 'single_random']
         """Loads image to label pairs.
+
         root_dir: dataset directory with subfolders "JPEGImages" and "Annotations"
         """
         self.crop_size = crop_size
@@ -34,10 +31,7 @@ class DAVIS(VOSDataset):
         self.meanval = meanval
         self.seqs_key = seqs_key
         self.frame_id = frame_id
-        # self.ignore_label = ignore_label
         self.multi_object = multi_object
-        self.multi_object_id = None
-        self.year = int(re.sub("[^0-9]", "", self.root_dir))
 
         seqs = OrderedDict()
         imgs = []
@@ -77,8 +71,6 @@ class DAVIS(VOSDataset):
         else:
             self.set_seq(seqs_key)
 
-        self.setup_davis_eval()
-
     def make_img_gt_pair(self, idx):
         """
         Make the image-ground-truth pair
@@ -112,38 +104,29 @@ class DAVIS(VOSDataset):
         img = np.subtract(img, np.array(self.meanval, dtype=np.float32))
 
         label = np.array(label, dtype=np.float32)
-        label = label / np.max([255.0, 1e-8])
+        label = label / np.max([label.max(), 1e-8])
 
         # multi object
         # ignore_label_mask = label == self.ignore_label
         # unique_labels = np.unique(label)
         if self.multi_object:
-            if self.multi_object not in ['all', 'single_id']:
+            if self.multi_object not in ['all', 'single_first', 'single_random']:
                 raise NotImplementedError
 
             # all objects stacked in third axis
-            unique_labels = [l for l in np.unique(label)
-                             if l != 0.0 and l != 1.0]
+            unique_labels = np.unique(label)
             label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)
-                                    for l in unique_labels], axis=2)
+                                    for l in np.unique(label)], axis=2)
 
             # single object from stack
             # if only one object on the frame this object is selected
-            if self.multi_object == 'single_id':
-                label = label[:, :, self.multi_object_id]
-            # elif self.multi_object == 'single_random':
-                # label = label[:, :, random.randint(0, len(unique_labels) - 1)]
+            if self.multi_object == 'single_first':
+                label = label[:, :, 0]
+            elif self.multi_object == 'single_random':
+                label = label[:, :, random.randint(0, len(unique_labels) - 1)]
         else:
-            label = np.where(label != 0.0, 1.0, 0.0).astype(np.float32)
+            label = np.where(label != 0.0, label.max(), 0.0).astype(np.float32)
         # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)
 
         # print(os.path.join(self.root_dir, self.imgs[idx]), img.shape, label.shape)
         return img, label
-
-    def setup_davis_eval(self):
-        eval_cfg.YEAR = self.year
-        eval_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-        eval_cfg.PATH.DATA = os.path.abspath(os.path.join(eval_cfg.PATH.ROOT, self.root_dir))
-        eval_cfg.PATH.SEQUENCES = os.path.join(eval_cfg.PATH.DATA, "JPEGImages", eval_cfg.RESOLUTION)
-        eval_cfg.PATH.ANNOTATIONS = os.path.join(eval_cfg.PATH.DATA, "Annotations", eval_cfg.RESOLUTION)
-        eval_cfg.PATH.PALETTE = os.path.abspath(os.path.join(eval_cfg.PATH.ROOT, 'data/palette.txt'))

@@ -67,4 +67,3 @@ class FPN(smp.FPN):
         for n, m in self.named_modules():
             if n == 'encoder':
                 yield m
-

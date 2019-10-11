@@ -36,6 +36,7 @@ meta_optim_cfg:
     layer_norm: True
     train_input: True
     grad_input: False
+    gt_input: False
     matching_input: False
 meta_optim_optim_cfg:
     model_init_lr: 0.00001
@@ -97,6 +98,7 @@ train_early_stopping_cfg:
 # [train_seqs, test_seqs, blackswan, ...]
 data_cfg:
     root_dir: data/DAVIS-2016
+    multi_object: False
     random_train_transform: True
     num_workers: 0
     # integer or str for frame mode, e.g., 'random', 'middle'
@@ -114,3 +116,8 @@ data_cfg:
         train: True
         test: False
         meta: False
+    crop_sizes:
+        train: null
+        test: null
+        meta: null
+

@@ -14,12 +14,11 @@ import torch
 from meta_optim.utils import dict_to_html
 from pytorch_tools.ingredients import (get_device, set_random_seeds,
                                        torch_ingredient)
-from pytorch_tools.vis import TextVis, LineVis
+from pytorch_tools.vis import LineVis, TextVis
 from tensorboardX import SummaryWriter
 from util import visualize as viz
-from util.helper_func import (data_loaders, early_stopping,
-                              init_parent_model, eval_loader, train_val,
-                              eval_davis, eval_davis_seq)
+from util.helper_func import (data_loaders, early_stopping, eval_davis,
+                              eval_loader, init_parent_model, train_val)
 
 torch_ingredient.add_config('cfgs/torch.yaml')
 ex = sacred.Experiment('osvos-online', ingredients=[torch_ingredient])

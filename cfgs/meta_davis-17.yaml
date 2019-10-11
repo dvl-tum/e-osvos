@@ -1,0 +1,6 @@
+data_cfg:
+    root_dir: data/DAVIS-2017
+    multi_object: single_id
+    crop_sizes:
+        train: [480, 854]
+        meta: [480, 854]

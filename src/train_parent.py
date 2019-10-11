@@ -16,14 +16,14 @@ import numpy as np
 import torch
 import torch.optim as optim
 from data import custom_transforms as tr
-from data import DAVIS, VOC2012
+from data import DAVIS, VOC2012, YouTube
 from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
 from mypath import Path
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from util import visualize as viz
-from util.helper_func import run_loader, eval_loader, eval_davis_seq
+from util.helper_func import run_loader, eval_loader
 
 
 # Select which GPU, -1 if CPU
@@ -58,7 +58,10 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
+# db_root_dir = 'data/VOC2012'
+# db_root_dir = 'data/DAVIS-2016'
 db_root_dir = 'data/DAVIS-2017'
+# db_root_dir = 'data/YouTube-VOS'
 
 # train_dataset = 'pascal_voc'
 
@@ -177,7 +180,7 @@ else:
     # optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9)
     optimizer = optim.Adam(net.parameters(), lr=lr)
 
-if 'pascal_voc' not in train_dataset:
+if 'DAVIS' in db_root_dir:
     # Preparation of the data loaders
     # Define augmentation transformations as a composition
     composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
@@ -194,9 +197,14 @@ if 'pascal_voc' not in train_dataset:
     # train is cropped. but for davis 2017 test batch has changing heights and widths
     if db_train.year == 2017:
         db_train.crop_size = (480, 854)
-else:
+elif 'VOC2012' in db_root_dir:
     db_train = VOC2012(split='train')
     db_test = VOC2012(split='val')
+elif 'YouTube-VOS' in db_root_dir:
+    db_train = YouTube(split='train')
+    db_test = YouTube(split='val')
+else:
+    raise NotImplementedError
 
 trainloader = DataLoader(db_train, batch_size=train_batch, shuffle=True, num_workers=2)
 test_loader = DataLoader(db_test, batch_size=test_batch, shuffle=False, num_workers=2)

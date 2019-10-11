@@ -23,6 +23,17 @@ class VOSDataset(Dataset):
         return len(self.seqs)
 
     @property
+    def num_objects(self):
+        if self.seq_key is None:
+            raise NotImplementedError
+        label = cv2.imread(os.path.join(self.root_dir, self.labels[0]), cv2.IMREAD_GRAYSCALE)
+        label = np.array(label, dtype=np.float32)
+        label = label / np.max([255.0, 1e-8])
+        unique_labels = [l for l in np.unique(label)
+                         if l != 0.0 and l != 1.0]
+        return len(unique_labels)
+
+    @property
     def seqs_names(self):
         return list(self.seqs.keys())
 

@@ -162,7 +162,7 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
 
 
 def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
-                 shuffles, frame_ids, num_workers):
+                 shuffles, frame_ids, num_workers, crop_sizes, multi_object):
     # train
     train_transforms = []
     if random_train_transform:
@@ -175,7 +175,11 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
     db_train = DAVIS(root_dir=root_dir,
                      seqs_key=dataset,
                      frame_id=frame_ids['train'],
-                     transform=composed_transforms)
+                     transform=composed_transforms,
+                     crop_size=crop_sizes['train'],
+                     multi_object=multi_object,
+                     )
+
     # sample epochs into a batch
     batch_sampler = EpochSampler(
         db_train, shuffles['train'], batch_sizes['train'])
@@ -186,7 +190,10 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
     db_test = DAVIS(root_dir=root_dir,
                     seqs_key=dataset,
                     frame_id=frame_ids['test'],
-                    transform=custom_transforms.ToTensor())
+                    transform=custom_transforms.ToTensor(),
+                    crop_size=crop_sizes['test'],
+                    multi_object=multi_object,
+                    )
     test_loader = DataLoader(
         db_test,
         shuffle=shuffles['test'],
@@ -201,7 +208,10 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
     db_meta = DAVIS(root_dir=root_dir,
                     seqs_key=dataset,
                     frame_id=frame_ids['meta'],
-                    transform=custom_transforms.ToTensor())
+                    transform=custom_transforms.ToTensor(),
+                    crop_size=crop_sizes['meta'],
+                    multi_object=multi_object,
+                    )
     meta_loader = DataLoader(
         db_meta,
         shuffle=shuffles['meta'],
@@ -305,8 +315,14 @@ def eval_davis(results_dir, seq_name):
 
 
 def eval_davis_seq(results_dir, seq_name):
-    segmentations = Segmentation(os.path.join(results_dir, seq_name), True)
-    annotations = Annotation(seq_name, True)
+    # TODO: refactor
+    from davis import cfg as eval_cfg
+    single_object = True
+    if eval_cfg.YEAR == 2017:
+        single_object = False
+    segmentations = Segmentation(os.path.join(
+        results_dir, seq_name), single_object)
+    annotations = Annotation(seq_name, single_object)
 
     evaluation = {}
     for m in ['J', 'F']:
