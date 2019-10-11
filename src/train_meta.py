@@ -186,7 +186,7 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
 
         # patch_size = (h // 4, w // 4)
         # stride = 2
-        patch_size = (h * 2, w * 2)
+        patch_size = (h, w)
         stride = 1
 
         corr_foreground = spatial_correlation_sample(
@@ -197,12 +197,13 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
         corr_foreground = corr_foreground.max(dim=1)[0]
         corr_foreground = corr_foreground.max(dim=1)[0]
         corr_foreground_mean = corr_foreground.view(corr_foreground.size(0), -1)
+        # corr_foreground_mean /= scaled_train_gts.sum() / scaled_train_gts.numel()
 
         # corr_background = spatial_correlation_sample(
         #     match_embedding, train_background_embedding,
         #     kernel_size=3, stride=stride, padding=1, patch_size=patch_size)
         # corr_background_mean = corr_background.view(corr_background.size(0), -1).mean(dim=1, keepdim=True)
-        # corr_background_mean /= (1 - scaled_train_gts).sum()
+        # corr_background_mean /= (1 - scaled_train_gts).sum() / scaled_train_gts.numel()
 
         # match_embed = torch.cat([corr_foreground_mean, corr_background_mean], dim=1)
         match_embed = corr_foreground_mean.to(train_embedding.device)
@@ -266,9 +267,11 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
     # device = torch.device(f'cuda:{(2 * rank) + 1}')
     # meta_device = torch.device(f'cuda:{(2 * rank + 1) + 1}')
     if _config['eval_datasets']:
-        datasets = {k: v for k, v in _config['datasets'].items() if v is not None}
-        device = torch.device(f"cuda:{rank + len(datasets)}")
-        meta_device = torch.device(f"cuda:{rank + len(datasets)}")
+        # datasets = {k: v for k, v in _config['datasets'].items() if v is not None}
+        # device = torch.device(f"cuda:{rank + len(datasets)}")
+        # meta_device = torch.device(f"cuda:{rank + len(datasets)}")
+        device = torch.device(f"cuda:{rank + 1}")
+        meta_device = torch.device(f"cuda:{rank + 1}")
     else:
         device = torch.device(f'cuda:{rank}')
         meta_device = torch.device(f'cuda:{rank}')
@@ -323,20 +326,20 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
                 train_loader.dataset.set_random_frame_id()
             elif _config['change_frame_ids_per_seq_epoch']['train'] == 'next':
                 train_loader.dataset.set_next_frame_id()
-                if train_loader.dataset.frame_id + 1 == len(train_loader.dataset.img_list):
+                if train_loader.dataset.frame_id + 1 == len(train_loader.dataset.imgs):
                     train_loader.dataset.frame_id = 0
 
             if _config['change_frame_ids_per_seq_epoch']['meta'] == 'random':
                 meta_loader.dataset.set_random_frame_id()
             elif _config['change_frame_ids_per_seq_epoch']['meta'] == 'next':
                 meta_loader.dataset.set_next_frame_id()
-                if meta_loader.dataset.frame_id + 1 == len(meta_loader.dataset.img_list):
+                if meta_loader.dataset.frame_id + 1 == len(meta_loader.dataset.imgs):
                     meta_loader.dataset.frame_id = 0
 
             if _config['change_frame_ids_per_seq_epoch']['train'] == 'random' or _config['change_frame_ids_per_seq_epoch']['meta'] == 'random':
                 # ensure train and meta frame ids are not the same
                 if train_loader.dataset.frame_id == meta_loader.dataset.frame_id:
-                    if train_loader.dataset.frame_id + 1 == len(train_loader.dataset.img_list):
+                    if train_loader.dataset.frame_id + 1 == len(train_loader.dataset.imgs):
                         meta_loader.dataset.frame_id -= 1
                     else:
                         meta_loader.dataset.frame_id += 1
@@ -596,6 +599,9 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
             run_loader(model, test_loader, loss_func, os.path.join(preds_save_dir, seq_name))
             test_loader.sampler.indices = None
 
+            if eval_frame_range_max == len(test_loader.dataset):
+                break
+
         # _, _, J, _ = eval_loader(model, test_loader, loss_func)
         evaluation = eval_davis_seq(preds_save_dir, seq_name)
         J = evaluation['J']['mean'][0]
@@ -632,12 +638,15 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
     if resume_meta_run_epoch is not None:
         saved_meta_run = torch.load(
             os.path.join(save_dir, f"meta_run_{resume_meta_run_epoch}.model"))
+        # TODO: refactor and do in init_vis method
         for n in vis_dict.keys():
             if n in saved_meta_run['vis_win_names']:
                 if saved_meta_run['vis_win_names'][n] is None:
                     vis_dict[n].removed = True
                 else:
                     vis_dict[n].win = saved_meta_run['vis_win_names'][n]
+            else:
+                vis_dict[n].removed = True
 
     train_loader, *_ = data_loaders(datasets['train'])  # pylint: disable=E1120
 
@@ -648,7 +657,7 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
         num_meta_processes = torch.cuda.device_count()
 
         if eval_datasets:
-            num_meta_processes -= len(datasets)
+            num_meta_processes -= 1 #len(datasets)
 
     if meta_batch_size == 'full':
         meta_batch_size = train_loader.dataset.num_seqs

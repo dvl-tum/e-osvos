@@ -58,7 +58,7 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
-db_root_dir = 'data/DAVIS-2016'
+db_root_dir = 'data/DAVIS-2017'
 
 # train_dataset = 'pascal_voc'
 
@@ -66,17 +66,17 @@ db_root_dir = 'data/DAVIS-2016'
 # test_dataset = 'val_seqs'
 # test_dataset = 'test_seqs'
 
-train_dataset = 'train_split_1_train'
-test_dataset = 'train_split_1_val'
+train_dataset = 'train_split_2_train'
+test_dataset = 'train_split_2_val'
 
 # Network definition
 # model_name = 'VGG'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34_cross_entropy_lr_1e-5'
-loss_func = 'cross_entropy'
-# loss_func = 'dice'
+model_name = 'FPN_ResNet34'
+# loss_func = 'cross_entropy'
+loss_func = 'dice'
 
 if 'VGG' in model_name:
     load_caffe_vgg = True
@@ -184,12 +184,12 @@ if 'pascal_voc' not in train_dataset:
                                             tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
                                             tr.ToTensor()])
     # Training dataset and its iterator
-    db_train = DAVIS(seqs=train_dataset, root_dir=db_root_dir,
+    db_train = DAVIS(seqs_key=train_dataset, root_dir=db_root_dir,
                      transform=composed_transforms,
                      multi_object=train_multi_object)
 
     # Testing dataset and its iterator
-    db_test = DAVIS(seqs=test_dataset, root_dir=db_root_dir, transform=tr.ToTensor())
+    db_test = DAVIS(seqs_key=test_dataset, root_dir=db_root_dir, transform=tr.ToTensor())
 
     # train is cropped. but for davis 2017 test batch has changing heights and widths
     if db_train.year == 2017:

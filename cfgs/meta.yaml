@@ -37,7 +37,6 @@ meta_optim_cfg:
     train_input: True
     grad_input: False
     matching_input: False
-    gt_input: False
 meta_optim_optim_cfg:
     model_init_lr: 0.00001
     log_init_lr_lr: 0.01

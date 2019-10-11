@@ -18,25 +18,31 @@ class FPN(smp.FPN):
                     m.bias.requires_grad = batch_norm['learn_bias']
 
     def forward(self, inputs):
-        b, c, h, w = inputs.shape
+        _, _, _, w = inputs.shape
 
-        # TODO: solve nicer
+        # TODO: solve not here.
         if w == 854:
             pad = (4, 5, 0, 0)
-            crop = 5
+            crop = (5, 5)
         elif w == 910:
             pad = (7, 8, 0, 0)
-            crop = 9
+            crop = (9, 9)
         elif w == 1152:
             pad = (0, 0, 0, 0)
-            crop = 0
+            crop = False
+        elif w == 911:
+            pad = (7, 7, 0, 0)
+            crop = (8, 9)
+        elif w == 1138:
+            pad = (5, 6, 0, 0)
+            crop = (7, 7)
         else:
             raise NotImplementedError
 
         inputs = F.pad(input=inputs, pad=pad, mode='constant', value=0)
         outputs = super(FPN, self).forward(inputs)
         if crop:
-            return [outputs[..., crop: -crop]]
+            return [outputs[..., crop[0]: -crop[1]]]
         else:
             return [outputs]
 
@@ -51,9 +57,14 @@ class FPN(smp.FPN):
     def modules_with_requires_grad_params(self):
         # _parameters includes only direct parameters of a module and not all
         # parameters of its potential submodules.
-        for module in self.modules():
-            if len(module._parameters):
-                for p in module._parameters.values():
-                    if p is not None and p.requires_grad:
-                        yield module
-                        break
+        # for module in self.modules():
+        #     if len(module._parameters):
+        #         for p in module._parameters.values():
+        #             if p is not None and p.requires_grad:
+        #                 yield module
+        #                 break
+
+        for n, m in self.named_modules():
+            if n == 'encoder':
+                yield m
+
