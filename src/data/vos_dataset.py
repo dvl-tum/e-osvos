@@ -11,12 +11,20 @@ from torch.utils.data import Dataset
 class VOSDataset(Dataset):
     """DAVIS dataset constructed using the PyTorch built-in functionalities"""
 
-    def __init__(self, seqs_key, frame_id, crop_size, root_dir, transform, meanval,
-                 multi_object):
+    meanval = None
+
+    def __init__(self, seqs_key, root_dir, frame_id=None,
+                 crop_size=None, transform=None, multi_object=False):
         """Loads image to label pairs.
         root_dir: dataset directory with subfolders "JPEGImages" and "Annotations"
         """
-        raise NotImplementedError
+        self.seqs_key = seqs_key
+        self.frame_id = frame_id
+        self.crop_size = crop_size
+        self.root_dir = root_dir
+        self.transform = transform
+        self.multi_object = multi_object
+        self.multi_object_id = None
 
     @property
     def num_seqs(self):
@@ -26,9 +34,12 @@ class VOSDataset(Dataset):
     def num_objects(self):
         if self.seq_key is None:
             raise NotImplementedError
+        if not self.multi_object:
+            return 1
         label = cv2.imread(os.path.join(self.root_dir, self.labels[0]), cv2.IMREAD_GRAYSCALE)
         label = np.array(label, dtype=np.float32)
-        label = label / np.max([255.0, 1e-8])
+        label = label / 255.0
+
         unique_labels = [l for l in np.unique(label)
                          if l != 0.0 and l != 1.0]
         return len(unique_labels)
@@ -101,14 +112,74 @@ class VOSDataset(Dataset):
 
         return sample
 
-    def make_img_gt_pair(self, idx):
-        """
-        Make the image-ground-truth pair
-        """
-        raise NotImplementedError
-
     def get_img_size(self):
         img = cv2.imread(os.path.join(self.root_dir, self.imgs[0]))
 
         return list(img.shape[:2])
 
+    def make_img_gt_pair(self, idx):
+        """
+        Make the image-ground-truth pair
+        """
+        img = cv2.imread(os.path.join(
+            self.root_dir, self.imgs[idx]), cv2.IMREAD_COLOR)
+        label = cv2.imread(os.path.join(
+            self.root_dir, self.labels[idx]), cv2.IMREAD_GRAYSCALE)
+
+        if self.crop_size is not None:
+            crop_h, crop_w = self.crop_size
+            img_h, img_w = label.shape
+
+            if crop_h != img_h or crop_w != img_w:
+                pad_h = max(crop_h - img_h, 0)
+                pad_w = max(crop_w - img_w, 0)
+                if pad_h > 0 or pad_w > 0:
+                    img_pad = cv2.copyMakeBorder(img, 0, pad_h, 0,
+                                                pad_w, cv2.BORDER_CONSTANT,
+                                                value=(0.0, 0.0, 0.0))
+                    label_pad = cv2.copyMakeBorder(label, 0, pad_h, 0,
+                                                pad_w, cv2.BORDER_CONSTANT,
+                                                value=(0,))
+                else:
+                    img_pad, label_pad = img, label
+
+                img_h, img_w = label_pad.shape
+                h_off = random.randint(0, img_h - crop_h)
+                w_off = random.randint(0, img_w - crop_w)
+
+                img = img_pad[h_off: h_off + crop_h, w_off: w_off + crop_w]
+                label = label_pad[h_off: h_off + crop_h, w_off: w_off + crop_w]
+
+        img = np.array(img, dtype=np.float32)
+        img = np.subtract(img, np.array(self.meanval, dtype=np.float32))
+
+        label = np.array(label, dtype=np.float32)
+        label = label / 255.0
+
+        assert len(
+            img.shape) == 3, f"Image broken ({img.shape}): {self.root_dir, self.imgs[idx]}"
+        assert len(
+            label.shape) == 2, f"Label broken ({label.shape}): {self.root_dir, self.labels[idx]}"
+
+        # multi object
+        if self.multi_object:
+            if self.multi_object not in ['all', 'single_id']:
+                raise NotImplementedError
+
+            # all objects stacked in third axis
+            unique_labels = [l for l in np.unique(label)
+                             if l != 0.0 and l != 1.0]
+
+            if unique_labels:
+                label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)
+                                        for l in unique_labels], axis=2)
+
+                # single object from stack
+                # if only one object on the frame this object is selected
+                if self.multi_object == 'single_id':
+                    label = label[:, :, self.multi_object_id]
+        else:
+            label = np.where(label != 0.0, 1.0, 0.0).astype(np.float32)
+        # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)
+
+        return img, label

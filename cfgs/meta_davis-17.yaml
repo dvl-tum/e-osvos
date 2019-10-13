@@ -4,3 +4,24 @@ data_cfg:
     crop_sizes:
         train: [480, 854]
         meta: [480, 854]
+parent_model:
+    base_path: models/FPN_ResNet34_lr_1e-5/DAVIS-2017
+    train:
+        paths:
+            - train_seqs/FPN_ResNet34_lr_1e-5_epoch-500.pth
+        val_split_files:
+            - data/DAVIS-2017/val_seqs.txt
+
+    # base_path: models/FPN_ResNet34_decoder_batch_norm/DAVIS-2017
+    # train:
+    #     paths:
+    #         - train_seqs/FPN_ResNet34_decoder_batch_norm_epoch-210.pth
+    #     val_split_files:
+    #         - data/DAVIS-2017/val_seqs.txt
+
+    # base_path: models/FPN_ResNet34_single_first/DAVIS-2017
+    # train:
+    #     paths:
+    #         - train_seqs/FPN_ResNet34_single_first_epoch-245.pth
+    #     val_split_files:
+    #         - data/DAVIS-2017/val_seqs.txt

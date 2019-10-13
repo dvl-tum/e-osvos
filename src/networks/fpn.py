@@ -18,33 +18,50 @@ class FPN(smp.FPN):
                     m.bias.requires_grad = batch_norm['learn_bias']
 
     def forward(self, inputs):
-        _, _, _, w = inputs.shape
-
         # TODO: solve not here.
+        _, _, h, w = inputs.shape
+        pad = [0, 0, 0, 0]
+        crop = [0, 0, 0, 0]
         if w == 854:
-            pad = (4, 5, 0, 0)
-            crop = (5, 5)
+            pad[0] = 4
+            pad[1] = 5
+            crop[0] = 5
+            crop[1] = 5
         elif w == 910:
-            pad = (7, 8, 0, 0)
-            crop = (9, 9)
-        elif w == 1152:
-            pad = (0, 0, 0, 0)
-            crop = False
+            pad[0] = 7
+            pad[1] = 8
+            crop[0] = 9
+            crop[1] = 9
         elif w == 911:
-            pad = (7, 7, 0, 0)
-            crop = (8, 9)
+            pad[0] = 7
+            pad[1] = 7
+            crop[0] = 8
+            crop[1] = 9
         elif w == 1138:
-            pad = (5, 6, 0, 0)
-            crop = (7, 7)
-        else:
-            raise NotImplementedError
+            pad[0] = 5
+            pad[1] = 6
+            crop[0] = 7
+            crop[1] = 7
+
+        if h == 720:
+            pad[2] = 6
+            pad[3] = 7
+            crop[2] = 8
+            crop[3] = 8
 
         inputs = F.pad(input=inputs, pad=pad, mode='constant', value=0)
         outputs = super(FPN, self).forward(inputs)
-        if crop:
-            return [outputs[..., crop[0]: -crop[1]]]
-        else:
-            return [outputs]
+
+        if crop[0]:
+            outputs = outputs[..., crop[0]:]
+        if crop[1]:
+            outputs = outputs[..., : -crop[1]]
+        if crop[2]:
+            outputs = outputs[:,:, crop[2]:]
+        if crop[3]:
+            outputs = outputs[:,:, : -crop[3]]
+
+        return [outputs]
 
     def train(self, mode=True):
         super(FPN, self).train(mode)

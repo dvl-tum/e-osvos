@@ -30,6 +30,9 @@ torch_ingredient.add_config('cfgs/torch.yaml')
 ex = sacred.Experiment('osvos-meta', ingredients=[torch_ingredient])
 ex.add_config('cfgs/meta.yaml')
 ex.add_named_config('DAVIS-17', 'cfgs/meta_davis-17.yaml')
+ex.add_named_config('YouTube-VOS', 'cfgs/meta_youtube-vos.yaml')
+ex.add_named_config('cross-entropy', 'cfgs/meta_cross-entropy.yaml')
+
 
 MetaOptimizer = ex.capture(MetaOptimizer, prefix='meta_optim_cfg')
 data_loaders = ex.capture(data_loaders, prefix='data_cfg')
@@ -113,8 +116,9 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
             opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     model, _ = init_parent_model()
-    legend = ['MEAN', 'STD'] + [f"{n}" for n, p in model.named_parameters()
-                         if p.requires_grad]
+    legend = ['MEAN', 'STD'] + [f"{n}"
+              for n, p in model.named_parameters()
+              if p.requires_grad]
     opts = dict(
         title=f"INIT LR (RUN: {_run._id})",
         xlabel='META ITERS',
@@ -329,6 +333,7 @@ def meta_run(i: int, rank: int, seq_names: list, meta_optim_state_dict: dict,
             torch.set_rng_state(global_rng_state)
 
             if _config['data_cfg']['multi_object'] == 'single_id':
+                # train_loader.dataset.multi_object_id = 0
                 train_loader.dataset.multi_object_id = torch.randint(
                     train_loader.dataset.num_objects, (1,)).item()
                 meta_loader.dataset.multi_object_id = train_loader.dataset.multi_object_id
@@ -523,7 +528,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
         # initial metrics
         # if multi object is treated as multiple single objects init J without
         # fine-tuning returns no reasonable results
-        if not _config['data_cfg']['multi_object'] == 'single_id':
+        if not _config['data_cfg']['multi_object']:
             for state, split in zip(parent_states[dataset_key]['states'], parent_states[dataset_key]['splits']):
                 if seq_name in split:
                     model.load_state_dict(state)
@@ -644,6 +649,8 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
                 if eval_frame_range_max == len(test_loader.dataset):
                     break
 
+            # break
+
         # TODO: refactor
         test_loader_frame_id = test_loader.dataset.frame_id
         test_loader.dataset.frame_id = None
@@ -655,6 +662,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
             imageio.imsave(pred_path, pred)
 
             pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(file_name) + '.png')
+            # TODO: implement color palette for labels
             imageio.imsave(pred_path, 20 * pred)
         test_loader.dataset.frame_id = test_loader_frame_id
 

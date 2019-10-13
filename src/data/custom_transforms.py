@@ -37,7 +37,6 @@ class ScaleNRotate(object):
                 continue
 
             tmp = sample[k]
-
             h, w = tmp.shape[:2]
             center = (w / 2, h / 2)
             assert(center != 0)  # Strange behaviour warpAffine

@@ -1,0 +1,4 @@
+loss_func: cross_entropy
+meta_optim_cfg:
+    # [1e-6, 1e-5]
+    lr_range: [0.00000001, 0.00001]

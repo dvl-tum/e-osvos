@@ -8,10 +8,10 @@ import davis
 import imageio
 import numpy as np
 import torch
-from data import custom_transforms
-from data import DAVIS
-from davis import Annotation, DAVISLoader, Segmentation
-from davis import db_eval, db_eval_sequence
+import torch.nn as nn
+from data import DAVIS, custom_transforms
+from davis import (Annotation, DAVISLoader, Segmentation, db_eval,
+                   db_eval_sequence)
 from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
 from meta_optim.meta_optim import MetaOptimizer
 from networks.drn_seg import DRNSeg
@@ -221,7 +221,7 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
     return train_loader, test_loader, meta_loader
 
 
-def init_parent_model(base_path, batch_norm, **datasets):
+def init_parent_model(base_path, train_encoder, decoder_norm_layer, batch_norm, **datasets):
     # if 'VGG' in base_path:
     #     model = OSVOSVgg(pretrained=0)
     # elif 'DRN_D_22' in base_path:
@@ -232,8 +232,17 @@ def init_parent_model(base_path, batch_norm, **datasets):
     #     model = FPN('resnet34-group-norm', classes=1, activation='softmax', dropout=0.0)
     # elif 'UNET_ResNet34' in base_path:
     #     model = Unet('resnet34', classes=1, activation='softmax')
+
+    if decoder_norm_layer == 'GroupNorm':
+        norm_layer = lambda num_channels: nn.GroupNorm(32, num_channels)
+    elif decoder_norm_layer == 'BatchNorm2d':
+        norm_layer = nn.BatchNorm2d
+    else:
+        raise NotImplementedError
+
     if 'FPN_ResNet34' in base_path:
-        model = FPN('resnet34', classes=1, activation='softmax', dropout=0.0, batch_norm=batch_norm)
+        model = FPN('resnet34', classes=1, activation='softmax',
+                    dropout=0.0, batch_norm=batch_norm, norm_layer=norm_layer)
     elif 'FPN_ResNet101' in base_path:
         model = FPN('resnet101', classes=1, activation='softmax', dropout=0.0, batch_norm=batch_norm)
     # elif 'DeepLab_ResNet101' in parent_model_path:
@@ -241,12 +250,20 @@ def init_parent_model(base_path, batch_norm, **datasets):
     else:
         raise NotImplementedError
 
+    for p in model.encoder.parameters():
+        p.requires_grad = train_encoder
+
     parent_states = {}
     for k, v in datasets.items():
         parent_states[k] = {}
-        parent_states[k]['states'] = [torch.load(os.path.join(base_path, p), map_location=lambda storage, loc: storage)
-                                      for p in v['paths']]
+        states = [torch.load(os.path.join(base_path, p), map_location=lambda storage, loc: storage)
+                             for p in v['paths']]
 
+        states = [{k: state[k] if k in state else v
+                   for k, v in model.state_dict().items()}
+                  for state in states]
+
+        parent_states[k]['states'] = states
         parent_states[k]['splits'] = [np.loadtxt(p, dtype=str).tolist()
                                       for p in v['val_split_files']]
 
@@ -317,12 +334,9 @@ def eval_davis(results_dir, seq_name):
 def eval_davis_seq(results_dir, seq_name):
     # TODO: refactor
     from davis import cfg as eval_cfg
-    single_object = True
-    if eval_cfg.YEAR == 2017:
-        single_object = False
     segmentations = Segmentation(os.path.join(
-        results_dir, seq_name), single_object)
-    annotations = Annotation(seq_name, single_object)
+        results_dir, seq_name), not eval_cfg.MULTIOBJECT)
+    annotations = Annotation(seq_name, not eval_cfg.MULTIOBJECT)
 
     evaluation = {}
     for m in ['J', 'F']:

@@ -1,0 +1,3 @@
+data_cfg:
+    root_dir: data/YouTube-VOS
+    multi_object: single_id

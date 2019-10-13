@@ -7,31 +7,27 @@ import socket
 import timeit
 from datetime import datetime
 
-from networks.vgg_osvos import OSVOSVgg
-from networks.drn_seg import DRNSeg
-from networks.unet import Unet
-from networks.fpn import FPN
 import numpy as np
-
 import torch
+import torch.nn as nn
 import torch.optim as optim
-from data import custom_transforms as tr
 from data import DAVIS, VOC2012, YouTube
+from data import custom_transforms as tr
 from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
 from mypath import Path
+from networks.drn_seg import DRNSeg
+from networks.fpn import FPN
+from networks.unet import Unet
+from networks.vgg_osvos import OSVOSVgg
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from util import visualize as viz
-from util.helper_func import run_loader, eval_loader
-
+from util.helper_func import eval_loader, run_loader
 
 # Select which GPU, -1 if CPU
 gpu_id = 0
-device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu")
-
-if torch.cuda.is_available():
-    print('Using GPU: {} '.format(gpu_id))
+device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
 
 # Setting of parameters
 # Parameters in p are used for the name of the model
@@ -58,26 +54,32 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
-# db_root_dir = 'data/VOC2012'
-# db_root_dir = 'data/DAVIS-2016'
-db_root_dir = 'data/DAVIS-2017'
-# db_root_dir = 'data/YouTube-VOS'
-
-# train_dataset = 'pascal_voc'
+# DAVIS
+db_root_dir = 'data/DAVIS-2016'
+# db_root_dir = 'data/DAVIS-2017'
 
 # train_dataset = 'train_seqs'
 # test_dataset = 'val_seqs'
-# test_dataset = 'test_seqs'
 
-train_dataset = 'train_split_2_train'
-test_dataset = 'train_split_2_val'
+train_dataset = 'train_split_3_train'
+test_dataset = 'train_split_3_val'
+
+
+# PASCAL VOC
+# db_root_dir = 'data/VOC2012'
+# train_dataset = 'pascal_voc'
+
+
+# YoutTube VOS
+# db_root_dir = 'data/YouTube-VOS'
+# train_dataset = 'train'
 
 # Network definition
 # model_name = 'VGG'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34'
+model_name = 'FPN_ResNet34_decoder_batch_norm'
 # loss_func = 'cross_entropy'
 loss_func = 'dice'
 
@@ -116,12 +118,13 @@ elif 'FPN_ResNet34' in model_name:
     num_losses = 1
     lr = 1e-5
 
-    net = FPN('resnet34', classes=1, activation='softmax')
+    net = FPN('resnet34', classes=1, activation='softmax', norm_layer=nn.BatchNorm2d)
+
+log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 
 if resume_epoch:
     parent_state_dict = torch.load(
-        os.path.join(save_dir, model_name, db_root_dir.split('/')[-1],
-            train_dataset, f"{model_name}_epoch-{resume_epoch}.pth"),
+        os.path.join(save_dir, log_dir, f"{model_name}_epoch-{resume_epoch}.pth"),
         map_location=lambda storage, loc: storage)
     net.load_state_dict(parent_state_dict)
 
@@ -138,12 +141,13 @@ if not os.path.exists(os.path.join(save_dir, model_name, db_root_dir.split('/')[
 # net.load_state_dict(torch.load(os.path.join(save_dir, parentModelName+'_epoch-'+str(parentEpoch-1)+'.pth'),
 #                                 map_location=lambda storage, loc: storage))
 
+print(log_dir)
 print(f'NUM MODEL PARAMS - {model_name}: {sum([p.numel() for p in net.parameters()])}')
 
 # Logging into Tensorboard
 if log_to_tb:
-    log_dir = os.path.join('log/tf_runs', model_name, db_root_dir.split('/')[-1], train_dataset)
-    writer = SummaryWriter(log_dir=log_dir)
+    tf_log_dir = os.path.join('log/tf_runs', log_dir)
+    writer = SummaryWriter(log_dir=tf_log_dir)
 
 net.to(device)
 
@@ -180,31 +184,54 @@ else:
     # optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9)
     optimizer = optim.Adam(net.parameters(), lr=lr)
 
+# Preparation of the data loaders
+# Define augmentation transformations as a composition
+composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
+                                        tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
+                                        tr.ToTensor()])
+train_crop_size = None
+
 if 'DAVIS' in db_root_dir:
-    # Preparation of the data loaders
-    # Define augmentation transformations as a composition
-    composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
-                                            tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
-                                            tr.ToTensor()])
-    # Training dataset and its iterator
-    db_train = DAVIS(seqs_key=train_dataset, root_dir=db_root_dir,
+    # train is cropped. but for davis 2017 test batch has changing heights and widths
+    if 'DAVIS-2017' in db_root_dir:
+        train_crop_size = (480, 854)
+    db_train = DAVIS(seqs_key=train_dataset,
+                     root_dir=db_root_dir,
+                     crop_size=train_crop_size,
                      transform=composed_transforms,
                      multi_object=train_multi_object)
 
-    # Testing dataset and its iterator
-    db_test = DAVIS(seqs_key=test_dataset, root_dir=db_root_dir, transform=tr.ToTensor())
+    db_test = DAVIS(seqs_key=test_dataset,
+                    root_dir=db_root_dir,
+                    transform=tr.ToTensor())
 
-    # train is cropped. but for davis 2017 test batch has changing heights and widths
-    if db_train.year == 2017:
-        db_train.crop_size = (480, 854)
+elif 'YouTube-VOS' in db_root_dir:
+    train_batch = 16
+    test_batch = 16
+    nTestInterval = 2
+    train_crop_size = (720, 960)
+
+    # Testing dataset and its iterator
+    db_train = YouTube(seqs_key=train_dataset,
+                       root_dir=db_root_dir,
+                       crop_size=train_crop_size,
+                       transform=composed_transforms,
+                       multi_object=train_multi_object)
+
+    # validate YouTube-VOS with DAVIS-17 train
+    db_test = DAVIS(seqs_key='train_seqs',
+                    root_dir='data/DAVIS-2017',
+                    transform=tr.ToTensor())
+
+    # Training dataset and its iterator
+
 elif 'VOC2012' in db_root_dir:
     db_train = VOC2012(split='train')
     db_test = VOC2012(split='val')
-elif 'YouTube-VOS' in db_root_dir:
-    db_train = YouTube(split='train')
-    db_test = YouTube(split='val')
 else:
     raise NotImplementedError
+
+print(f"DATA - TRAIN LENGTH: {len(db_train)} - TEST LENGTH: {len(db_test)}")
 
 trainloader = DataLoader(db_train, batch_size=train_batch, shuffle=True, num_workers=2)
 test_loader = DataLoader(db_test, batch_size=test_batch, shuffle=False, num_workers=2)
