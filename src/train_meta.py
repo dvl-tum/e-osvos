@@ -661,9 +661,10 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
             pred_path = os.path.join(temp_preds_save_dir, seq_name, os.path.basename(file_name) + '.png')
             imageio.imsave(pred_path, pred)
 
-            pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(file_name) + '.png')
-            # TODO: implement color palette for labels
-            imageio.imsave(pred_path, 20 * pred)
+            if _config['save_eval_preds']:
+                pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(file_name) + '.png')
+                # TODO: implement color palette for labels
+                imageio.imsave(pred_path, 20 * pred)
         test_loader.dataset.frame_id = test_loader_frame_id
 
         evaluation = eval_davis_seq(temp_preds_save_dir, seq_name)

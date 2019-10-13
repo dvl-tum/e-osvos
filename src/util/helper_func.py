@@ -233,16 +233,9 @@ def init_parent_model(base_path, train_encoder, decoder_norm_layer, batch_norm, 
     # elif 'UNET_ResNet34' in base_path:
     #     model = Unet('resnet34', classes=1, activation='softmax')
 
-    if decoder_norm_layer == 'GroupNorm':
-        norm_layer = lambda num_channels: nn.GroupNorm(32, num_channels)
-    elif decoder_norm_layer == 'BatchNorm2d':
-        norm_layer = nn.BatchNorm2d
-    else:
-        raise NotImplementedError
-
     if 'FPN_ResNet34' in base_path:
         model = FPN('resnet34', classes=1, activation='softmax',
-                    dropout=0.0, batch_norm=batch_norm, norm_layer=norm_layer)
+                    dropout=0.0, batch_norm=batch_norm, decoder_norm_layer=decoder_norm_layer)
     elif 'FPN_ResNet101' in base_path:
         model = FPN('resnet101', classes=1, activation='softmax', dropout=0.0, batch_norm=batch_norm)
     # elif 'DeepLab_ResNet101' in parent_model_path:
