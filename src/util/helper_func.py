@@ -252,9 +252,9 @@ def init_parent_model(base_path, train_encoder, decoder_norm_layer, batch_norm, 
         states = [torch.load(os.path.join(base_path, p), map_location=lambda storage, loc: storage)
                              for p in v['paths']]
 
-        states = [{k: state[k] if k in state else v
-                   for k, v in model.state_dict().items()}
-                  for state in states]
+        # states = [{k: state[k] if k in state else v
+        #            for k, v in model.state_dict().items()}
+        #           for state in states]
 
         parent_states[k]['states'] = states
         parent_states[k]['splits'] = [np.loadtxt(p, dtype=str).tolist()

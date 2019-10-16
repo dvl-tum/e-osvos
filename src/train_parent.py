@@ -55,19 +55,19 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 # DAVIS
-db_root_dir = 'data/DAVIS-2016'
-# db_root_dir = 'data/DAVIS-2017'
+# db_root_dir = 'data/DAVIS-2016'
+# # db_root_dir = 'data/DAVIS-2017'
 
 # train_dataset = 'train_seqs'
 # test_dataset = 'val_seqs'
 
-train_dataset = 'train_split_3_train'
-test_dataset = 'train_split_3_val'
+# train_dataset = 'train_split_3_train'
+# test_dataset = 'train_split_3_val'
 
 
 # PASCAL VOC
-# db_root_dir = 'data/VOC2012'
-# train_dataset = 'pascal_voc'
+db_root_dir = 'data/VOC2012'
+train_dataset = 'pascal_voc'
 
 
 # YoutTube VOS

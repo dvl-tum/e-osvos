@@ -37,7 +37,6 @@ ex.add_named_config('cross-entropy', 'cfgs/meta_cross-entropy.yaml')
 MetaOptimizer = ex.capture(MetaOptimizer, prefix='meta_optim_cfg')
 data_loaders = ex.capture(data_loaders, prefix='data_cfg')
 early_stopping = ex.capture(early_stopping, prefix='train_early_stopping')
-init_parent_model = ex.capture(init_parent_model, prefix='parent_model')
 train_val = ex.capture(train_val)
 
 
@@ -115,7 +114,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         vis_dict[f"{seq_name}_model_metrics"] = LineVis(
             opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
-    model, _ = init_parent_model()
+    model, _ = init_parent_model(**_config['parent_model'])
     legend = ['MEAN', 'STD'] + [f"{n}"
               for n, p in model.named_parameters()
               if p.requires_grad]
@@ -533,6 +532,8 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
                 if seq_name in split:
                     model.load_state_dict(state)
                     break
+            meta_optim.reset()
+            meta_optim.eval()
             _, _, J, _,  = eval_loader(model, test_loader, loss_func)
             init_J_seq.append(J)
 
@@ -738,13 +739,14 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
     #
     # Meta model
     #
-    model, _ = init_parent_model()
-    meta_model, _ = init_parent_model()
+    model, parent_states = init_parent_model(**_config['parent_model'])
+    meta_model, _ = init_parent_model(**_config['parent_model'])
 
     if _config['meta_optim_cfg']['learn_model_init']:
-        raise NotImplementedError
-        # model.load_state_dict(parent_state_dict)
-        # meta_model.load_state_dict(parent_state_dict)
+        # must not learn model init if we work with splits on training
+        if len(parent_states['train']['states']) > 1:
+            raise NotImplementedError
+        model.load_state_dict(parent_states['train']['states'][0])
 
     meta_optim = MetaOptimizer(model, meta_model)  # pylint: disable=E1120
     # models were only needed to setup MetaOptimizer. in this outer loop
@@ -800,7 +802,6 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
                                for idx in batch_seq_idx
                                if idx is not None]
             start_time = timeit.default_timer()
-
             # set meta optim gradients to zero
             for p in meta_optim_param_grad.values():
                 p.zero_()

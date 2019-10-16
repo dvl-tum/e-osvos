@@ -34,7 +34,7 @@ meta_optim_cfg:
     optim_func: Adam
     learn_model_init: False
     layer_norm: True
-    train_input: True
+    train_input: False
     grad_input: False
     gt_input: False
     matching_input: False
