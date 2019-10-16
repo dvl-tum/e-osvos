@@ -44,7 +44,6 @@ snapshot = 5  # Store a model every snapshot epochs
 nAveGrad = 1
 seed = 123
 log_to_tb = True
-train_multi_object = False
 
 save_dir = Path.save_root_dir()
 if not os.path.exists(save_dir):
@@ -55,14 +54,14 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 # DAVIS
-db_root_dir = 'data/DAVIS-2016'
+# db_root_dir = 'data/DAVIS-2016'
 # db_root_dir = 'data/DAVIS-2017'
 
 # train_dataset = 'train_seqs'
 # test_dataset = 'val_seqs'
 
-train_dataset = 'train_split_3_train'
-test_dataset = 'train_split_3_val'
+# train_dataset = 'train_split_3_train'
+# test_dataset = 'train_split_3_val'
 
 
 # PASCAL VOC
@@ -71,15 +70,15 @@ test_dataset = 'train_split_3_val'
 
 
 # YoutTube VOS
-# db_root_dir = 'data/YouTube-VOS'
-# train_dataset = 'train'
+db_root_dir = 'data/YouTube-VOS'
+train_dataset = 'train'
 
 # Network definition
 # model_name = 'VGG'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34_decoder_batch_norm'
+model_name = 'FPN_ResNet34_davis-16_val'
 # loss_func = 'cross_entropy'
 loss_func = 'dice'
 
@@ -118,7 +117,7 @@ elif 'FPN_ResNet34' in model_name:
     num_losses = 1
     lr = 1e-5
 
-    net = FPN('resnet34', classes=1, activation='softmax', norm_layer=nn.BatchNorm2d)
+    net = FPN('resnet34', classes=1, activation='softmax')
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 
@@ -190,6 +189,7 @@ composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
                                         tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
                                         tr.ToTensor()])
 train_crop_size = None
+train_multi_object = False
 
 if 'DAVIS' in db_root_dir:
     # train is cropped. but for davis 2017 test batch has changing heights and widths
@@ -210,6 +210,7 @@ elif 'YouTube-VOS' in db_root_dir:
     test_batch = 16
     nTestInterval = 2
     train_crop_size = (720, 960)
+    train_multi_object = False#'single_id'
 
     # Testing dataset and its iterator
     db_train = YouTube(seqs_key=train_dataset,
@@ -218,9 +219,12 @@ elif 'YouTube-VOS' in db_root_dir:
                        transform=composed_transforms,
                        multi_object=train_multi_object)
 
-    # validate YouTube-VOS with DAVIS-17 train
+    if train_multi_object == 'single_id':
+        db_train.multi_object_id = 0
+
+    # validate YouTube-VOS with DAVIS-16 train
     db_test = DAVIS(seqs_key='train_seqs',
-                    root_dir='data/DAVIS-2017',
+                    root_dir='data/DAVIS-2016',
                     transform=tr.ToTensor())
 
     # Training dataset and its iterator

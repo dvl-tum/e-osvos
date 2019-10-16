@@ -232,19 +232,20 @@ def init_parent_model(base_path, train_encoder, decoder_norm_layer, batch_norm, 
     #     model = FPN('resnet34-group-norm', classes=1, activation='softmax', dropout=0.0)
     # elif 'UNET_ResNet34' in base_path:
     #     model = Unet('resnet34', classes=1, activation='softmax')
+    # elif 'DeepLab_ResNet101' in parent_model_path:
+    #     model = DeepLab(backbone='resnet', output_stride=16, num_classes=1, freeze_bn=True)
 
     if 'FPN_ResNet34' in base_path:
         model = FPN('resnet34', classes=1, activation='softmax',
-                    dropout=0.0, batch_norm=batch_norm, decoder_norm_layer=decoder_norm_layer)
+                    dropout=0.0, batch_norm=batch_norm,
+                    train_encoder=train_encoder, decoder_norm_layer=decoder_norm_layer)
     elif 'FPN_ResNet101' in base_path:
-        model = FPN('resnet101', classes=1, activation='softmax', dropout=0.0, batch_norm=batch_norm)
-    # elif 'DeepLab_ResNet101' in parent_model_path:
-    #     model = DeepLab(backbone='resnet', output_stride=16, num_classes=1, freeze_bn=True)
+        model = FPN('resnet101', classes=1, activation='softmax',
+                    dropout=0.0, batch_norm=batch_norm,
+                    train_encoder=train_encoder, decoder_norm_layer=decoder_norm_layer)
+    
     else:
         raise NotImplementedError
-
-    for p in model.encoder.parameters():
-        p.requires_grad = train_encoder
 
     parent_states = {}
     for k, v in datasets.items():

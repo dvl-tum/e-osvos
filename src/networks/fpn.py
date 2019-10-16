@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 class FPN(smp.FPN):
 
-    def __init__(self, *args, batch_norm=None, **kwargs):
+    def __init__(self, *args, batch_norm=None, train_encoder=True, **kwargs):
         super(FPN, self).__init__(*args, **kwargs)
 
         self._accum_batch_norm_stats = True
@@ -16,6 +16,9 @@ class FPN(smp.FPN):
                 if isinstance(m, torch.nn.BatchNorm2d):
                     m.weight.requires_grad = batch_norm['learn_weight']
                     m.bias.requires_grad = batch_norm['learn_bias']
+        
+        if not train_encoder:
+            self.encoder.requires_grad_(False)
 
     def forward(self, inputs):
         # TODO: solve not here.
