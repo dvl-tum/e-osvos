@@ -5,23 +5,65 @@ data_cfg:
         train: [480, 854]
         meta: [480, 854]
 parent_model:
-    base_path: models/FPN_ResNet34_lr_1e-5/DAVIS-2017
-    train:
-        paths:
-            - train_seqs/FPN_ResNet34_lr_1e-5_epoch-500.pth
-        val_split_files:
-            - data/DAVIS-2017/val_seqs.txt
-
-    # base_path: models/FPN_ResNet34_decoder_batch_norm/DAVIS-2017
+    # base_path: models/FPN_ResNet34_lr_1e-5/DAVIS-2017
+    # decoder_norm_layer: GroupNorm
     # train:
     #     paths:
-    #         - train_seqs/FPN_ResNet34_decoder_batch_norm_epoch-210.pth
+    #         - train_seqs/FPN_ResNet34_lr_1e-5_epoch-100.pth
     #     val_split_files:
     #         - data/DAVIS-2017/val_seqs.txt
+    # val:
+    #     paths:
+    #         - train_seqs/FPN_ResNet34_lr_1e-5_epoch-100.pth
+    #     val_split_files:
+    #         - data/DAVIS-2017/val_seqs.txt
+
+#     # base_path: models/FPN_ResNet34_decoder_batch_norm/DAVIS-2017
+#     # decoder_norm_layer: BatchNorm2d
+#     # train:
+#     #     paths:
+#     #         - train_seqs/FPN_ResNet34_decoder_batch_norm_epoch-210.pth
+#     #     val_split_files:
+#     #         - data/DAVIS-2017/val_seqs.txt
+
+#     # base_path: models/FPN_ResNet101/DAVIS-2017
+#     # decoder_norm_layer: GroupNorm
+#     # train:
+#     #     paths:
+#     #         - train_seqs/FPN_ResNet101_epoch-215.pth
+#     #     val_split_files:
+#     #         - data/DAVIS-2017/val_seqs.txt
 
     # base_path: models/FPN_ResNet34_single_first/DAVIS-2017
+    # decoder_norm_layer: GroupNorm
     # train:
     #     paths:
-    #         - train_seqs/FPN_ResNet34_single_first_epoch-245.pth
+    #         - train_seqs/FPN_ResNet34_single_first_epoch-375.pth
     #     val_split_files:
     #         - data/DAVIS-2017/val_seqs.txt
+    # val:
+    #     paths:
+    #         - train_seqs/FPN_ResNet34_single_first_epoch-375.pth
+    #     val_split_files:
+    #         - data/DAVIS-2017/val_seqs.txt
+
+#     # base_path: models/FPN_ResNet34_single_random/DAVIS-2017
+#     # decoder_norm_layer: GroupNorm
+#     # train:
+#     #     paths:
+#     #         - train_seqs/FPN_ResNet34_single_random_epoch-215.pth
+#     #     val_split_files:
+#     #         - data/DAVIS-2017/val_seqs.txt
+
+    base_path: models/FPN_ResNet34_batch_norm_fix
+    decoder_norm_layer: GroupNorm
+    train:
+        paths:
+           - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
+        val_split_files:
+            - data/DAVIS-2017/val_seqs.txt
+    val:
+        paths:
+           - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
+        val_split_files:
+            - data/DAVIS-2016/val_seqs.txt
