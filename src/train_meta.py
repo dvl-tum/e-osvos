@@ -52,7 +52,6 @@ train_val = ex.capture(train_val)
 def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
              torch_cfg: dict, datasets: dict, resume_meta_run_epoch: int):
     run_name = f"{_run.experiment_info['name']}_{env_suffix}"
-    datasets = {k: v for k, v in datasets.items() if v is not None}
     vis_dict = {}
 
     resume  = False if resume_meta_run_epoch is None else True
@@ -84,18 +83,19 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     for dataset_name, dataset in datasets.items():
-        loader, *_ = data_loaders(dataset)  # pylint: disable=E1120
-        legend = ['INIT MEAN', 'MEAN'] + [f"{seq_name}"
-                  for seq_name in loader.dataset.seqs_names]
-        opts = dict(
-            title=f"EVAL: {dataset_name.upper()} J (RUN: {_run._id})",
-            xlabel='META EPOCHS',
-            ylabel=f'{dataset_name.upper()} J',
-            width=750,
-            height=750,
-            legend=legend)
-        vis_dict[f'{dataset_name}_J_seq_vis'] = LineVis(
-            opts, env=run_name, resume=resume, **torch_cfg['vis'])
+        if dataset is not None:
+            loader, *_ = data_loaders(dataset)  # pylint: disable=E1120
+            legend = ['INIT MEAN', 'MEAN'] + [f"{seq_name}"
+                    for seq_name in loader.dataset.seqs_names]
+            opts = dict(
+                title=f"EVAL: {dataset_name.upper()} J (RUN: {_run._id})",
+                xlabel='META EPOCHS',
+                ylabel=f'{dataset_name.upper()} J',
+                width=750,
+                height=750,
+                legend=legend)
+            vis_dict[f'{dataset_name}_J_seq_vis'] = LineVis(
+                opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     train_loader, *_ = data_loaders(datasets['train'])  # pylint: disable=E1120
 
@@ -688,14 +688,64 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
     return_dict['J_seq'] = J_seq
 
 
+@ex.capture
+def generate_meta_train_tasks(datasets: dict, num_frame_pairs_per_seq: int,
+                              random_meta_frame_transform_per_task: bool,
+                              change_frame_ids_per_seq_epoch: dict):
+    train_loader, _, meta_loader = data_loaders(datasets['train'])  # pylint: disable=E1120
+
+    # prepare mini batches for epoch. sequences and random frames.
+    meta_taks = []
+    for seq_name in train_loader.dataset.seqs_names:
+        train_loader.dataset.set_seq(seq_name)
+        meta_loader.dataset.set_seq(seq_name)
+
+        for _ in range(num_frame_pairs_per_seq):
+            multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
+            train_loader.dataset.multi_object_id = multi_object_id
+            meta_loader.dataset.multi_object_id = multi_object_id
+
+            if change_frame_ids_per_seq_epoch['train'] == 'random':
+                train_loader.dataset.set_random_frame_id_with_label()
+            elif change_frame_ids_per_seq_epoch['train'] == 'next':
+                raise NotImplementedError
+
+            if change_frame_ids_per_seq_epoch['meta'] == 'random':
+                meta_loader.dataset.set_random_frame_id()
+            elif change_frame_ids_per_seq_epoch['meta'] == 'next':
+                raise NotImplementedError
+
+            # # ensure train and meta frames are not the same
+            # if (_config['change_frame_ids_per_seq_epoch']['train'] or
+            #     _config['change_frame_ids_per_seq_epoch']['meta']):
+            #     if train_loader.dataset.frame_id == meta_loader.dataset.frame_id:
+            #         train_loader.dataset.set_next_frame_id()
+            meta_transform = meta_loader.dataset.transform
+            if random_meta_frame_transform_per_task:
+                meta_transform = transforms.Compose([custom_transforms.RandomHorizontalFlip(deterministic=True),
+                                                     custom_transforms.RandomScaleNRotate(rots=(-30, 30),
+                                                                                          scales=(.75, 1.25),
+                                                                                          deterministic=True),
+                                                     custom_transforms.ToTensor(),])
+
+            meta_taks.append({'seq_name': seq_name,
+                                    'train_frame_id': train_loader.dataset.frame_id,
+                                    'meta_frame_id': meta_loader.dataset.frame_id,
+                                    'meta_transform': meta_transform,
+                                    'multi_object_id': multi_object_id})
+    random_meta_task_idx = torch.randperm(len(meta_taks))
+    return [meta_taks[i] for i in random_meta_task_idx]
+
+
+
 @ex.automain
 def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
          eval_datasets: bool, num_meta_processes_per_gpu: int, datasets: dict,
          meta_optim_optim_cfg: dict, meta_batch_size: int, seed: int,
-         random_meta_frame_transform_per_task: bool, _config: dict):
+         _config: dict):
     mp.set_start_method('spawn')
 
-    datasets = {k: v for k, v in datasets.items() if v is not None}
+    assert datasets['train'] is not None
 
     set_random_seeds(seed)
 
@@ -723,7 +773,7 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
             else:
                 vis_dict[n].removed = True
 
-    train_loader, _, meta_loader = data_loaders(datasets['train'])  # pylint: disable=E1120
+    train_loader, _, _ = data_loaders(datasets['train'])  # pylint: disable=E1120
 
     #
     # processes
@@ -737,13 +787,13 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
     assert meta_batch_size >= num_meta_processes, ('Reduce number of available GPUs.')
     assert (train_loader.dataset.num_seqs * _config['num_frame_pairs_per_seq'] / meta_batch_size).is_integer()
 
-    num_samples_per_process = math.ceil(meta_batch_size / num_meta_processes)
+    num_tasks_per_process = math.ceil(meta_batch_size / num_meta_processes)
     process_manager = mp.Manager()
     meta_processes = [dict() for _ in range(num_meta_processes)]
 
     eval_processes = {}
     if eval_datasets:
-        eval_processes = {n: {} for n in datasets.keys()}
+        eval_processes = {k: {} for k, v in datasets.items() if v is not None}
 
     #
     # Meta model
@@ -809,64 +859,28 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
                         'J': {}, 'F': {}}
         seqs_metrics = {m: {n: [] for n in train_loader.dataset.seqs_names} for m in seqs_metrics}
 
-        # prepare mini batches for epoch. sequences and random frames.
-        meta_samples = []
-        for seq_name in train_loader.dataset.seqs_names:
-            train_loader.dataset.set_seq(seq_name)
-            meta_loader.dataset.set_seq(seq_name)
+        meta_taks = generate_meta_train_tasks()
+        meta_iters_per_epoch = math.ceil(len(meta_taks) / meta_batch_size)
 
-            for _ in range(_config['num_frame_pairs_per_seq']):
-                if _config['change_frame_ids_per_seq_epoch']['train'] == 'random':
-                    train_loader.dataset.set_random_frame_id()
-                elif _config['change_frame_ids_per_seq_epoch']['train'] == 'next':
-                    raise NotImplementedError
-
-                if _config['change_frame_ids_per_seq_epoch']['meta'] == 'random':
-                    meta_loader.dataset.set_random_frame_id()
-                elif _config['change_frame_ids_per_seq_epoch']['meta'] == 'next':
-                    raise NotImplementedError
-
-                # # ensure train and meta frames are not the same
-                # if (_config['change_frame_ids_per_seq_epoch']['train'] or
-                #     _config['change_frame_ids_per_seq_epoch']['meta']):
-                #     if train_loader.dataset.frame_id == meta_loader.dataset.frame_id:
-                #         train_loader.dataset.set_next_frame_id()
-                meta_transform = meta_loader.dataset.transform
-                if random_meta_frame_transform_per_task:
-                    meta_transform = transforms.Compose([custom_transforms.RandomHorizontalFlip(deterministic=True),
-                                                         custom_transforms.RandomScaleNRotate(rots=(-30, 30),
-                                                                                              scales=(.75, 1.25),
-                                                                                              deterministic=True),
-                                                         custom_transforms.ToTensor(),])
-
-                multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
-
-                meta_samples.append({'seq_name': seq_name,
-                                     'train_frame_id': train_loader.dataset.frame_id,
-                                     'meta_frame_id': meta_loader.dataset.frame_id,
-                                     'meta_transform': meta_transform,
-                                     'multi_object_id': multi_object_id})
-        random_meta_sample_idx = torch.randperm(len(meta_samples))
-        meta_samples = [meta_samples[i] for i in random_meta_sample_idx]
-        meta_iters_per_epoch = math.ceil(len(meta_samples) / meta_batch_size)
-
-        for meta_iter, meta_mini_batch in enumerate(grouper(meta_batch_size, meta_samples)):
+        for meta_iter, meta_mini_batch in enumerate(grouper(meta_batch_size, meta_taks)):
             # filter None values from grouper
             meta_mini_batch = [s for s in meta_mini_batch if s is not None]
+
             start_time = timeit.default_timer()
+
             # set meta optim gradients to zero
             for p in meta_optim_param_grad.values():
                 p.zero_()
 
             # start meta run processes
-            sample_groups = grouper(num_samples_per_process, meta_mini_batch)
-            for rank, (p, samples_per_process) in enumerate(zip(meta_processes, sample_groups)):
+            task_groups = grouper(num_tasks_per_process, meta_mini_batch)
+            for rank, (p, tasks_for_process) in enumerate(zip(meta_processes, task_groups)):
                 # filter None values from grouper
-                samples_per_process = [n for n in samples_per_process if n is not None]
+                tasks_for_process = [n for n in tasks_for_process if n is not None]
 
                 p['return_dict'] = process_manager.dict()
 
-                process_args = [i, rank, samples_per_process, meta_optim.state_dict(),
+                process_args = [i, rank, tasks_for_process, meta_optim.state_dict(),
                                 meta_optim_param_grad, global_rng_state,
                                 _config, datasets['train'], p['return_dict']]
                 p['process'] = mp.Process(target=meta_run, args=process_args)

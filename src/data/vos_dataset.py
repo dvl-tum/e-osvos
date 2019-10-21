@@ -57,9 +57,23 @@ class VOSDataset(Dataset):
         rnd_seq_name = self.seqs_names[rnd_key_idx]
 
         self.set_seq(rnd_seq_name)
+        return rnd_seq_name
 
     def set_random_frame_id(self):
         self.frame_id = torch.randint(len(self.imgs), (1,)).item()
+        return self.frame_id
+
+    def set_random_frame_id_with_label(self):
+        def _set_random_frame_id_with_label():
+            frame_id = self.set_random_frame_id()
+            _, label = self.make_img_label_pair(frame_id)
+            if len(np.unique(label)) > 1:
+                return
+            else:
+                _set_random_frame_id_with_label()
+
+        _set_random_frame_id_with_label()
+        return self.frame_id
 
     def set_next_frame_id(self):
         if self.frame_id == 'middle':
@@ -71,6 +85,7 @@ class VOSDataset(Dataset):
             self.frame_id = 0
         else:
             self.frame_id += 1
+        return self.frame_id
 
     def get_seq_id(self):
         return self.seqs_names.index(self.seq_key)
@@ -106,9 +121,9 @@ class VOSDataset(Dataset):
             else:
                 idx = self.frame_id
 
-        img, gt = self.make_img_gt_pair(idx)
+        img, label = self.make_img_label_pair(idx)
 
-        sample = {'image': img, 'gt': gt,
+        sample = {'image': img, 'gt': label,
                   'file_name': os.path.splitext(os.path.basename(self.imgs[idx]))[0]}
 
         if self.transform is not None:
@@ -121,7 +136,7 @@ class VOSDataset(Dataset):
 
         return list(img.shape[:2])
 
-    def make_img_gt_pair(self, idx):
+    def make_img_label_pair(self, idx):
         """
         Make the image-ground-truth pair
         """
