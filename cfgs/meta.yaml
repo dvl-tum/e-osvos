@@ -122,6 +122,31 @@ parent_model:
     #     val_split_files:
     #         - data/DAVIS-2016/val_seqs.txt
 
+    # decoder_norm_layer: GroupNorm
+    # base_path: models/FPN_ResNet34_davis-16_val/VOC2012
+    # train:
+    #     paths:
+    #         - pascal_voc/FPN_ResNet34_davis-16_val_epoch-165.pth
+    #     val_split_files:
+    #         - data/DAVIS-2016/train_seqs.txt
+    # val:
+    #     paths:
+    #         - pascal_voc/FPN_ResNet34_davis-16_val_epoch-165.pth
+    #     val_split_files:
+    #         - data/DAVIS-2016/val_seqs.txt
+
+    # decoder_norm_layer: GroupNorm
+    # base_path: models/FPN_ResNet34/DAVIS-2016
+    # train:
+    #     paths:
+    #         - train_split_balanced_train/FPN_ResNet34_epoch-150.pth
+    #     val_split_files:
+    #         - data/DAVIS-2016/train_split_balanced_val.txt
+    # val:
+    #     paths:
+    #         - train_split_balanced_train/FPN_ResNet34_epoch-150.pth
+    #     val_split_files:
+    #         - data/DAVIS-2016/val_seqs.txt
 train_early_stopping_cfg:
     patience: null
     min_loss_improv: 0.001

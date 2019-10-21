@@ -45,15 +45,21 @@ class FPN(smp.FPN):
             pad[1] = 6
             crop[0] = 7
             crop[1] = 7
+        elif w == 510:
+            crop[0] = 1
+            crop[1] = 1
 
         if h == 720:
             pad[2] = 6
             pad[3] = 7
             crop[2] = 8
             crop[3] = 8
+        elif h == 510:
+            crop[2] = 1
+            crop[3] = 1
 
-        inputs = F.pad(input=inputs, pad=pad, mode='constant', value=0)
-        outputs = super(FPN, self).forward(inputs)
+        inputs_padded = F.pad(input=inputs, pad=pad, mode='constant', value=0)
+        outputs = super(FPN, self).forward(inputs_padded)
 
         if crop[0]:
             outputs = outputs[..., crop[0]:]

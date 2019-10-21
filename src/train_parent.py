@@ -54,7 +54,7 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 # DAVIS
-# db_root_dir = 'data/DAVIS-2016'
+db_root_dir = 'data/DAVIS-2016'
 # db_root_dir = 'data/DAVIS-2017'
 
 # train_dataset = 'train_seqs'
@@ -63,22 +63,24 @@ torch.manual_seed(seed)
 # train_dataset = 'train_split_3_train'
 # test_dataset = 'train_split_3_val'
 
+train_dataset = 'train_split_balanced_train'
+test_dataset = 'train_split_balanced_val'
 
 # PASCAL VOC
-db_root_dir = 'data/VOC2012'
-train_dataset = 'pascal_voc'
+# db_root_dir = 'data/VOC2012'
+# train_dataset = 'pascal_voc'
 
 
 # YoutTube VOS
-db_root_dir = 'data/YouTube-VOS'
-train_dataset = 'train'
+# db_root_dir = 'data/YouTube-VOS'
+# train_dataset = 'train'
 
 # Network definition
 # model_name = 'VGG'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34_davis-16_val'
+model_name = 'FPN_ResNet34'
 # loss_func = 'cross_entropy'
 loss_func = 'dice'
 
@@ -118,6 +120,11 @@ elif 'FPN_ResNet34' in model_name:
     lr = 1e-5
 
     net = FPN('resnet34', classes=1, activation='softmax')
+elif 'FPN_ResNet101' in model_name:
+    num_losses = 1
+    lr = 1e-5
+
+    net = FPN('resnet101', classes=1, activation='softmax')
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 
@@ -222,8 +229,8 @@ elif 'YouTube-VOS' in db_root_dir:
     if train_multi_object == 'single_id':
         db_train.multi_object_id = 0
 
-    # validate YouTube-VOS with DAVIS-16 train
-    db_test = DAVIS(seqs_key='train_seqs',
+    # validate YouTube-VOS with DAVIS-16 val
+    db_test = DAVIS(seqs_key='val_seqs',
                     root_dir='data/DAVIS-2016',
                     transform=tr.ToTensor())
 
@@ -231,17 +238,19 @@ elif 'YouTube-VOS' in db_root_dir:
 
 elif 'VOC2012' in db_root_dir:
     db_train = VOC2012(split='train')
-    db_test = VOC2012(split='val')
+    # db_test = VOC2012(split='val')
+    db_test = DAVIS(seqs_key='val_seqs',
+                    root_dir='data/DAVIS-2016',
+                    transform=tr.ToTensor())
 else:
     raise NotImplementedError
 
 print(f"DATA - TRAIN LENGTH: {len(db_train)} - TEST LENGTH: {len(db_test)}")
 
-trainloader = DataLoader(db_train, batch_size=train_batch, shuffle=True, num_workers=2)
+train_loader = DataLoader(db_train, batch_size=train_batch, shuffle=True, num_workers=2)
 test_loader = DataLoader(db_test, batch_size=test_batch, shuffle=False, num_workers=2)
 
-
-num_img_tr = len(trainloader)
+num_img_tr = len(train_loader)
 num_img_ts = len(test_loader)
 running_loss_tr = [0] * num_losses
 running_loss_ts = [0] * num_losses
@@ -254,7 +263,7 @@ print("Training Network")
 for epoch in range(resume_epoch, nEpochs):
     start_time = timeit.default_timer()
     # One training epoch
-    for ii, sample_batched in enumerate(trainloader):
+    for ii, sample_batched in enumerate(train_loader):
         inputs, gts = sample_batched['image'], sample_batched['gt']
 
         # Forward-Backward of the mini-batch
@@ -322,7 +331,7 @@ for epoch in range(resume_epoch, nEpochs):
             metrics = {n: [] for n in metrics_names}
 
             net.eval()
-            if train_dataset == 'pascal_voc':
+            if isinstance(db_test, VOC2012):
                 test_loss_batches, test_acc_batches = run_loader(net, test_loader, loss_func)
                 metrics['test_loss'].append(test_loss_batches.mean())
                 metrics['test_acc'].append(test_acc_batches.mean())

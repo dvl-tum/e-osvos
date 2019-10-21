@@ -156,6 +156,7 @@ class VOSDataset(Dataset):
 
         img = np.array(img, dtype=np.float32)
         img = np.subtract(img, np.array(self.meanval, dtype=np.float32))
+        # img = img / 255.0
 
         label = np.array(label, dtype=np.float32)
         label = label / 255.0

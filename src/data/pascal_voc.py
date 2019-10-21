@@ -16,7 +16,7 @@ class VOC2012(Dataset):
     NUM_CLASSES = 21
 
     def __init__(self,
-                 base_dir='./data/VOC2012',
+                 base_dir='data/VOC2012',
                  split='train',
                  ):
         """
@@ -125,9 +125,11 @@ class Normalize(object):
         mask = sample['gt']
         img = np.array(img).astype(np.float32)
         mask = np.array(mask).astype(np.float32)
+        
         img /= 255.0
         img -= self.mean
-        img /= self.std
+        # img /= self.std
+        mask /= 255.0
 
         return {'image': img,
                 'gt': mask}
@@ -148,8 +150,11 @@ class ToTensor(object):
         img = torch.from_numpy(img).float()
         mask = torch.from_numpy(mask).float()
 
+        # make unlabelled to background
+        mask[mask.eq(255.0)] = 0.0
         # remove semantic classes and make pascal voc foreground background segmentation
-        mask[mask.ne(0) - mask.eq(255)] = 1
+        # mask[mask.ne(0.0) ^ mask.eq(255)] = 1
+        mask[mask.ne(0.0)] = 1
         mask = mask.unsqueeze(dim=0)
 
         return {'image': img,
