@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 
-class ScaleNRotate(object):
+class RandomScaleNRotate:
     """Scale (zoom-in, zoom-out) and Rotate the image and the ground truth.
     Args:
         two possibilities:
@@ -13,13 +13,16 @@ class ScaleNRotate(object):
         2.  rots [list]: list of fixed possible rotation angles
             scales [list]: list of fixed possible scales
     """
-    def __init__(self, rots=(-30, 30), scales=(.75, 1.25)):
+    def __init__(self, rots=(-30, 30), scales=(.75, 1.25), deterministic=False):
         assert (isinstance(rots, type(scales)))
         self.rots = rots
         self.scales = scales
+        self.deterministic = deterministic
 
-    def __call__(self, sample):
+        if deterministic:
+            self.rot, self.sc = self._get_rot_and_sc()
 
+    def _get_rot_and_sc(self):
         if type(self.rots) == tuple:
             # Continuous range of scales and rotations
             rot = (self.rots[1] - self.rots[0]) * random.random() - \
@@ -31,6 +34,14 @@ class ScaleNRotate(object):
             # Fixed range of scales and rotations
             rot = self.rots[random.randint(0, len(self.rots))]
             sc = self.scales[random.randint(0, len(self.scales))]
+
+        return rot, sc
+
+    def __call__(self, sample):
+        if self.deterministic:
+            rot, sc = self.rot, self.sc
+        else:
+            rot, sc = self._get_rot_and_sc()
 
         for k in sample.keys():
             if 'file_name' in k:
@@ -53,7 +64,7 @@ class ScaleNRotate(object):
         return sample
 
 
-class Resize(object):
+class Resize:
     """Randomly resize the image and the ground truth to specified scales.
     Args:
         scales (list): the list of scales
@@ -83,12 +94,22 @@ class Resize(object):
         return sample
 
 
-class RandomHorizontalFlip(object):
+class RandomHorizontalFlip:
     """Horizontally flip the given image and ground truth randomly with a probability of 0.5."""
 
-    def __call__(self, sample):
+    def __init__(self, deterministic=False):
+        self.deterministic = deterministic
 
-        if random.random() < 0.5:
+        if deterministic:
+            self.do_flip = random.random() < 0.5
+
+    def __call__(self, sample):
+        if self.deterministic:
+            do_flip = self.do_flip
+        else:
+            do_flip = random.random() < 0.5
+
+        if do_flip:
             for k in sample.keys():
                 if 'file_name' in k:
                     continue
@@ -99,7 +120,7 @@ class RandomHorizontalFlip(object):
         return sample
 
 
-class ToTensor(object):
+class ToTensor:
     """Convert ndarrays in sample to Tensors."""
 
     def __call__(self, sample):

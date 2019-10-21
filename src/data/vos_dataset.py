@@ -32,6 +32,10 @@ class VOSDataset(Dataset):
 
     @property
     def num_objects(self):
+        """
+        Retrieve number of objects from first frame ground truth which always
+        contains all objects.
+        """
         if self.seq_key is None:
             raise NotImplementedError
         if not self.multi_object:
@@ -165,19 +169,24 @@ class VOSDataset(Dataset):
         if self.multi_object:
             if self.multi_object not in ['all', 'single_id']:
                 raise NotImplementedError
-
-            # all objects stacked in third axis
+ 
             unique_labels = [l for l in np.unique(label)
                              if l != 0.0 and l != 1.0]
 
             if unique_labels:
+                # all objects stacked in third axis
                 label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)
                                         for l in unique_labels], axis=2)
 
                 # single object from stack
                 # if only one object on the frame this object is selected
                 if self.multi_object == 'single_id':
-                    label = label[:, :, self.multi_object_id]
+                    # if a frame does not include all objects
+                    assert self.multi_object_id < self.num_objects
+                    if self.num_objects > len(unique_labels) and self.multi_object_id >= len(unique_labels):
+                        label = np.zeros((label.shape[0], label.shape[1]), dtype=np.float32)
+                    else:
+                        label = label[:, :, self.multi_object_id]
         else:
             label = np.where(label != 0.0, 1.0, 0.0).astype(np.float32)
         # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)

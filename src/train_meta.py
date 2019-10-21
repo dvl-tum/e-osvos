@@ -14,6 +14,7 @@ import numpy as np
 import sacred
 import torch
 import torch.multiprocessing as mp
+from torchvision import transforms
 from meta_optim.meta_optim import MetaOptimizer
 from meta_optim.utils import dict_to_html
 from pytorch_tools.ingredients import (save_model_to_db, set_random_seeds,
@@ -21,9 +22,16 @@ from pytorch_tools.ingredients import (save_model_to_db, set_random_seeds,
 from pytorch_tools.vis import LineVis, TextVis
 from spatial_correlation_sampler import spatial_correlation_sample
 from torch.utils.data import DataLoader
+from data import custom_transforms
 from util.helper_func import (compute_loss, data_loaders, early_stopping,
                               epoch_iter, eval_davis_seq, eval_loader, grouper,
                               init_parent_model, run_loader, train_val, update_dict)
+
+mp.set_sharing_strategy('file_system')
+
+import resource
+rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
 
 torch_ingredient.add_config('cfgs/torch.yaml')
 
@@ -281,7 +289,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
         gpu_rank = (rank // _config['num_meta_processes_per_gpu']) + 1
         # datasets = {k: v for k, v in _config['datasets'].items() if v is not None}
         # device = torch.device(f"cuda:{rank + len(datasets)}")
-        # meta_device = torch.device(f"cuda:{rank + len(datasets)}")    
+        # meta_device = torch.device(f"cuda:{rank + len(datasets)}")
     else:
         gpu_rank = rank // _config['num_meta_processes_per_gpu']
     device = torch.device(f'cuda:{gpu_rank}')
@@ -307,9 +315,13 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
     for sample in samples:
         seq_name = sample['seq_name']
         train_loader.dataset.set_seq(seq_name)
-        meta_loader.dataset.set_seq(seq_name)
         train_loader.dataset.frame_id = sample['train_frame_id']
+        train_loader.dataset.multi_object_id = sample['multi_object_id']
+
+        meta_loader.dataset.set_seq(seq_name)
         meta_loader.dataset.frame_id = sample['meta_frame_id']
+        meta_loader.dataset.multi_object_id = sample['multi_object_id']
+        meta_loader.dataset.transform = sample['meta_transform']
 
         vis_data_seqs[seq_name] = []
 
@@ -334,13 +346,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
 
         # meta run sets its own random state for the first frame data augmentation
         # we use the global rng_state for global randomizations
-        torch.set_rng_state(global_rng_state)
-
-        if _config['data_cfg']['multi_object'] == 'single_id':
-            # train_loader.dataset.multi_object_id = 0
-            train_loader.dataset.multi_object_id = torch.randint(
-                train_loader.dataset.num_objects, (1,)).item()
-            meta_loader.dataset.multi_object_id = train_loader.dataset.multi_object_id
+        # torch.set_rng_state(global_rng_state)
 
         # TODO: refactor
         # if _config['change_frame_ids_per_seq_epoch']['train'] == 'random':
@@ -365,7 +371,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
         #         else:
         #             meta_loader.dataset.frame_id += 1
 
-        global_rng_state = torch.get_rng_state()
+        # global_rng_state = torch.get_rng_state()
 
         if _config['meta_optim_cfg']['matching_input']:
             match_embed(model, train_loader, meta_loader)
@@ -686,8 +692,9 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
 def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
          eval_datasets: bool, num_meta_processes_per_gpu: int, datasets: dict,
          meta_optim_optim_cfg: dict, meta_batch_size: int, seed: int,
-         _config: dict):
-    mp.set_start_method("spawn")
+         random_meta_frame_transform_per_task: bool, _config: dict):
+    mp.set_start_method('spawn')
+
     datasets = {k: v for k, v in datasets.items() if v is not None}
 
     set_random_seeds(seed)
@@ -724,10 +731,11 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
     num_meta_processes = torch.cuda.device_count()
     if eval_datasets:
         num_meta_processes -= 1 #len(datasets)
-    
+
     num_meta_processes *= num_meta_processes_per_gpu
-    
+
     assert meta_batch_size >= num_meta_processes, ('Reduce number of available GPUs.')
+    assert (train_loader.dataset.num_seqs * _config['num_frame_pairs_per_seq'] / meta_batch_size).is_integer()
 
     num_samples_per_process = math.ceil(meta_batch_size / num_meta_processes)
     process_manager = mp.Manager()
@@ -758,11 +766,14 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
 
     # TODO: refactor
     meta_optim_params = [{'params': [p for n, p in meta_optim.named_parameters() if 'model_init' in n],
-                          'lr': meta_optim_optim_cfg['model_init_lr']},
+                          'lr': meta_optim_optim_cfg['model_init_lr'],
+                          'weight_decay': 0.001},
                          {'params': [p for n, p in meta_optim.named_parameters() if 'log_init_lr' in n],
                           'lr': meta_optim_optim_cfg['log_init_lr_lr']},
                          {'params': [p for n, p in meta_optim.named_parameters() if 'model_init' not in n and 'log_init_lr' not in n],
                           'lr': meta_optim_optim_cfg['lr']}]
+    # from radam import RAdam
+    # meta_optim_optim = RAdam(meta_optim_params, lr=meta_optim_optim_cfg['lr'])
     meta_optim_optim = torch.optim.Adam(meta_optim_params,
                                         lr=meta_optim_optim_cfg['lr'])
     if resume_meta_run_epoch is not None:
@@ -820,10 +831,21 @@ def main(save_train: bool, resume_meta_run_epoch: int, env_suffix: str,
                 #     _config['change_frame_ids_per_seq_epoch']['meta']):
                 #     if train_loader.dataset.frame_id == meta_loader.dataset.frame_id:
                 #         train_loader.dataset.set_next_frame_id()
+                meta_transform = meta_loader.dataset.transform
+                if random_meta_frame_transform_per_task:
+                    meta_transform = transforms.Compose([custom_transforms.RandomHorizontalFlip(deterministic=True),
+                                                         custom_transforms.RandomScaleNRotate(rots=(-30, 30),
+                                                                                              scales=(.75, 1.25),
+                                                                                              deterministic=True),
+                                                         custom_transforms.ToTensor(),])
+
+                multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
 
                 meta_samples.append({'seq_name': seq_name,
                                      'train_frame_id': train_loader.dataset.frame_id,
-                                     'meta_frame_id': meta_loader.dataset.frame_id,})
+                                     'meta_frame_id': meta_loader.dataset.frame_id,
+                                     'meta_transform': meta_transform,
+                                     'multi_object_id': multi_object_id})
         random_meta_sample_idx = torch.randperm(len(meta_samples))
         meta_samples = [meta_samples[i] for i in random_meta_sample_idx]
         meta_iters_per_epoch = math.ceil(len(meta_samples) / meta_batch_size)

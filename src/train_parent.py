@@ -186,7 +186,7 @@ else:
 # Preparation of the data loaders
 # Define augmentation transformations as a composition
 composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
-                                        tr.ScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
+                                        tr.RandomScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
                                         tr.ToTensor()])
 train_crop_size = None
 train_multi_object = False
