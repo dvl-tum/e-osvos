@@ -162,7 +162,8 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
 
 
 def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
-                 shuffles, frame_ids, num_workers, crop_sizes, multi_object):
+                 shuffles, frame_ids, num_workers, crop_sizes, multi_object,
+                 pin_memory):
     # train
     train_transforms = []
     if random_train_transform:
@@ -172,51 +173,57 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
     train_transforms.append(custom_transforms.ToTensor())
     composed_transforms = transforms.Compose(train_transforms)
 
-    db_train = DAVIS(root_dir=root_dir,
-                     seqs_key=dataset,
-                     frame_id=frame_ids['train'],
-                     transform=composed_transforms,
-                     crop_size=crop_sizes['train'],
-                     multi_object=multi_object,
-                     )
+    db_train = DAVIS(
+        root_dir=root_dir,
+        seqs_key=dataset,
+        frame_id=frame_ids['train'],
+        transform=composed_transforms,
+        crop_size=crop_sizes['train'],
+        multi_object=multi_object,)
 
     # sample epochs into a batch
     batch_sampler = EpochSampler(
         db_train, shuffles['train'], batch_sizes['train'])
     train_loader = DataLoader(
-        db_train, batch_sampler=batch_sampler, num_workers=num_workers)
+        db_train,
+        batch_sampler=batch_sampler,
+        num_workers=num_workers,
+        pin_memory=pin_memory)
 
     # test
-    db_test = DAVIS(root_dir=root_dir,
-                    seqs_key=dataset,
-                    frame_id=frame_ids['test'],
-                    transform=custom_transforms.ToTensor(),
-                    crop_size=crop_sizes['test'],
-                    multi_object=multi_object,
-                    )
+    db_test = DAVIS(
+        root_dir=root_dir,
+        seqs_key=dataset,
+        frame_id=frame_ids['test'],
+        transform=custom_transforms.ToTensor(),
+        crop_size=crop_sizes['test'],
+        multi_object=multi_object,)
     test_loader = DataLoader(
         db_test,
         shuffle=shuffles['test'],
         batch_size=batch_sizes['test'],
         num_workers=num_workers,
-        sampler=SequentialSubsetSampler(db_test))
+        sampler=SequentialSubsetSampler(db_test),
+        pin_memory=pin_memory)
 
     if 'meta' not in batch_sizes:
         return train_loader, test_loader
 
     # meta
-    db_meta = DAVIS(root_dir=root_dir,
-                    seqs_key=dataset,
-                    frame_id=frame_ids['meta'],
-                    transform=custom_transforms.ToTensor(),
-                    crop_size=crop_sizes['meta'],
-                    multi_object=multi_object,
-                    )
+    db_meta = DAVIS(
+        root_dir=root_dir,
+        seqs_key=dataset,
+        frame_id=frame_ids['meta'],
+        transform=custom_transforms.ToTensor(),
+        crop_size=crop_sizes['meta'],
+        multi_object=multi_object,)
+
     meta_loader = DataLoader(
         db_meta,
         shuffle=shuffles['meta'],
         batch_size=batch_sizes['meta'],
-        num_workers=num_workers)
+        num_workers=num_workers,
+        pin_memory=pin_memory)
 
     return train_loader, test_loader, meta_loader
 

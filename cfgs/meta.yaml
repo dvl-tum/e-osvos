@@ -15,6 +15,7 @@ change_frame_ids_per_seq_epoch:
 # increases seed random seed after each meta run. supposed to enrich the training and improve generalization.
 increase_seed_per_meta_run: False
 random_meta_frame_transform_per_task: False
+learn_model_init_only_from_multi_object_seqs: False
 # if null run meta model until meta_optim returns stop_train=True
 num_epochs: 5
 bptt_epochs: 10
@@ -156,6 +157,7 @@ data_cfg:
     multi_object: False
     random_train_transform: True
     num_workers: 0
+    pin_memory: True
     # integer or str for frame mode, e.g., 'random', 'middle'
     frame_ids:
         train: 0

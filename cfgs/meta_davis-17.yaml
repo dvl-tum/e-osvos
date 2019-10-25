@@ -1,9 +1,10 @@
+learn_model_init_only_from_multi_object_seqs: True
 data_cfg:
     root_dir: data/DAVIS-2017
     multi_object: single_id
-    crop_sizes:
-        train: [480, 854]
-        meta: [480, 854]
+    # crop_sizes:
+    #     train: [480, 854]
+    #     meta: [480, 854]
 parent_model:
     # base_path: models/FPN_ResNet34_lr_1e-5/DAVIS-2017
     # decoder_norm_layer: GroupNorm

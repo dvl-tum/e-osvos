@@ -272,6 +272,21 @@ def match_embed(model: torch.nn.Module, train_loader: DataLoader,
     #     hook.remove()
 
 
+def get_state_dict_from(seq_name, parent_states):
+    """
+    If multiple train splits return parent model state dictionary with seq_name
+    not in the training but validation split.
+    """
+    state_dict = None
+    for state, split in zip(parent_states['states'], parent_states['splits']):
+        if seq_name in split:
+            state_dict = state
+            break
+    assert state_dict is not None, \
+        f'No parent model with {seq_name} in corresponding val_split_file.'
+    return state_dict
+
+
 def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
              meta_optim_param_grad: dict, global_rng_state: torch.ByteTensor,
              _config: dict, dataset: str, return_dict: dict):
@@ -333,10 +348,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
         meta_optim_param_grad_seq = {name: torch.zeros_like(param)
                                     for name, param in meta_optim.named_parameters()}
 
-        for state, split in zip(parent_states['train']['states'], parent_states['train']['splits']):
-            if seq_name in split:
-                model.load_state_dict(state)
-                break
+        model.load_state_dict(get_state_dict_from(seq_name, parent_states['train']))
         meta_optim.load_state_dict(meta_optim_state_dict)
         meta_optim.reset()
 
@@ -347,30 +359,6 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
         # meta run sets its own random state for the first frame data augmentation
         # we use the global rng_state for global randomizations
         # torch.set_rng_state(global_rng_state)
-
-        # TODO: refactor
-        # if _config['change_frame_ids_per_seq_epoch']['train'] == 'random':
-        #     train_loader.dataset.set_random_frame_id()
-        # elif _config['change_frame_ids_per_seq_epoch']['train'] == 'next':
-        #     train_loader.dataset.set_next_frame_id()
-        #     if train_loader.dataset.frame_id + 1 == len(train_loader.dataset.imgs):
-        #         train_loader.dataset.frame_id = 0
-
-        # if _config['change_frame_ids_per_seq_epoch']['meta'] == 'random':
-        #     meta_loader.dataset.set_random_frame_id()
-        # elif _config['change_frame_ids_per_seq_epoch']['meta'] == 'next':
-        #     meta_loader.dataset.set_next_frame_id()
-        #     if meta_loader.dataset.frame_id + 1 == len(meta_loader.dataset.imgs):
-        #         meta_loader.dataset.frame_id = 0
-
-        # if _config['change_frame_ids_per_seq_epoch']['train'] == 'random' or _config['change_frame_ids_per_seq_epoch']['meta'] == 'random':
-        #     # ensure train and meta frame ids are not the same
-        #     if train_loader.dataset.frame_id == meta_loader.dataset.frame_id:
-        #         if train_loader.dataset.frame_id + 1 == len(train_loader.dataset.imgs):
-        #             meta_loader.dataset.frame_id -= 1
-        #         else:
-        #             meta_loader.dataset.frame_id += 1
-
         # global_rng_state = torch.get_rng_state()
 
         if _config['meta_optim_cfg']['matching_input']:
@@ -441,7 +429,12 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
                         if grad_clip is not None:
                             param.grad.clamp_(-1.0 * grad_clip, grad_clip)
 
-                        meta_optim_param_grad_seq[name] += param.grad.clone()
+                        if ('model_init' in name and 
+                            _config['learn_model_init_only_from_multi_object_seqs']):
+                            if train_loader.dataset.num_objects > 1:
+                                meta_optim_param_grad_seq[name] += param.grad.clone()
+                        else:        
+                            meta_optim_param_grad_seq[name] += param.grad.clone()
 
                     if _config['meta_optim_optim_cfg']['step_in_seq']:
                         meta_optim_optim.step()
@@ -476,7 +469,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
     #                 for metric_name, v in seqs_metrics.items()}
 
     return_dict['seqs_metrics'] = seqs_metrics
-    return_dict['vis_data_seqs'] = vis_data_seqs
+    return_dict['vis_data_seqs'] = {}#vis_data_seqs
     return_dict['global_rng_state'] = global_rng_state
 
 
@@ -538,10 +531,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
         # if multi object is treated as multiple single objects init J without
         # fine-tuning returns no reasonable results
         if not _config['data_cfg']['multi_object']:
-            for state, split in zip(parent_states[dataset_key]['states'], parent_states[dataset_key]['splits']):
-                if seq_name in split:
-                    model.load_state_dict(state)
-                    break
+            model.load_state_dict(get_state_dict_from(seq_name, parent_states[dataset_key]))
             meta_optim.reset()
             meta_optim.eval()
             _, _, J, _,  = eval_loader(model, test_loader, loss_func)
@@ -553,10 +543,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
             meta_loader.dataset.multi_object_id = obj_id
             test_loader.dataset.multi_object_id = obj_id
 
-            for state, split in zip(parent_states[dataset_key]['states'], parent_states[dataset_key]['splits']):
-                if seq_name in split:
-                    model.load_state_dict(state)
-                    break
+            model.load_state_dict(get_state_dict_from(seq_name, parent_states[dataset_key]))
 
             # evaluation with online adaptation
             if _config['eval_online_adapt_step'] is None:
@@ -597,10 +584,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
                 if eval_frame_range_max + (eval_online_adapt_step // 2 + 1) > len(test_loader.dataset):
                     eval_frame_range_max = len(test_loader.dataset)
 
-                for state, split in zip(parent_states[dataset_key]['states'], parent_states[dataset_key]['splits']):
-                    if seq_name in split:
-                        model.load_state_dict(state)
-                        break
+                model.load_state_dict(get_state_dict_from(seq_name, parent_states[dataset_key]))
 
                 meta_optim.reset()
                 meta_optim.eval()
@@ -701,38 +685,39 @@ def generate_meta_train_tasks(datasets: dict, num_frame_pairs_per_seq: int,
         meta_loader.dataset.set_seq(seq_name)
 
         for _ in range(num_frame_pairs_per_seq):
-            multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
-            train_loader.dataset.multi_object_id = multi_object_id
-            meta_loader.dataset.multi_object_id = multi_object_id
+            for obj_id in range(train_loader.dataset.num_objects):
+            # multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
+                train_loader.dataset.multi_object_id = obj_id
+                meta_loader.dataset.multi_object_id = obj_id
 
-            if change_frame_ids_per_seq_epoch['train'] == 'random':
-                train_loader.dataset.set_random_frame_id_with_label()
-            elif change_frame_ids_per_seq_epoch['train'] == 'next':
-                raise NotImplementedError
+                if change_frame_ids_per_seq_epoch['train'] == 'random':
+                    train_loader.dataset.set_random_frame_id_with_label()
+                elif change_frame_ids_per_seq_epoch['train'] == 'next':
+                    raise NotImplementedError
 
-            if change_frame_ids_per_seq_epoch['meta'] == 'random':
-                meta_loader.dataset.set_random_frame_id()
-            elif change_frame_ids_per_seq_epoch['meta'] == 'next':
-                raise NotImplementedError
+                if change_frame_ids_per_seq_epoch['meta'] == 'random':
+                    meta_loader.dataset.set_random_frame_id()
+                elif change_frame_ids_per_seq_epoch['meta'] == 'next':
+                    raise NotImplementedError
 
-            # # ensure train and meta frames are not the same
-            # if (_config['change_frame_ids_per_seq_epoch']['train'] or
-            #     _config['change_frame_ids_per_seq_epoch']['meta']):
-            #     if train_loader.dataset.frame_id == meta_loader.dataset.frame_id:
-            #         train_loader.dataset.set_next_frame_id()
-            meta_transform = meta_loader.dataset.transform
-            if random_meta_frame_transform_per_task:
-                meta_transform = transforms.Compose([custom_transforms.RandomHorizontalFlip(deterministic=True),
-                                                     custom_transforms.RandomScaleNRotate(rots=(-30, 30),
-                                                                                          scales=(.75, 1.25),
-                                                                                          deterministic=True),
-                                                     custom_transforms.ToTensor(),])
+                # # ensure train and meta frames are not the same
+                # if (_config['change_frame_ids_per_seq_epoch']['train'] or
+                #     _config['change_frame_ids_per_seq_epoch']['meta']):
+                #     if train_loader.dataset.frame_id == meta_loader.dataset.frame_id:
+                #         train_loader.dataset.set_next_frame_id()
+                meta_transform = meta_loader.dataset.transform
+                if random_meta_frame_transform_per_task:
+                    meta_transform = transforms.Compose([custom_transforms.RandomHorizontalFlip(deterministic=True),
+                                                        custom_transforms.RandomScaleNRotate(rots=(-30, 30),
+                                                                                            scales=(.75, 1.25),
+                                                                                            deterministic=True),
+                                                        custom_transforms.ToTensor(),])
 
-            meta_taks.append({'seq_name': seq_name,
-                                    'train_frame_id': train_loader.dataset.frame_id,
-                                    'meta_frame_id': meta_loader.dataset.frame_id,
-                                    'meta_transform': meta_transform,
-                                    'multi_object_id': multi_object_id})
+                meta_taks.append({'seq_name': seq_name,
+                                        'train_frame_id': train_loader.dataset.frame_id,
+                                        'meta_frame_id': meta_loader.dataset.frame_id,
+                                        'meta_transform': meta_transform,
+                                        'multi_object_id': obj_id})
     random_meta_task_idx = torch.randperm(len(meta_taks))
     return [meta_taks[i] for i in random_meta_task_idx]
 
