@@ -25,10 +25,10 @@ bptt_epochs: 10
 eval_online_adapt_step: null
 meta_optim_cfg:
     num_layers: 2
-    hidden_size: 256
+    tensor_rnn_hidden_size: 24
+    global_rnn: True
+    global_rnn_hidden_size: 24
     init_lr: 0.00001
-    init_lr_mom: 0.5
-    init_weight_decay: 0.0001
     # optimizer that computes paramter update step witout learning rate
     optim_func: Adam
     learn_model_init: False
@@ -41,6 +41,7 @@ meta_optim_optim_cfg:
     model_init_lr: 0.00001
     log_init_lr_lr: 0.01
     lr: 0.0001
+    param_group_lstm_init_lr: 0.001
     step_in_seq: False
     grad_clip: null
 loss_func: dice
@@ -52,6 +53,7 @@ datasets:
     val: val_seqs
     test: null
 parent_model:
+    architecture: FPN
     train_encoder: True
     batch_norm:
         accum_stats: False
@@ -97,18 +99,18 @@ parent_model:
     #     val_split_files:
     #         - data/DAVIS-2016/val_seqs.txt
 
-    decoder_norm_layer: GroupNorm
-    base_path: models/FPN_ResNet34/YouTube-VOS
-    train:
-        paths:
-            - train/FPN_ResNet34_epoch-55.pth
-        val_split_files:
-            - data/DAVIS-2016/train_seqs.txt
-    val:
-        paths:
-            - train/FPN_ResNet34_epoch-55.pth
-        val_split_files:
-            - data/DAVIS-2016/val_seqs.txt
+    # decoder_norm_layer: GroupNorm
+    # base_path: models/FPN_ResNet34/YouTube-VOS
+    # train:
+    #     paths:
+    #         - train/FPN_ResNet34_epoch-55.pth
+    #     val_split_files:
+    #         - data/DAVIS-2016/train_seqs.txt
+    # val:
+    #     paths:
+    #         - train/FPN_ResNet34_epoch-55.pth
+    #     val_split_files:
+    #         - data/DAVIS-2016/val_seqs.txt
 
     # decoder_norm_layer: GroupNorm
     # base_path: models/FPN_ResNet34/DAVIS-2016
@@ -116,12 +118,17 @@ parent_model:
     #     paths:
     #         - train_split_balanced_train/FPN_ResNet34_epoch-150.pth
     #     val_split_files:
-    #         - data/DAVIS-2016/train_split_balanced_val.txt
+    #         - data/DAVIS-2016/train_seqs.txt
     # val:
     #     paths:
     #         - train_split_balanced_train/FPN_ResNet34_epoch-150.pth
     #     val_split_files:
     #         - data/DAVIS-2016/val_seqs.txt
+    # train_balanced:
+    #     paths:
+    #         - train_split_balanced_train/FPN_ResNet34_epoch-150.pth
+    #     val_split_files:
+    #         - data/DAVIS-2016/train_split_balanced_train.txt
 
     # decoder_norm_layer: GroupNorm
     # base_path: models/FPN_ResNet34_davis-16_val/VOC2012
@@ -137,17 +144,52 @@ parent_model:
     #         - data/DAVIS-2016/val_seqs.txt
 
     # decoder_norm_layer: GroupNorm
-    # base_path: models/FPN_ResNet34/DAVIS-2016
+    # encoder: resnet34
     # train:
     #     paths:
-    #         - train_split_balanced_train/FPN_ResNet34_epoch-150.pth
+    #         - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/YouTube-VOS/train/FPN_ResNet34_epoch-55.pth
     #     val_split_files:
-    #         - data/DAVIS-2016/train_split_balanced_val.txt
+    #         - data/DAVIS-2016/train_seqs.txt
     # val:
     #     paths:
-    #         - train_split_balanced_train/FPN_ResNet34_epoch-150.pth
+    #         - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/YouTube-VOS/train/FPN_ResNet34_epoch-55.pth
     #     val_split_files:
     #         - data/DAVIS-2016/val_seqs.txt
+    # train_balanced:
+    #     paths: []
+    #     val_split_files:
+    #         - data/DAVIS-2016/train_split_balanced_train.txt
+
+    decoder_norm_layer: GroupNorm
+    # decoder_norm_layer: BatchNorm2d
+    encoder: resnet34-group-norm
+    # encoder: resnet101-group-norm
+    # encoder: resnet34
+    train:
+        # paths: []
+        paths:
+            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_epoch-325.pth
+            - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
+            # - models/FPN_ResNet101_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet101_group_norm_epoch-160.pth
+            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
+        val_split_files:
+            - data/DAVIS-2016/train_split_balanced_val.txt
+            # - data/DAVIS-2016/val_seqs.txt
+            # - data/DAVIS-2016/train_seqs.txt
+    val:
+        # paths: []
+        paths:
+            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_epoch-325.pth
+            - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
+            # - models/FPN_ResNet101_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet101_group_norm_epoch-160.pth
+            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
+        val_split_files:
+            - data/DAVIS-2016/val_seqs.txt
+    # train_balanced:
+    #     paths: []
+    #     val_split_files:
+    #         - data/DAVIS-2016/train_split_balanced_train.txt
+
 train_early_stopping_cfg:
     patience: null
     min_loss_improv: 0.001

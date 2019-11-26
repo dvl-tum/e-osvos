@@ -228,7 +228,7 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
     return train_loader, test_loader, meta_loader
 
 
-def init_parent_model(base_path, train_encoder, decoder_norm_layer, batch_norm, **datasets):
+def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer, batch_norm, **datasets):
     # if 'VGG' in base_path:
     #     model = OSVOSVgg(pretrained=0)
     # elif 'DRN_D_22' in base_path:
@@ -242,22 +242,17 @@ def init_parent_model(base_path, train_encoder, decoder_norm_layer, batch_norm, 
     # elif 'DeepLab_ResNet101' in parent_model_path:
     #     model = DeepLab(backbone='resnet', output_stride=16, num_classes=1, freeze_bn=True)
 
-    if 'FPN_ResNet34' in base_path:
-        model = FPN('resnet34', classes=1, activation='softmax',
+    if architecture == 'FPN':
+        model = FPN(encoder, classes=1, activation='softmax',
                     dropout=0.0, batch_norm=batch_norm,
                     train_encoder=train_encoder, decoder_norm_layer=decoder_norm_layer)
-    elif 'FPN_ResNet101' in base_path:
-        model = FPN('resnet101', classes=1, activation='softmax',
-                    dropout=0.0, batch_norm=batch_norm,
-                    train_encoder=train_encoder, decoder_norm_layer=decoder_norm_layer)
-    
     else:
         raise NotImplementedError
 
     parent_states = {}
     for k, v in datasets.items():
         parent_states[k] = {}
-        states = [torch.load(os.path.join(base_path, p), map_location=lambda storage, loc: storage)
+        states = [torch.load(p, map_location=lambda storage, loc: storage)
                              for p in v['paths']]
 
         # states = [{k: state[k] if k in state else v

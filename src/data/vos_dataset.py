@@ -63,11 +63,15 @@ class VOSDataset(Dataset):
         self.frame_id = torch.randint(len(self.imgs), (1,)).item()
         return self.frame_id
 
+    def has_frame_object(self):
+        assert self.frame_id is not None
+        _, label = self.make_img_label_pair(self.frame_id)
+        return len(np.unique(label)) > 1
+
     def set_random_frame_id_with_label(self):
         def _set_random_frame_id_with_label():
-            frame_id = self.set_random_frame_id()
-            _, label = self.make_img_label_pair(frame_id)
-            if len(np.unique(label)) > 1:
+            self.set_random_frame_id()
+            if self.has_frame_object():
                 return
             else:
                 _set_random_frame_id_with_label()

@@ -75,7 +75,7 @@ parent_model:
         paths:
             - train/FPN_ResNet34_epoch-55.pth
         val_split_files:
-            - data/DAVIS-2017/train_seqs.txt
+            - data/DAVIS-2017/val_seqs.txt
     val:
         paths:
             - train/FPN_ResNet34_epoch-55.pth
