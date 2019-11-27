@@ -71,7 +71,7 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
             metrics['acc_batches'].append(preds.bool().eq(gts.bool()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()))
 
             if img_save_dir is not None:
-                preds = 255 * preds
+                # preds = 1 * preds
                 preds = np.transpose(preds.cpu().numpy(), (0, 2, 3, 1)).astype(np.uint8)
 
                 for file_name, pred in zip(file_names, preds):
@@ -98,8 +98,8 @@ def eval_loader(model, loader, loss_func, img_save_dir=None, return_preds=False)
     if '/tmp/' in img_save_dir:
         shutil.rmtree(img_save_dir)
     if return_preds:
-        return loss_batches, acc_batches, evaluation['J']['mean'][0], evaluation['F']['mean'][0], preds
-    return loss_batches, acc_batches, evaluation['J']['mean'][0], evaluation['F']['mean'][0]
+        return loss_batches, acc_batches, evaluation['J']['mean'], evaluation['F']['mean'], preds
+    return loss_batches, acc_batches, evaluation['J']['mean'], evaluation['F']['mean']
 
 
 def train_val(model, train_loader, val_loader, optim, num_epochs,

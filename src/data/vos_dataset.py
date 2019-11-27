@@ -3,6 +3,7 @@ import random
 import numpy as np
 import cv2
 import torch
+from PIL import Image
 
 from .helpers import *
 from torch.utils.data import Dataset
@@ -40,12 +41,15 @@ class VOSDataset(Dataset):
             raise NotImplementedError
         if not self.multi_object:
             return 1
-        label = cv2.imread(os.path.join(self.root_dir, self.labels[0]), cv2.IMREAD_GRAYSCALE)
-        label = np.array(label, dtype=np.float32)
-        label = label / 255.0
+        im = Image.open(os.path.join(self.root_dir, self.labels[0]))
+        label = np.atleast_3d(im)[...,0]
+        # label = cv2.imread(os.path.join(self.root_dir, self.labels[0]), cv2.IMREAD_GRAYSCALE)
+        # label = np.array(label, dtype=np.float32)
+        # label = label / 255.0
 
         unique_labels = [l for l in np.unique(label)
-                         if l != 0.0 and l != 1.0]
+                        #  if l != 0.0 and l != 1.0]
+                         if l != 0.0]
         return len(unique_labels)
 
     @property
@@ -62,6 +66,11 @@ class VOSDataset(Dataset):
     def set_random_frame_id(self):
         self.frame_id = torch.randint(len(self.imgs), (1,)).item()
         return self.frame_id
+    
+    def set_frame_id_with_biggest_label(self):
+        num_labels = [np.count_nonzero(self.make_img_label_pair(idx)[1])
+                      for idx in range(len(self.imgs))]
+        self.frame_id = np.argmax(np.array(num_labels))
 
     def has_frame_object(self):
         assert self.frame_id is not None
@@ -146,8 +155,12 @@ class VOSDataset(Dataset):
         """
         img = cv2.imread(os.path.join(
             self.root_dir, self.imgs[idx]), cv2.IMREAD_COLOR)
-        label = cv2.imread(os.path.join(
-            self.root_dir, self.labels[idx]), cv2.IMREAD_GRAYSCALE)
+        
+        im = Image.open(os.path.join(self.root_dir, self.labels[idx]))
+        label = np.atleast_3d(im)[...,0]
+
+        # label = cv2.imread(os.path.join(
+        #     self.root_dir, self.labels[idx]), cv2.IMREAD_GRAYSCALE)
 
         if self.crop_size is not None:
             crop_h, crop_w = self.crop_size
@@ -178,8 +191,9 @@ class VOSDataset(Dataset):
         # img = img / 255.0
 
         label = np.array(label, dtype=np.float32)
-        label = label / 255.0
-
+        # print(self.labels[idx], np.unique(label, return_counts=True))
+        label = label
+        
         assert len(
             img.shape) == 3, f"Image broken ({img.shape}): {self.root_dir, self.imgs[idx]}"
         assert len(
@@ -189,10 +203,11 @@ class VOSDataset(Dataset):
         if self.multi_object:
             if self.multi_object not in ['all', 'single_id']:
                 raise NotImplementedError
- 
-            unique_labels = [l for l in np.unique(label)
-                             if l != 0.0 and l != 1.0]
 
+            unique_labels = [l for l in np.unique(label)
+                            #  if l != 0.0 and l != 1.0]
+                             if l != 0.0]
+            
             if unique_labels:
                 # all objects stacked in third axis
                 label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)

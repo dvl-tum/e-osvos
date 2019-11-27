@@ -6,16 +6,20 @@ data_cfg:
     #     train: [480, 854]
     #     meta: [480, 854]
 parent_model:
-    # base_path: models/FPN_ResNet34_lr_1e-5/DAVIS-2017
+    # base_path: /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/DAVIS-2017
     # decoder_norm_layer: GroupNorm
     # train:
     #     paths:
-    #         - train_seqs/FPN_ResNet34_lr_1e-5_epoch-100.pth
+    #         - train_split_1_train/FPN_ResNet34_epoch-120.pth
+    #         - train_split_2_train/FPN_ResNet34_epoch-460.pth
+    #         - train_split_3_train/FPN_ResNet34_epoch-140.pth
     #     val_split_files:
-    #         - data/DAVIS-2017/val_seqs.txt
+    #         - data/DAVIS-2017/train_split_1_val.txt
+    #         - data/DAVIS-2017/train_split_2_val.txt
+    #         - data/DAVIS-2017/train_split_3_val.txt
     # val:
     #     paths:
-    #         - train_seqs/FPN_ResNet34_lr_1e-5_epoch-100.pth
+    #         - train_seqs/FPN_ResNet34_epoch-295.pth
     #     val_split_files:
     #         - data/DAVIS-2017/val_seqs.txt
 
@@ -48,13 +52,18 @@ parent_model:
     #     val_split_files:
     #         - data/DAVIS-2017/val_seqs.txt
 
-#     # base_path: models/FPN_ResNet34_single_random/DAVIS-2017
-#     # decoder_norm_layer: GroupNorm
-#     # train:
-#     #     paths:
-#     #         - train_seqs/FPN_ResNet34_single_random_epoch-215.pth
-#     #     val_split_files:
-#     #         - data/DAVIS-2017/val_seqs.txt
+    # base_path: models/FPN_ResNet34_single_random/DAVIS-2017
+    # decoder_norm_layer: GroupNorm
+    # train:
+    #     paths:
+    #         - train_seqs/FPN_ResNet34_single_random_epoch-215.pth
+    #     val_split_files:
+    #         - data/DAVIS-2017/train_seqs.txt
+    # val:
+    #     paths:
+    #         - train_seqs/FPN_ResNet34_single_random_epoch-215.pth
+    #     val_split_files:
+    #         - data/DAVIS-2017/val_seqs.txt
 
     # base_path: models/FPN_ResNet34_batch_norm_fix
     # decoder_norm_layer: GroupNorm
@@ -70,14 +79,14 @@ parent_model:
     #         - data/DAVIS-2016/val_seqs.txt
 
     decoder_norm_layer: GroupNorm
-    base_path: models/FPN_ResNet34/YouTube-VOS
+    encoder: resnet34-group-norm
     train:
         paths:
-            - train/FPN_ResNet34_epoch-55.pth
+            - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/YouTube-VOS/train/FPN_ResNet34_epoch-55.pth
         val_split_files:
             - data/DAVIS-2017/val_seqs.txt
     val:
         paths:
-            - train/FPN_ResNet34_epoch-55.pth
+            - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/YouTube-VOS/train/FPN_ResNet34_epoch-55.pth
         val_split_files:
             - data/DAVIS-2017/val_seqs.txt

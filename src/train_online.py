@@ -138,8 +138,8 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
         with torch.no_grad():
             test_loss_batches, test_acc_batches, test_J, test_F = eval_loader(model, test_loader, loss_func=loss_func)
         metrics['init_test_loss'].append(test_loss_batches.mean())
-        metrics['init_test_J'].append(test_J)
-        metrics['init_test_F'].append(test_F)
+        metrics['init_test_J'].extend(test_J)
+        metrics['init_test_F'].extend(test_F)
         metrics['init_test_acc'].append(test_acc_batches.mean())
 
         train_loss, val_loss, val_acc, val_J, val_F = train_val(  # pylint: disable=E1120
@@ -151,14 +151,14 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
         metrics['train_loss_hist'].append(train_loss)
         metrics['val_loss_hist'].append(val_loss)
         metrics['val_acc_hist'].append(val_acc)
-        metrics['val_J_hist'].append(val_J)
-        metrics['val_F_hist'].append(val_F)
+        metrics['val_J_hist'].extend(val_J)
+        metrics['val_F_hist'].extend(val_F)
 
         with torch.no_grad():
             test_loss_batches, test_acc_batches, test_J, test_F = eval_loader(model, test_loader, loss_func=loss_func)
         metrics['test_loss'].append(test_loss_batches.mean())
-        metrics['test_J'].append(test_J)
-        metrics['test_F'].append(test_F)
+        metrics['test_J'].extend(test_J)
+        metrics['test_F'].extend(test_F)
         metrics['test_acc'].append(test_acc_batches.mean())
 
     metrics = {n: m if 'hist' in n else torch.tensor(m)
@@ -190,35 +190,35 @@ def main(seed: int, validate_inter: int, vis_interval: int, _log, _config: dict,
         for i, (loss, J) in enumerate(zip(torch.stack(metrics['val_loss_hist']).mean(dim=0), torch.stack(metrics['val_J_hist']).mean(dim=0))):
             vis_dict['val_metrics'].plot([loss, J], i + 1)
 
-        patience_metrics = {n: [] for n in ['loss', 'acc', 'J', 'F']}
-        for patience in range(1, num_epochs // validate_inter):
-            stopped_metrics = {n: [] for n in ['loss', 'acc', 'J', 'F']}
+        # patience_metrics = {n: [] for n in ['loss', 'acc', 'J', 'F']}
+        # for patience in range(1, num_epochs // validate_inter):
+        #     stopped_metrics = {n: [] for n in ['loss', 'acc', 'J', 'F']}
 
-            for t_l_h, v_l_h, v_a_h, v_J_h, v_F_h in zip(metrics['train_loss_hist'], metrics['val_loss_hist'], metrics['val_acc_hist'], metrics['val_J_hist'], metrics['val_F_hist']):
-                for epoch in range(patience, num_epochs // validate_inter):
-                    current_t_l_h = t_l_h[:epoch + 1]
-                    best_loss = current_t_l_h.min()
-                    prev_best_loss = current_t_l_h[:-patience].min()
-                    if not torch.gt(best_loss.sub(prev_best_loss).abs(), 0.0):
-                        break
+        #     for t_l_h, v_l_h, v_a_h, v_J_h, v_F_h in zip(metrics['train_loss_hist'], metrics['val_loss_hist'], metrics['val_acc_hist'], metrics['val_J_hist'], metrics['val_F_hist']):
+        #         for epoch in range(patience, num_epochs // validate_inter):
+        #             current_t_l_h = t_l_h[:epoch + 1]
+        #             best_loss = current_t_l_h.min()
+        #             prev_best_loss = current_t_l_h[:-patience].min()
+        #             if not torch.gt(best_loss.sub(prev_best_loss).abs(), 0.0):
+        #                 break
 
-                stopped_metrics['loss'].append(v_l_h[epoch])
-                stopped_metrics['acc'].append(v_a_h[epoch])
-                stopped_metrics['J'].append(v_J_h[epoch])
-                stopped_metrics['F'].append(v_F_h[epoch])
+        #         stopped_metrics['loss'].append(v_l_h[epoch])
+        #         stopped_metrics['acc'].append(v_a_h[epoch])
+        #         stopped_metrics['J'].append(v_J_h[epoch])
+        #         stopped_metrics['F'].append(v_F_h[epoch])
 
-            for n, m in stopped_metrics.items():
-                patience_metrics[n].append(torch.tensor(m).mean())
+        #     for n, m in stopped_metrics.items():
+        #         patience_metrics[n].append(torch.tensor(m).mean())
 
-        patience_metrics = {n: torch.tensor(m)
-                            for n, m in patience_metrics.items()}
+        # patience_metrics = {n: torch.tensor(m)
+        #                     for n, m in patience_metrics.items()}
 
-        results_str += (
-            f"<p>BEST VAL PATIENCE:<br>\n"
-            f"&nbsp;&nbsp;LOSS: {(patience_metrics['loss'].argmin() + 1) * validate_inter} ({patience_metrics['loss'].min():.2f})<br>\n"
-            f"&nbsp;&nbsp;ACC: {(patience_metrics['acc'].argmax() + 1) * validate_inter} ({patience_metrics['acc'].max():.2f})<br>\n"
-            f"&nbsp;&nbsp;J: {(patience_metrics['J'].argmax() + 1) * validate_inter} ({patience_metrics['J'].max():.2f})<br>\n"
-            f"&nbsp;&nbsp;F: {(patience_metrics['F'].argmax() + 1) * validate_inter} ({patience_metrics['F'].max():.2f})</p>\n")
+        # results_str += (
+        #     f"<p>BEST VAL PATIENCE:<br>\n"
+        #     f"&nbsp;&nbsp;LOSS: {(patience_metrics['loss'].argmin() + 1) * validate_inter} ({patience_metrics['loss'].min():.2f})<br>\n"
+        #     f"&nbsp;&nbsp;ACC: {(patience_metrics['acc'].argmax() + 1) * validate_inter} ({patience_metrics['acc'].max():.2f})<br>\n"
+        #     f"&nbsp;&nbsp;J: {(patience_metrics['J'].argmax() + 1) * validate_inter} ({patience_metrics['J'].max():.2f})<br>\n"
+        #     f"&nbsp;&nbsp;F: {(patience_metrics['F'].argmax() + 1) * validate_inter} ({patience_metrics['F'].max():.2f})</p>\n")
 
         val_metrics = {n: m for n, m in metrics.items() if 'val' in n}
         for n, m in val_metrics.items():

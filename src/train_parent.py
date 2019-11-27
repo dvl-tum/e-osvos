@@ -54,7 +54,7 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 # DAVIS
-db_root_dir = 'data/DAVIS-2016'
+# db_root_dir = 'data/DAVIS-2016'
 # db_root_dir = 'data/DAVIS-2017'
 
 # train_dataset = 'train_seqs'
@@ -63,24 +63,24 @@ db_root_dir = 'data/DAVIS-2016'
 # train_dataset = 'train_split_3_train'
 # test_dataset = 'train_split_3_val'
 
-train_dataset = 'train_split_balanced_train'
-test_dataset = 'train_split_balanced_val'
+# train_dataset = 'train_split_balanced_train'
+# test_dataset = 'train_split_balanced_val'
 
 # PASCAL VOC
-# db_root_dir = 'data/VOC2012'
-# train_dataset = 'pascal_voc'
-
+db_root_dir = 'data/VOC2012'
+train_dataset = 'pascal_voc'
 
 # YoutTube VOS
 # db_root_dir = 'data/YouTube-VOS'
 # train_dataset = 'train'
+
 
 # Network definition
 # model_name = 'VGG'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34'
+model_name = 'FPN_ResNet34_group_norm'
 # loss_func = 'cross_entropy'
 loss_func = 'dice'
 
@@ -119,12 +119,12 @@ elif 'FPN_ResNet34' in model_name:
     num_losses = 1
     lr = 1e-5
 
-    net = FPN('resnet34', classes=1, activation='softmax')
+    net = FPN('resnet34-group-norm', classes=1, activation='softmax')
 elif 'FPN_ResNet101' in model_name:
     num_losses = 1
     lr = 1e-5
 
-    net = FPN('resnet101', classes=1, activation='softmax')
+    net = FPN('resnet101-group-norm', classes=1, activation='softmax')
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 

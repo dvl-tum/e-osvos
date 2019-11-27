@@ -2,10 +2,12 @@ seed: 1
 env_suffix: null
 vis_interval: 1
 parent_model:
+    train_encoder: True
     batch_norm:
         accum_stats: True
         learn_weight: True
         learn_bias: True
+    decoder_norm_layer: GroupNorm
     # base_path: models/FPN_ResNet34_group_norm
     base_path: models/FPN_ResNet34_batch_norm_fix
     val:
@@ -13,7 +15,7 @@ parent_model:
         #    - train_seqs/FPN_ResNet34_group_norm_epoch-455.pth
            - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
         val_split_files:
-            - data/DAVIS-2016/test_seqs.txt
+            - data/DAVIS-2016/val_seqs.txt
 optim_cfg:
     file_dir: models/meta/meta_run_78.model
     lr: 0.00001                                             # 1e-5
@@ -28,6 +30,9 @@ dataset: train_seqs                                         # [train_seqs, test_
 data_cfg:
     root_dir: data/DAVIS-2016
     random_train_transform: True
+    multi_object: False
+    num_workers: 0
+    pin_memory: True
     frame_ids:
         train: 0
         test: null
@@ -37,3 +42,7 @@ data_cfg:
     shuffles:
         train: True
         test: False
+    crop_sizes:
+        train: null
+        test: null
+        meta: null
