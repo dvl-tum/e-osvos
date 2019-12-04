@@ -467,12 +467,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
 
         # normalize over epochs
         for name, grad in meta_optim_param_grad_seq.items():
-            meta_optim_param_grad[name] += grad.cpu()# / _config['num_frame_pairs_per_seq']
-
-    # # compute mean over num_frame_pairs_per_seq
-    # seqs_metrics = {metric_name: {seq_name: torch.tensor(vv).mean()
-    #                               for seq_name, vv in v.items()}
-    #                 for metric_name, v in seqs_metrics.items()}
+            meta_optim_param_grad[name] += grad.cpu()
 
     return_dict['seqs_metrics'] = seqs_metrics
     return_dict['vis_data_seqs'] = {} # vis_data_seqs
@@ -690,8 +685,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
 
 
 @ex.capture
-def generate_meta_train_tasks(datasets: dict, num_frame_pairs_per_seq: int,
-                              random_meta_frame_transform_per_task: bool,
+def generate_meta_train_tasks(datasets: dict, random_meta_frame_transform_per_task: bool,
                               change_frame_ids_per_seq_epoch: dict):
     train_loader, test_loader, meta_loader = data_loaders(datasets['train'])  # pylint: disable=E1120
 
@@ -702,7 +696,6 @@ def generate_meta_train_tasks(datasets: dict, num_frame_pairs_per_seq: int,
         meta_loader.dataset.set_seq(seq_name)
         test_loader.dataset.set_seq(seq_name)
 
-        # for _ in range(num_frame_pairs_per_seq):
         for idx in range(len(test_loader.dataset)):
             for obj_id in range(train_loader.dataset.num_objects):
             # multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
@@ -799,7 +792,6 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
         _log.info(f"Meta batch size is full batch: meta_batch_size={meta_batch_size}.")
 
     assert meta_batch_size >= num_meta_processes, ('Increase meta_batch_size to be larger than available GPUs.')
-    # assert (train_loader.dataset.num_seqs * _config['num_frame_pairs_per_seq'] / meta_batch_size).is_integer()
 
     num_tasks_per_process = math.ceil(meta_batch_size / num_meta_processes)
     process_manager = mp.Manager()

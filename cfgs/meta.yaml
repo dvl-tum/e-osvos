@@ -6,8 +6,6 @@ env_suffix: null
 # saves training in '{save_dir}/{env_suffix}'
 save_dir: null
 resume_meta_run_epoch: null
-# num of train meta frame pairs per seq per meta batch
-num_frame_pairs_per_seq: 1
 # [False, 'random', 'next']
 change_frame_ids_per_seq_epoch:
     train: False
