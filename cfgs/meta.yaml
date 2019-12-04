@@ -167,10 +167,12 @@ parent_model:
     # encoder: resnet34
     train:
         # paths: []
+
         paths:
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_epoch-325.pth
             - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
             # - models/FPN_ResNet101_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet101_group_norm_epoch-160.pth
+            # - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
         val_split_files:
             - data/DAVIS-2016/train_split_balanced_val.txt
@@ -182,6 +184,7 @@ parent_model:
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_epoch-325.pth
             - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
             # - models/FPN_ResNet101_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet101_group_norm_epoch-160.pth
+            # - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
         val_split_files:
             - data/DAVIS-2016/val_seqs.txt
