@@ -127,6 +127,7 @@ class Normalize(object):
         mask = np.array(mask).astype(np.float32)
         
         img /= 255.0
+        # img -= 255 * np.array(self.mean)
         img -= self.mean
         # img /= self.std
         mask /= 255.0

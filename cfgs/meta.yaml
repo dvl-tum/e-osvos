@@ -111,31 +111,35 @@ parent_model:
     #     val_split_files:
     #         - data/DAVIS-2016/val_seqs.txt
 
-    decoder_norm_layer: GroupNorm
-    # decoder_norm_layer: BatchNorm2d
-    encoder: resnet34-group-norm
+    # decoder_norm_layer: GroupNorm
+    decoder_norm_layer: BatchNorm2d
+    encoder: resnet34
+    # encoder: resnet34-group-norm
     # encoder: resnet101-group-norm
-    # encoder: resnet34
     train:
         # paths: []
 
         paths:
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_epoch-325.pth
-            - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
+            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
+            # - models/FPN_ResNet34_decoder_norm_layer=BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_norm_layer=BatchNorm2d_epoch-215.pth
             # - models/FPN_ResNet101_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet101_group_norm_epoch-160.pth
             # - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
+            - models/FPN_ResNet34_normalize_input/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_epoch-205.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
         val_split_files:
-            - data/DAVIS-2016/train_split_balanced_val.txt
+            # - data/DAVIS-2016/train_split_balanced_val.txt
             # - data/DAVIS-2016/val_seqs.txt
-            # - data/DAVIS-2016/train_seqs.txt
+            - data/DAVIS-2016/train_seqs.txt
     val:
         # paths: []
         paths:
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_epoch-325.pth
-            - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
+            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
+            # - models/FPN_ResNet34_decoder_norm_layer=BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_norm_layer=BatchNorm2d_epoch-215.pth
             # - models/FPN_ResNet101_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet101_group_norm_epoch-160.pth
             # - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
+            - models/FPN_ResNet34_normalize_input/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_epoch-205.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
         val_split_files:
             - data/DAVIS-2016/val_seqs.txt
@@ -143,6 +147,7 @@ parent_model:
 train_early_stopping_cfg:
     patience: null
     min_loss_improv: 0.001
+random_flip_label: False
 # [train_seqs, test_seqs, blackswan, ...]
 data_cfg:
     root_dir: data/DAVIS-2016
@@ -169,4 +174,3 @@ data_cfg:
         train: null
         test: null
         meta: null
-

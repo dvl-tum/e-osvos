@@ -338,14 +338,17 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
 
     for sample in samples:
         seq_name = sample['seq_name']
+        
         train_loader.dataset.set_seq(seq_name)
         train_loader.dataset.frame_id = sample['train_frame_id']
         train_loader.dataset.multi_object_id = sample['multi_object_id']
+        train_loader.dataset.flip_label = sample['flip_label']
 
         meta_loader.dataset.set_seq(seq_name)
         meta_loader.dataset.frame_id = sample['meta_frame_id']
         meta_loader.dataset.multi_object_id = sample['multi_object_id']
         meta_loader.dataset.transform = sample['meta_transform']
+        meta_loader.dataset.flip_label = sample['flip_label']
 
         vis_data_seqs[seq_name] = []
 
@@ -470,7 +473,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
             meta_optim_param_grad[name] += grad.cpu()
 
     return_dict['seqs_metrics'] = seqs_metrics
-    return_dict['vis_data_seqs'] = {} # vis_data_seqs
+    return_dict['vis_data_seqs'] = {}  # vis_data_seqs
     return_dict['global_rng_state'] = global_rng_state
 
 
@@ -494,7 +497,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
 
     model.to(device)
     meta_optim.to(device)
-
+    
     meta_model.to('cpu')
 
     train_loader, test_loader, meta_loader = data_loaders(  # pylint: disable=E1120
@@ -686,7 +689,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
 
 @ex.capture
 def generate_meta_train_tasks(datasets: dict, random_meta_frame_transform_per_task: bool,
-                              change_frame_ids_per_seq_epoch: dict):
+                              change_frame_ids_per_seq_epoch: dict, random_flip_label: bool):
     train_loader, test_loader, meta_loader = data_loaders(datasets['train'])  # pylint: disable=E1120
 
     # prepare mini batches for epoch. sequences and random frames.
@@ -730,12 +733,17 @@ def generate_meta_train_tasks(datasets: dict, random_meta_frame_transform_per_ta
                                                                                              deterministic=True),
                                                         custom_transforms.ToTensor(),])
 
+                flip_label = False
+                if random_flip_label:
+                    flip_label = bool(random.getrandbits(1))
+
                 if meta_loader.dataset.has_frame_object():
                     meta_taks.append({'seq_name': seq_name,
                                       'train_frame_id': train_loader.dataset.frame_id,
                                       'meta_frame_id': meta_loader.dataset.frame_id,
                                       'meta_transform': meta_transform,
-                                      'multi_object_id': obj_id})
+                                      'multi_object_id': obj_id,
+                                      'flip_label': flip_label})
 
     random_meta_task_idx = torch.randperm(len(meta_taks))
     return [meta_taks[i] for i in random_meta_task_idx]
@@ -842,8 +850,8 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
     # meta_optim_optim = RAdam(meta_optim_params, lr=meta_optim_optim_cfg['lr'])
     meta_optim_optim = torch.optim.Adam(meta_optim_params,
                                         lr=meta_optim_optim_cfg['lr'])
-    if resume_meta_run_epoch is not None:
-        meta_optim_optim.load_state_dict(saved_meta_run['meta_optim_optim_state_dict'])
+    # if resume_meta_run_epoch is not None:
+    #     meta_optim_optim.load_state_dict(saved_meta_run['meta_optim_optim_state_dict'])
 
     meta_optim_param_grad = process_manager.dict({name: torch.zeros_like(param).cpu()
                                                   for name, param in meta_optim.named_parameters()})
@@ -892,7 +900,6 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
                 tasks_for_process = [n for n in tasks_for_process if n is not None]
 
                 p['return_dict'] = process_manager.dict()
-
                 process_args = [i, rank, tasks_for_process, meta_optim.state_dict(),
                                 meta_optim_param_grad, global_rng_state,
                                 _config, datasets['train'], p['return_dict']]
@@ -940,8 +947,8 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             meta_init_lr = [meta_optim.log_init_lr.exp().mean(),
                             meta_optim.log_init_lr.exp().std()]
             meta_init_lr += meta_optim.log_init_lr.exp().detach().numpy().tolist()
-            vis_dict['init_lr_vis'].plot(
-                meta_init_lr, (i - 1) * meta_iters_per_epoch + meta_iter + 1)
+            # vis_dict['init_lr_vis'].plot(
+            #     meta_init_lr, (i - 1) * meta_iters_per_epoch + meta_iter + 1)
 
             for p in meta_processes:
                 for seq_name, vis_data in p['return_dict']['vis_data_seqs'].items():

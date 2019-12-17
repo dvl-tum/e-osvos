@@ -15,7 +15,7 @@ class VOSDataset(Dataset):
     meanval = None
 
     def __init__(self, seqs_key, root_dir, frame_id=None,
-                 crop_size=None, transform=None, multi_object=False):
+                 crop_size=None, transform=None, multi_object=False, flip_label=False):
         """Loads image to label pairs.
         root_dir: dataset directory with subfolders "JPEGImages" and "Annotations"
         """
@@ -26,6 +26,7 @@ class VOSDataset(Dataset):
         self.transform = transform
         self.multi_object = multi_object
         self.multi_object_id = None
+        self.flip_label = flip_label
 
     @property
     def num_seqs(self):
@@ -188,7 +189,7 @@ class VOSDataset(Dataset):
 
         img = np.array(img, dtype=np.float32)
         img = np.subtract(img, np.array(self.meanval, dtype=np.float32))
-        # img = img / 255.0
+        img = img / 255.0
 
         label = np.array(label, dtype=np.float32)
         # print(self.labels[idx], np.unique(label, return_counts=True))
@@ -225,5 +226,8 @@ class VOSDataset(Dataset):
         else:
             label = np.where(label != 0.0, 1.0, 0.0).astype(np.float32)
         # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)
+        
+        if self.flip_label:
+            label = np.logical_not(label).astype(np.float32)
 
         return img, label

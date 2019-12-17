@@ -21,6 +21,7 @@ class FPN(smp.FPN):
             self.encoder.requires_grad_(False)
 
     def forward(self, inputs):
+
         # TODO: solve not here.
         _, _, h, w = inputs.shape
         pad = [0, 0, 0, 0]
