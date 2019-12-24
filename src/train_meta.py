@@ -444,6 +444,13 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
                         _config['learn_model_init_only_from_multi_object_seqs']):
                         if train_loader.dataset.num_objects > 1:
                             meta_optim_param_grad_seq[name] += param.grad.clone()
+                    elif 'model_init_meta_optim_split' in parent_states:
+                        if seq_name in parent_states['model_init_meta_optim_split']['splits'][0]:
+                            if 'model_init' in name:
+                                meta_optim_param_grad_seq[name] += param.grad.clone()        
+                        else:
+                            if 'model_init' not in name:
+                                meta_optim_param_grad_seq[name] += param.grad.clone()
                     else:
                         meta_optim_param_grad_seq[name] += param.grad.clone()
 
@@ -947,8 +954,8 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             meta_init_lr = [meta_optim.log_init_lr.exp().mean(),
                             meta_optim.log_init_lr.exp().std()]
             meta_init_lr += meta_optim.log_init_lr.exp().detach().numpy().tolist()
-            # vis_dict['init_lr_vis'].plot(
-            #     meta_init_lr, (i - 1) * meta_iters_per_epoch + meta_iter + 1)
+            vis_dict['init_lr_vis'].plot(
+                meta_init_lr, (i - 1) * meta_iters_per_epoch + meta_iter + 1)
 
             for p in meta_processes:
                 for seq_name, vis_data in p['return_dict']['vis_data_seqs'].items():
