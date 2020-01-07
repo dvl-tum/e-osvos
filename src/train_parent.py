@@ -19,6 +19,7 @@ from networks.drn_seg import DRNSeg
 from networks.fpn import FPN
 from networks.unet import Unet
 from networks.vgg_osvos import OSVOSVgg
+from networks.deeplabv3 import DeepLabV3
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -54,7 +55,7 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 # DAVIS
-# db_root_dir = 'data/DAVIS-2016'
+db_root_dir = 'data/DAVIS-2016'
 # db_root_dir = 'data/DAVIS-2017'
 
 # train_dataset = 'train_seqs'
@@ -80,7 +81,9 @@ train_dataset = 'pascal_voc'
 # model_name = 'DRN_D_22'
 # model_name = 'UNET_ResNet18_dice_loss'
 # model_name = 'UNET_ResNet34'
-model_name = 'FPN_ResNet34_group_norm'
+# model_name = 'FPN_ResNet101'
+# model_name = 'FPN_efficientnet-b3'
+model_name = 'DeepLabV3_ResNet50'
 # loss_func = 'cross_entropy'
 loss_func = 'dice'
 
@@ -109,22 +112,39 @@ elif 'UNET_ResNet18' in model_name:
     num_losses = 1
     lr = 1e-3
 
-    net = Unet('resnet18', classes=1, activation='softmax')
+    net = Unet('resnet18', classes=1, activation=None)
 elif 'UNET_ResNet34' in model_name:
     num_losses = 1
     lr = 1e-7
 
-    net = Unet('resnet34', classes=1, activation='softmax')
+    net = Unet('resnet34', classes=1, activation=None)
+elif 'FPN_efficientnet-b3' in model_name:
+    num_losses = 1
+    lr = 1e-5
+
+    net = FPN('efficientnet-b3', classes=1, activation=None)
 elif 'FPN_ResNet34' in model_name:
     num_losses = 1
     lr = 1e-5
 
-    net = FPN('resnet34-group-norm', classes=1, activation='softmax')
+    net = FPN('resnet34', classes=1, activation=None, decoder_norm_layer='BatchNorm2d')
+    # net = FPN('resnet34-group-norm', classes=1, activation='softmax')
+    # net = FPN('resnet34', classes=1, activation=None)
 elif 'FPN_ResNet101' in model_name:
     num_losses = 1
     lr = 1e-5
 
-    net = FPN('resnet101-group-norm', classes=1, activation='softmax')
+    net = FPN('resnet101', classes=1, activation=None)
+elif 'DeepLabV3_ResNet50' in model_name:
+    num_losses = 1
+    lr = 1e-5
+
+    net = DeepLabV3('resnet50', num_classes=1)
+elif 'DeepLabV3_ResNet101' in model_name:
+    num_losses = 1
+    lr = 1e-5
+
+    net = DeepLabV3('resnet101', num_classes=1)
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 
@@ -348,6 +368,8 @@ for epoch in range(resume_epoch, nEpochs):
                     metrics['test_F'].append(test_F)
 
             metrics = {n: torch.tensor(m).mean() for n, m in metrics.items()}
+
+            print(metrics)
 
             if log_to_tb:
                 writer.add_scalar('test_metrics/loss', metrics['test_loss'], epoch)

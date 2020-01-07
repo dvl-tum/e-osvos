@@ -33,7 +33,6 @@ class YouTube(VOSDataset):
         seq_names = listdir_nohidden(os.path.join(seqs_dir, 'JPEGImages'))
         for seq_name in seq_names:
 
-
             img_names = np.sort(listdir_nohidden(
                 os.path.join(seqs_dir, 'JPEGImages', seq_name)))
             img_paths_without_root = list(map(lambda x: os.path.join(
@@ -50,7 +49,6 @@ class YouTube(VOSDataset):
             seqs[seq_name] = {}
             seqs[seq_name]['imgs'] = img_paths_without_root
             seqs[seq_name]['labels'] = label_paths_without_root
-
 
             imgs.extend(img_paths_without_root)
             labels.extend(label_paths_without_root)

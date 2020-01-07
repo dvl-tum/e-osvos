@@ -48,11 +48,16 @@ loss_func: dice
 eval_datasets: True
 save_eval_preds: False
 datasets:
-    train: train_seqs
-    val: val_seqs
+    train:
+        name: 'DAVIS-2016'
+        split: train_seqs
+    val:
+        name: 'DAVIS-2016'
+        split: val_seqs
     test: null
 parent_model:
-    architecture: FPN
+    # architecture: FPN
+    architecture: DeepLabV3
     train_encoder: True
     batch_norm:
         accum_stats: False
@@ -114,7 +119,8 @@ parent_model:
     decoder_norm_layer: GroupNorm
     # decoder_norm_layer: BatchNorm2d
     # encoder: resnet34
-    encoder: resnet34-group-norm
+    encoder: resnet101
+    # encoder: resnet34-group-norm
     # encoder: resnet101-group-norm
     train:
         # paths: []
@@ -124,14 +130,17 @@ parent_model:
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
             # - models/FPN_ResNet34_decoder_norm_layer=BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_norm_layer=BatchNorm2d_epoch-215.pth
             # - models/FPN_ResNet101_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet101_group_norm_epoch-160.pth
-            - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
-            # - models/FPN_ResNet34_normalize_input/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_epoch-205.pth
+            # - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
+            # - models/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d/VOC2012/pascal_voc/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d_epoch-60.pth
+            # - models/FPN_ResNet34_new/VOC2012/pascal_voc/FPN_ResNet34_new_epoch-50.pth
+            - models/DeepLabV3_ResNet101/VOC2012/pascal_voc/DeepLabV3_ResNet101_epoch-65.pth
             # - models/FPN_ResNet34_normalize_input_cross_entropy/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_cross_entropy_epoch-200.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
         val_split_files:
             # - data/DAVIS-2016/train_split_balanced_val.txt
             # - data/DAVIS-2016/val_seqs.txt
             - data/DAVIS-2016/train_seqs.txt
+            # - data/YouTube-VOS/train.txt
     val:
         # paths: []
         paths:
@@ -139,11 +148,14 @@ parent_model:
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
             # - models/FPN_ResNet34_decoder_norm_layer=BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_norm_layer=BatchNorm2d_epoch-215.pth
             # - models/FPN_ResNet101_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet101_group_norm_epoch-160.pth
-            - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
-            # - models/FPN_ResNet34_normalize_input/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_epoch-205.pth
+            # - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
+            # - models/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d/VOC2012/pascal_voc/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d_epoch-60.pth
+            # - models/FPN_ResNet34_new/VOC2012/pascal_voc/FPN_ResNet34_new_epoch-50.pth
+            - models/DeepLabV3_ResNet101/VOC2012/pascal_voc/DeepLabV3_ResNet101_epoch-65.pth
             # - models/FPN_ResNet34_normalize_input_cross_entropy/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_cross_entropy_epoch-200.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
         val_split_files:
+            # - data/DAVIS-2016/train_seqs.txt
             - data/DAVIS-2016/val_seqs.txt
     # model_init_meta_optim_split:
     #     paths: []
@@ -156,7 +168,6 @@ train_early_stopping_cfg:
 random_flip_label: False
 # [train_seqs, test_seqs, blackswan, ...]
 data_cfg:
-    root_dir: data/DAVIS-2016
     multi_object: False
     random_train_transform: True
     num_workers: 0

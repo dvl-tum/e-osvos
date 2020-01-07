@@ -120,17 +120,17 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
     vis_dict[f'meta_loss_seq_vis'] = LineVis(
         opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
-    legend = ['TRAIN loss', 'META loss', 'LR MEAN', 'LR STD',]
-            #   'LR MOM MEAN', 'WEIGHT DECAY MEAN']
-    for seq_name in train_loader.dataset.seqs_names:
-        opts = dict(
-            title=f"SEQ METRICS - {seq_name}",
-            xlabel='EPOCHS',
-            width=450,
-            height=300,
-            legend=legend)
-        vis_dict[f"{seq_name}_model_metrics"] = LineVis(
-            opts, env=run_name, resume=resume, **torch_cfg['vis'])
+    # legend = ['TRAIN loss', 'META loss', 'LR MEAN', 'LR STD',]
+    #         #   'LR MOM MEAN', 'WEIGHT DECAY MEAN']
+    # for seq_name in train_loader.dataset.seqs_names:
+    #     opts = dict(
+    #         title=f"SEQ METRICS - {seq_name}",
+    #         xlabel='EPOCHS',
+    #         width=450,
+    #         height=300,
+    #         legend=legend)
+    #     vis_dict[f"{seq_name}_model_metrics"] = LineVis(
+    #         opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     model, _ = init_parent_model(**_config['parent_model'])
     legend = ['MEAN', 'STD'] + [f"{n}"
@@ -338,7 +338,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
 
     for sample in samples:
         seq_name = sample['seq_name']
-        
+
         train_loader.dataset.set_seq(seq_name)
         train_loader.dataset.frame_id = sample['train_frame_id']
         train_loader.dataset.multi_object_id = sample['multi_object_id']
@@ -447,7 +447,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
                     elif 'model_init_meta_optim_split' in parent_states:
                         if seq_name in parent_states['model_init_meta_optim_split']['splits'][0]:
                             if 'model_init' in name:
-                                meta_optim_param_grad_seq[name] += param.grad.clone()        
+                                meta_optim_param_grad_seq[name] += param.grad.clone()
                         else:
                             if 'model_init' not in name:
                                 meta_optim_param_grad_seq[name] += param.grad.clone()
@@ -504,7 +504,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
 
     model.to(device)
     meta_optim.to(device)
-    
+
     meta_model.to('cpu')
 
     train_loader, test_loader, meta_loader = data_loaders(  # pylint: disable=E1120
@@ -605,7 +605,6 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
                 num_frames += eval_frame_range_max - eval_frame_range_min
 
                 load_state_dict(model, seq_name, parent_states[dataset_key])
-
                 meta_optim.reset()
                 meta_optim.eval()
 
@@ -706,10 +705,21 @@ def generate_meta_train_tasks(datasets: dict, random_meta_frame_transform_per_ta
         meta_loader.dataset.set_seq(seq_name)
         test_loader.dataset.set_seq(seq_name)
 
-        for idx in range(len(test_loader.dataset)):
+        # for idx in range(len(test_loader.dataset)):
+        num_frames = 5
+        assert len(test_loader.dataset) >= num_frames, f"{seq_name}"
+        # for idx in np.linspace(1, len(test_loader.dataset), num_frames, endpoint=False, dtype=int):
+
+        frames = np.linspace(0, len(test_loader.dataset), num_frames, endpoint=False, dtype=int)
+        frame_combs = np.array(np.meshgrid(frames, frames)).T.reshape(-1,2).tolist()
+        for train_idx, idx in frame_combs:
+            if train_idx == idx:
+                continue
+
             for obj_id in range(train_loader.dataset.num_objects):
             # multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
                 train_loader.dataset.multi_object_id = obj_id
+                train_loader.dataset.frame_id = train_idx
 
                 meta_loader.dataset.set_seq(seq_name)
                 meta_loader.dataset.multi_object_id = obj_id
@@ -744,13 +754,13 @@ def generate_meta_train_tasks(datasets: dict, random_meta_frame_transform_per_ta
                 if random_flip_label:
                     flip_label = bool(random.getrandbits(1))
 
-                if meta_loader.dataset.has_frame_object():
+                if train_loader.dataset.has_frame_object():
                     meta_taks.append({'seq_name': seq_name,
-                                      'train_frame_id': train_loader.dataset.frame_id,
-                                      'meta_frame_id': meta_loader.dataset.frame_id,
-                                      'meta_transform': meta_transform,
-                                      'multi_object_id': obj_id,
-                                      'flip_label': flip_label})
+                                        'train_frame_id': train_loader.dataset.frame_id,
+                                        'meta_frame_id': meta_loader.dataset.frame_id,
+                                        'meta_transform': meta_transform,
+                                        'multi_object_id': obj_id,
+                                        'flip_label': flip_label})
 
     random_meta_task_idx = torch.randperm(len(meta_taks))
     return [meta_taks[i] for i in random_meta_task_idx]
@@ -838,8 +848,6 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
     if resume_meta_run_epoch is not None:
         meta_optim.load_state_dict(saved_meta_run['meta_optim_state_dict'])
     _log.info(f"Meta optim model parameters: {sum([p.numel() for p in meta_optim.parameters()])}")
-
-    # meta_optim.load_state_dict(torch.load('models/meta/debug_v3/meta_run_38.model')['meta_optim_state_dict'])
 
     meta_optim_params = []
     for n, p in meta_optim.named_parameters():

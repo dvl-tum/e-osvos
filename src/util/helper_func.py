@@ -9,7 +9,7 @@ import imageio
 import numpy as np
 import torch
 import torch.nn as nn
-from data import DAVIS, custom_transforms
+from data import DAVIS, YouTube, custom_transforms
 from davis import (Annotation, DAVISLoader, Segmentation, db_eval,
                    db_eval_sequence)
 from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
@@ -18,7 +18,7 @@ from networks.drn_seg import DRNSeg
 from networks.fpn import FPN
 from networks.unet import Unet
 from networks.vgg_osvos import OSVOSVgg
-# from networks.deeplab import DeepLab
+from networks.deeplabv3 import DeepLabV3
 from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
@@ -161,9 +161,8 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
     return metrics['train_loss'], metrics['val_loss'], metrics['val_acc'], metrics['val_J'], metrics['val_F']
 
 
-def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
-                 shuffles, frame_ids, num_workers, crop_sizes, multi_object,
-                 pin_memory):
+def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
+                 frame_ids, num_workers, crop_sizes, multi_object, pin_memory):
     # train
     train_transforms = []
     if random_train_transform:
@@ -172,10 +171,22 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
                                                                       scales=(.75, 1.25))])
     train_transforms.append(custom_transforms.ToTensor())
     composed_transforms = transforms.Compose(train_transforms)
+    
+    if dataset['name'] == 'DAVIS-2016':
+        vos_dataset = DAVIS
+        root_dir = 'data/DAVIS-2016'
+    elif dataset['name'] == 'DAVIS-2017':
+        vos_dataset = DAVIS
+        root_dir = 'data/DAVIS-2017'
+    elif dataset['name'] == 'YouTube-VOS':
+        vos_dataset = YouTube
+        root_dir = 'data/YouTube-VOS'
+    else:
+        raise NotImplementedError
 
-    db_train = DAVIS(
+    db_train = vos_dataset(
         root_dir=root_dir,
-        seqs_key=dataset,
+        seqs_key=dataset['split'],
         frame_id=frame_ids['train'],
         transform=composed_transforms,
         crop_size=crop_sizes['train'],
@@ -191,9 +202,9 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
         pin_memory=pin_memory)
 
     # test
-    db_test = DAVIS(
+    db_test = vos_dataset(
         root_dir=root_dir,
-        seqs_key=dataset,
+        seqs_key=dataset['split'],
         frame_id=frame_ids['test'],
         transform=custom_transforms.ToTensor(),
         crop_size=crop_sizes['test'],
@@ -210,9 +221,9 @@ def data_loaders(dataset, root_dir, random_train_transform, batch_sizes,
         return train_loader, test_loader
 
     # meta
-    db_meta = DAVIS(
+    db_meta = vos_dataset(
         root_dir=root_dir,
-        seqs_key=dataset,
+        seqs_key=dataset['split'],
         frame_id=frame_ids['meta'],
         transform=custom_transforms.ToTensor(),
         crop_size=crop_sizes['meta'],
@@ -239,16 +250,16 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer, 
     #     model = FPN('resnet34-group-norm', classes=1, activation='softmax', dropout=0.0)
     # elif 'UNET_ResNet34' in base_path:
     #     model = Unet('resnet34', classes=1, activation='softmax')
-    # elif 'DeepLab_ResNet101' in parent_model_path:
-    #     model = DeepLab(backbone='resnet', output_stride=16, num_classes=1, freeze_bn=True)
 
     if architecture == 'FPN':
-        model = FPN(encoder, classes=1, activation='softmax',
-                    dropout=0.0, batch_norm=batch_norm,
-                    train_encoder=train_encoder, decoder_norm_layer=decoder_norm_layer)
+        model = FPN(encoder, classes=1, activation=None, decoder_dropout=0.0,
+                    batch_norm=batch_norm, train_encoder=train_encoder,
+                    decoder_norm_layer=decoder_norm_layer)
+    elif architecture == 'DeepLabV3':
+        model = DeepLabV3(encoder, num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
     else:
         raise NotImplementedError
-
+    
     parent_states = {}
     for k, v in datasets.items():
         parent_states[k] = {}
@@ -263,11 +274,6 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer, 
         parent_states[k]['splits'] = [np.loadtxt(p, dtype=str).tolist()
                                       for p in v['val_split_files']]
 
-    # if 'DeepLab_ResNet101' in parent_model_path:
-    #     parent_state_dict = parent_state_dict['state_dict']
-    #     parent_state_dict['decoder.last_conv.8.weight'] = model.state_dict()['decoder.last_conv.8.weight'].clone()
-    #     parent_state_dict['decoder.last_conv.8.bias'] = model.state_dict()['decoder.last_conv.8.bias'].clone()
-    # model.load_state_dict(parent_state_dict)
     return model, parent_states
 
 

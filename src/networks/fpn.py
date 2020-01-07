@@ -26,38 +26,52 @@ class FPN(smp.FPN):
         _, _, h, w = inputs.shape
         pad = [0, 0, 0, 0]
         crop = [0, 0, 0, 0]
-        if w == 854:
-            pad[0] = 4
-            pad[1] = 5
-            crop[0] = 5
-            crop[1] = 5
-        elif w == 910:
-            pad[0] = 7
-            pad[1] = 8
-            crop[0] = 9
-            crop[1] = 9
-        elif w == 911:
-            pad[0] = 7
-            pad[1] = 7
-            crop[0] = 8
-            crop[1] = 9
-        elif w == 1138:
-            pad[0] = 5
-            pad[1] = 6
-            crop[0] = 7
-            crop[1] = 7
-        elif w == 510:
-            crop[0] = 1
-            crop[1] = 1
 
-        if h == 720:
-            pad[2] = 6
-            pad[3] = 7
-            crop[2] = 8
-            crop[3] = 8
-        elif h == 510:
-            crop[2] = 1
-            crop[3] = 1
+        if 'resnet' in self.name:
+            if w == 854:
+                pad[0] = 4
+                pad[1] = 5
+                crop[0] = 5
+                crop[1] = 5
+            elif w == 910:
+                pad[0] = 7
+                pad[1] = 8
+                crop[0] = 9
+                crop[1] = 9
+            elif w == 911:
+                pad[0] = 7
+                pad[1] = 7
+                crop[0] = 8
+                crop[1] = 9
+            elif w == 1138:
+                pad[0] = 5
+                pad[1] = 6
+                crop[0] = 7
+                crop[1] = 7
+            elif w == 510:
+                crop[0] = 1
+                crop[1] = 1
+
+            if h == 720:
+                pad[2] = 6
+                pad[3] = 7
+                crop[2] = 8
+                crop[3] = 8
+            elif h == 510:
+                crop[2] = 1
+                crop[3] = 1
+        elif 'efficientnet' in self.name:
+            if w == 510:
+                pad[0] = 2
+                pad[1] = 3
+                crop[0] = 1
+                crop[1] = 1
+
+            if h == 510:
+                pad[2] = 2
+                pad[3] = 3
+                crop[2] = 1
+                crop[3] = 1
 
         inputs_padded = F.pad(input=inputs, pad=pad, mode='constant', value=0)
         outputs = super(FPN, self).forward(inputs_padded)
@@ -80,6 +94,13 @@ class FPN(smp.FPN):
             for m in self.modules():
                 if isinstance(m, torch.nn.BatchNorm2d):
                     m.eval()
+
+    def train_without_dropout(self):
+        self.train()
+        
+        for m in self.modules():
+            if isinstance(m, torch.nn.Dropout2d):
+                m.eval()
 
     def modules_with_requires_grad_params(self):
         # _parameters includes only direct parameters of a module and not all
