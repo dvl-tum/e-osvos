@@ -119,7 +119,7 @@ parent_model:
     decoder_norm_layer: GroupNorm
     # decoder_norm_layer: BatchNorm2d
     # encoder: resnet34
-    encoder: resnet101
+    encoder: resnet50
     # encoder: resnet34-group-norm
     # encoder: resnet101-group-norm
     train:
@@ -133,7 +133,8 @@ parent_model:
             # - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
             # - models/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d/VOC2012/pascal_voc/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d_epoch-60.pth
             # - models/FPN_ResNet34_new/VOC2012/pascal_voc/FPN_ResNet34_new_epoch-50.pth
-            - models/DeepLabV3_ResNet101/VOC2012/pascal_voc/DeepLabV3_ResNet101_epoch-65.pth
+            # - models/DeepLabV3_ResNet101/VOC2012/pascal_voc/DeepLabV3_ResNet101_epoch-65.pth
+            - models/DeepLabV3_ResNet50/VOC2012/pascal_voc/DeepLabV3_ResNet50_epoch-25.pth
             # - models/FPN_ResNet34_normalize_input_cross_entropy/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_cross_entropy_epoch-200.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
         val_split_files:
@@ -151,7 +152,8 @@ parent_model:
             # - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
             # - models/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d/VOC2012/pascal_voc/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d_epoch-60.pth
             # - models/FPN_ResNet34_new/VOC2012/pascal_voc/FPN_ResNet34_new_epoch-50.pth
-            - models/DeepLabV3_ResNet101/VOC2012/pascal_voc/DeepLabV3_ResNet101_epoch-65.pth
+            # - models/DeepLabV3_ResNet101/VOC2012/pascal_voc/DeepLabV3_ResNet101_epoch-65.pth
+            - models/DeepLabV3_ResNet50/VOC2012/pascal_voc/DeepLabV3_ResNet50_epoch-25.pth
             # - models/FPN_ResNet34_normalize_input_cross_entropy/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_cross_entropy_epoch-200.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
         val_split_files:
