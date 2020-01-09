@@ -41,9 +41,9 @@ class DeepLabV3(_DeepLabV3):
 
         if 'resnet101' == backbone:
             pretrained_state_dict = load_state_dict_from_url('https://download.pytorch.org/models/deeplabv3_resnet101_coco-586e9e4e.pth',
-                                                            progress=True)
+                                                             progress=True)
             state_dict = self.state_dict()
-            
+
             pretrained_state_dict['classifier.4.weight'] = state_dict['classifier.4.weight']
             pretrained_state_dict['classifier.4.bias'] = state_dict['classifier.4.bias']
             # pretrained_state_dict['aux_classifier.4.weight'] = state_dict['aux_classifier.4.weight']
@@ -58,7 +58,7 @@ class DeepLabV3(_DeepLabV3):
             del pretrained_state_dict["aux_classifier.1.num_batches_tracked"]
 
             self.load_state_dict(pretrained_state_dict)
-        
+
         self._accum_batch_norm_stats = True
         if batch_norm is not None:
             self._accum_batch_norm_stats = batch_norm['accum_stats']
@@ -67,7 +67,7 @@ class DeepLabV3(_DeepLabV3):
                 if isinstance(m, torch.nn.BatchNorm2d):
                     m.weight.requires_grad = batch_norm['learn_weight']
                     m.bias.requires_grad = batch_norm['learn_bias']
-        
+
         if not train_encoder:
             self.backbone.requires_grad_(False)
 
@@ -98,4 +98,4 @@ class DeepLabV3(_DeepLabV3):
         if crop[3]:
             outputs = outputs[:,:, : -crop[3]]
 
-        return [outputs] 
+        return [outputs]
