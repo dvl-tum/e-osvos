@@ -19,6 +19,7 @@ from networks.fpn import FPN
 from networks.unet import Unet
 from networks.vgg_osvos import OSVOSVgg
 from networks.deeplabv3 import DeepLabV3
+from networks.deeplabv3plus import DeepLabV3Plus
 from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
@@ -171,7 +172,7 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
                                                                       scales=(.75, 1.25))])
     train_transforms.append(custom_transforms.ToTensor())
     composed_transforms = transforms.Compose(train_transforms)
-    
+
     if dataset['name'] == 'DAVIS-2016':
         vos_dataset = DAVIS
         root_dir = 'data/DAVIS-2016'
@@ -257,9 +258,12 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer, 
                     decoder_norm_layer=decoder_norm_layer)
     elif architecture == 'DeepLabV3':
         model = DeepLabV3(encoder, num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
+    elif architecture == 'DeepLabV3Plus':
+        model = DeepLabV3Plus(num_classes=1, backbone='resnet', output_stride=16,
+                              sync_bn=None, freeze_bn=False, batch_norm=batch_norm, train_encoder=train_encoder)
     else:
         raise NotImplementedError
-    
+
     parent_states = {}
     for k, v in datasets.items():
         parent_states[k] = {}

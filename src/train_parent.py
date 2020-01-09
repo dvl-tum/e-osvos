@@ -20,6 +20,7 @@ from networks.fpn import FPN
 from networks.unet import Unet
 from networks.vgg_osvos import OSVOSVgg
 from networks.deeplabv3 import DeepLabV3
+from networks.deeplabv3plus import DeepLabV3Plus
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -83,7 +84,8 @@ train_dataset = 'pascal_voc'
 # model_name = 'UNET_ResNet34'
 # model_name = 'FPN_ResNet101'
 # model_name = 'FPN_efficientnet-b3'
-model_name = 'DeepLabV3_ResNet50'
+# model_name = 'DeepLabV3_ResNet50'
+model_name = 'DeepLabV3Plus_ResNet101'
 # loss_func = 'cross_entropy'
 loss_func = 'dice'
 
@@ -145,6 +147,20 @@ elif 'DeepLabV3_ResNet101' in model_name:
     lr = 1e-5
 
     net = DeepLabV3('resnet101', num_classes=1)
+elif 'DeepLabV3Plus_ResNet101' in model_name:
+    num_losses = 1
+    lr = 1e-5
+
+    net = DeepLabV3Plus(num_classes=1, backbone='resnet',
+                        output_stride=16,
+                        sync_bn=None,
+                        freeze_bn=False)
+    state_dict = net.state_dict()
+    pretrained_state_dict = torch.load(
+        'models/deeplab-resnet.pth')['state_dict']
+    pretrained_state_dict['decoder.last_conv.8.weight'] = state_dict['decoder.last_conv.8.weight']
+    pretrained_state_dict['decoder.last_conv.8.bias'] = state_dict['decoder.last_conv.8.bias']
+    net.load_state_dict(pretrained_state_dict)
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 
