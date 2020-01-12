@@ -21,6 +21,7 @@ from networks.unet import Unet
 from networks.vgg_osvos import OSVOSVgg
 from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
+from networks.deeplabv3plus_2 import DeepLabV3Plus2
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -85,7 +86,7 @@ train_dataset = 'pascal_voc'
 # model_name = 'FPN_ResNet101'
 # model_name = 'FPN_efficientnet-b3'
 # model_name = 'DeepLabV3_ResNet50'
-model_name = 'DeepLabV3Plus_ResNet101'
+model_name = 'DeepLabV3Plus2_ResNet101_FULL'
 # loss_func = 'cross_entropy'
 loss_func = 'dice'
 
@@ -147,6 +148,11 @@ elif 'DeepLabV3_ResNet101' in model_name:
     lr = 1e-5
 
     net = DeepLabV3('resnet101', num_classes=1)
+elif 'DeepLabV3Plus2_ResNet101' in model_name:
+    num_losses = 1
+    lr = 5e-6
+
+    net = DeepLabV3Plus2('resnet101', num_classes=1)
 elif 'DeepLabV3Plus_ResNet101' in model_name:
     num_losses = 1
     lr = 1e-5
@@ -161,6 +167,7 @@ elif 'DeepLabV3Plus_ResNet101' in model_name:
     pretrained_state_dict['decoder.last_conv.8.weight'] = state_dict['decoder.last_conv.8.weight']
     pretrained_state_dict['decoder.last_conv.8.bias'] = state_dict['decoder.last_conv.8.bias']
     net.load_state_dict(pretrained_state_dict)
+
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 
@@ -273,8 +280,8 @@ elif 'YouTube-VOS' in db_root_dir:
     # Training dataset and its iterator
 
 elif 'VOC2012' in db_root_dir:
-    db_train = VOC2012(split='train')
-    # db_test = VOC2012(split='val')
+    db_train = VOC2012(split=['train', 'val'])
+    # db_train = VOC2012(split='train')
     db_test = DAVIS(seqs_key='val_seqs',
                     root_dir='data/DAVIS-2016',
                     transform=tr.ToTensor())
@@ -283,8 +290,10 @@ else:
 
 print(f"DATA - TRAIN LENGTH: {len(db_train)} - TEST LENGTH: {len(db_test)}")
 
-train_loader = DataLoader(db_train, batch_size=train_batch, shuffle=True, num_workers=2)
-test_loader = DataLoader(db_test, batch_size=test_batch, shuffle=False, num_workers=2)
+train_loader = DataLoader(db_train, batch_size=train_batch,
+                          shuffle=True, num_workers=2, drop_last=True)
+test_loader = DataLoader(db_test, batch_size=test_batch,
+                         shuffle=False, num_workers=2)
 
 num_img_tr = len(train_loader)
 num_img_ts = len(test_loader)
@@ -331,7 +340,7 @@ for epoch in range(resume_epoch, nEpochs):
             # writer.add_scalar('data/total_loss_epoch', running_loss_tr[-1], epoch)
             if log_to_tb:
                 writer.add_scalar('total_loss_epoch', loss,
-                                (ii + 1) + num_img_tr * epoch)
+                                  (ii + 1) + num_img_tr * epoch)
             print(f'[EPOCH {epoch + 1} ITER {ii + 1} LOSS {loss:.2f}]')
             # for l in range(0, len(running_loss_tr)):
             #     print(f'LOSS {l}: {running_loss_tr[l]:.2f}')

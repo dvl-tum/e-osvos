@@ -388,13 +388,13 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
                 train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
 
                 model.zero_grad()
-                model.train()
+                model.train_without_dropout()
                 train_outputs = model(train_inputs)
 
                 train_loss = compute_loss(loss_func, train_outputs[-1], train_gts)
 
                 train_loss_hist.append(train_loss.item())
-                train_loss.backward()
+                # train_loss.backward()
 
             meta_optim.set_train_loss(train_loss)
             if _config['meta_optim_cfg']['gt_input']:
@@ -403,7 +403,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
                 meta_optim.seq_id = meta_loader.dataset.get_seq_id()
             meta_model, stop_train = meta_optim.step()
 
-            meta_model.train()
+            meta_model.train_without_dropout()
 
             bptt_iter_loss = 0.0
             for meta_batch in meta_loader:
@@ -419,13 +419,13 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
             prev_bptt_iter_loss = bptt_iter_loss.detach()
 
             # visualization
-            lr = meta_optim.state["log_lr"].exp()
-            # lr_mom = meta_optim.state["lr_mom_logit"].sigmoid()
-            # weight_decay = meta_optim.state["log_weight_decay"].exp()
+            # lr = meta_optim.state["log_lr"].exp()
+            # # lr_mom = meta_optim.state["lr_mom_logit"].sigmoid()
+            # # weight_decay = meta_optim.state["log_weight_decay"].exp()
 
-            vis_data = [train_loss.item(), bptt_loss.item(),
-                        lr.mean().item(), lr.std().item(),]
-            vis_data_seqs[seq_name].append(vis_data)
+            # vis_data = [train_loss.item(), bptt_loss.item(),
+            #             lr.mean().item(), lr.std().item(),]
+            # vis_data_seqs[seq_name].append(vis_data)
 
             stop_train = stop_train or early_stopping(
                 train_loss_hist, **_config['train_early_stopping_cfg'])
@@ -433,26 +433,28 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
             # update params of meta optim
             if not epoch % _config['bptt_epochs'] or stop_train or epoch == _config['num_epochs']:
                 meta_optim.zero_grad()
-                bptt_loss.backward()
+                # bptt_loss.backward()
+                meta_optim_grads = torch.autograd.grad(bptt_loss,
+                                                       meta_optim.parameters())
 
-                for name, param in meta_optim.named_parameters():
+                for (name, _), grads in zip(meta_optim.named_parameters(), meta_optim_grads):
                     grad_clip = _config['meta_optim_optim_cfg']['grad_clip']
                     if grad_clip is not None:
-                        param.grad.clamp_(-1.0 * grad_clip, grad_clip)
+                        grads.clamp_(-1.0 * grad_clip, grad_clip)
 
                     if ('model_init' in name and
                         _config['learn_model_init_only_from_multi_object_seqs']):
                         if train_loader.dataset.num_objects > 1:
-                            meta_optim_param_grad_seq[name] += param.grad.clone()
+                            meta_optim_param_grad_seq[name] += grads.clone()
                     elif 'model_init_meta_optim_split' in parent_states:
                         if seq_name in parent_states['model_init_meta_optim_split']['splits'][0]:
                             if 'model_init' in name:
-                                meta_optim_param_grad_seq[name] += param.grad.clone()
+                                meta_optim_param_grad_seq[name] += grads.clone()
                         else:
                             if 'model_init' not in name:
-                                meta_optim_param_grad_seq[name] += param.grad.clone()
+                                meta_optim_param_grad_seq[name] += grads.clone()
                     else:
-                        meta_optim_param_grad_seq[name] += param.grad.clone()
+                        meta_optim_param_grad_seq[name] += grads.clone()
 
                 if _config['meta_optim_optim_cfg']['step_in_seq']:
                     meta_optim_optim.step()
@@ -547,9 +549,12 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
         # fine-tuning returns no reasonable results
         if train_loader.dataset.num_objects == 1:
             test_loader.dataset.multi_object_id = 0
+
             load_state_dict(model, seq_name, parent_states[dataset_key])
+            meta_optim.load_state_dict(meta_optim_state_dict)
             meta_optim.reset()
             meta_optim.eval()
+
             _, _, J, _,  = eval_loader(model, test_loader, loss_func)
             init_J_seq.extend(J)
 
@@ -559,8 +564,6 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
             train_loader.dataset.multi_object_id = obj_id
             meta_loader.dataset.multi_object_id = obj_id
             test_loader.dataset.multi_object_id = obj_id
-
-            load_state_dict(model, seq_name, parent_states[dataset_key])
 
             # evaluation with online adaptation
             if _config['eval_online_adapt_step'] is None:
@@ -605,6 +608,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
                 num_frames += eval_frame_range_max - eval_frame_range_min
 
                 load_state_dict(model, seq_name, parent_states[dataset_key])
+                meta_optim.load_state_dict(meta_optim_state_dict)
                 meta_optim.reset()
                 meta_optim.eval()
 
@@ -631,7 +635,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
                 #         train_inputs, train_gts = train_batch['image'], train_batch['gt']
                 #         train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
 
-                #         model.train()
+                #         model.train_without_dropout()
                 #         train_outputs = model(train_inputs)
 
                 #         train_loss = compute_loss(loss_func, train_outputs[-1], train_gts)
@@ -840,6 +844,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             model.load_state_dict(parent_states['train']['states'][0])
 
     meta_optim = MetaOptimizer(model, meta_model)  # pylint: disable=E1120
+
     # models were only needed to setup MetaOptimizer. in this outer loop
     # the MetaOptimizer is only updated and never applied.
     del model, meta_model
@@ -884,7 +889,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             if 'process' not in p or not p['process'].is_alive():
                 p['meta_epoch'] = i
                 p['return_dict'] = process_manager.dict()
-                process_args = [0, dataset_key, meta_optim.state_dict(),
+                process_args = [0, dataset_key, copy.deepcopy(meta_optim.state_dict()),
                                 _config, p['return_dict']]
                 p['process'] = mp.Process(target=evaluate, args=process_args)
                 p['process'].start()
@@ -959,9 +964,15 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             vis_dict['meta_metrics_vis'].plot(
                 meta_metrics, (i - 1) * meta_iters_per_epoch + meta_iter + 1)
 
-            meta_init_lr = [meta_optim.log_init_lr.exp().mean(),
-                            meta_optim.log_init_lr.exp().std()]
-            meta_init_lr += meta_optim.log_init_lr.exp().detach().numpy().tolist()
+            if meta_optim._lr_per_tensor:
+                meta_init_lr = [meta_optim.log_init_lr.exp().mean(),
+                                meta_optim.log_init_lr.exp().std()]
+                meta_init_lr += meta_optim.log_init_lr.exp().detach().numpy().tolist()
+            else:
+                init_lr = torch.Tensor([log_init_lr.exp().mean() for log_init_lr in meta_optim.log_init_lr])
+                meta_init_lr = [init_lr.mean(),
+                                init_lr.std()]
+                meta_init_lr += init_lr.detach().numpy().tolist()
             vis_dict['init_lr_vis'].plot(
                 meta_init_lr, (i - 1) * meta_iters_per_epoch + meta_iter + 1)
 

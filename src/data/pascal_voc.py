@@ -47,7 +47,7 @@ class VOC2012(Dataset):
             with open(os.path.join(os.path.join(_splits_dir, splt + '.txt')), "r") as f:
                 lines = f.read().splitlines()
 
-            for ii, line in enumerate(lines):
+            for line in lines:
                 _image = os.path.join(self._image_dir, line + ".jpg")
                 _cat = os.path.join(self._cat_dir, line + ".png")
                 assert os.path.isfile(_image)
@@ -68,11 +68,13 @@ class VOC2012(Dataset):
         _img, _target = self._make_img_gt_point_pair(index)
         sample = {'image': _img, 'gt': _target}
 
-        for split in self.split:
-            if split == "train":
-                sample = self.transform_tr(sample)
-            elif split == 'val':
-                sample = self.transform_val(sample)
+        sample = self.transform_tr(sample)
+
+        # for split in self.split:
+        #     if split == "train":
+        #         sample = self.transform_tr(sample)
+        #     elif split == 'val':
+        #         sample = self.transform_val(sample)
         sample['file_name'] = []
         return sample
 
@@ -125,7 +127,7 @@ class Normalize(object):
         mask = sample['gt']
         img = np.array(img).astype(np.float32)
         mask = np.array(mask).astype(np.float32)
-        
+
         img /= 255.0
         # img -= 255 * np.array(self.mean)
         img -= self.mean

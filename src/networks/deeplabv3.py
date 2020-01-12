@@ -6,24 +6,6 @@ from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.models import resnet
 import torch.nn.functional as F
 
-# pretrained_state_dict = segmentation.deeplabv3_resnet101(pretrained=True).state_dict()
-# net = segmentation.deeplabv3_resnet101(pretrained=False, num_classes=1)
-# state_dict = net.state_dict()
-
-# pretrained_state_dict['classifier.4.weight'] = state_dict['classifier.4.weight']
-# pretrained_state_dict['classifier.4.bias'] = state_dict['classifier.4.bias']
-# # pretrained_state_dict['aux_classifier.4.weight'] = state_dict['aux_classifier.4.weight']
-# # pretrained_state_dict['aux_classifier.4.bias'] = state_dict['aux_classifier.4.bias']
-# del pretrained_state_dict['aux_classifier.4.weight']
-# del pretrained_state_dict['aux_classifier.4.bias']
-# del pretrained_state_dict["aux_classifier.0.weight"]
-# del pretrained_state_dict["aux_classifier.1.weight"]
-# del pretrained_state_dict["aux_classifier.1.bias"]
-# del pretrained_state_dict["aux_classifier.1.running_mean"]
-# del pretrained_state_dict["aux_classifier.1.running_var"]
-# del pretrained_state_dict["aux_classifier.1.num_batches_tracked"]
-
-# net.load_state_dict(pretrained_state_dict)
 
 class DeepLabV3(_DeepLabV3):
 

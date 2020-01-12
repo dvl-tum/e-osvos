@@ -30,6 +30,10 @@ class DeepLabV3Plus(DeepLab):
                 if isinstance(m, torch.nn.BatchNorm2d):
                     m.eval()
 
+        for m in self.modules():
+            if isinstance(m, torch.nn.Dropout2d) or isinstance(m, torch.nn.Dropout):
+                m.eval()
+
     def forward(self, inputs):
 
         # TODO: solve not here.

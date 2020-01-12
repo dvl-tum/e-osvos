@@ -20,6 +20,7 @@ from networks.unet import Unet
 from networks.vgg_osvos import OSVOSVgg
 from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
+from networks.deeplabv3plus_2 import DeepLabV3Plus2
 from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
@@ -123,13 +124,13 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
             inputs, gts = sample_batched['image'], sample_batched['gt']
             inputs, gts = inputs.to(device), gts.to(device)
 
-            model.train()
+            model.train_without_dropout()
             outputs = model(inputs)
 
             train_loss = compute_loss(loss_func, outputs[-1], gts)
             metrics['train_loss'].append(train_loss.item())
 
-            train_loss.backward()
+            # train_loss.backward()
             ave_grad += 1
 
             if isinstance(optim, MetaOptimizer):
@@ -260,7 +261,10 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer, 
         model = DeepLabV3(encoder, num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
     elif architecture == 'DeepLabV3Plus':
         model = DeepLabV3Plus(num_classes=1, backbone='resnet', output_stride=16,
-                              sync_bn=None, freeze_bn=False, batch_norm=batch_norm, train_encoder=train_encoder)
+                              sync_bn=False, freeze_bn=True, batch_norm=batch_norm, train_encoder=train_encoder)
+    elif architecture == 'DeepLabV3Plus2':
+        model = DeepLabV3Plus2(
+            encoder, num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
     else:
         raise NotImplementedError
 
