@@ -28,7 +28,7 @@ meta_optim_cfg:
     tensor_rnn_hidden_size: 24
     global_rnn: True
     global_rnn_hidden_size: 24
-    init_lr: 0.00001
+    init_lr: 0.01
     # optimizer that computes paramter update step witout learning rate
     optim_func: Adam
     learn_model_init: False
@@ -39,7 +39,7 @@ meta_optim_cfg:
     matching_input: False
     second_order_gradients: False
 meta_optim_optim_cfg:
-    model_init_lr: 0.00001
+    model_init_lr: 0.000005
     log_init_lr_lr: 0.001
     lr: 0.001
     param_group_lstm_init_lr: 0.001
@@ -66,7 +66,7 @@ parent_model:
     batch_norm:
         accum_stats: False
         learn_weight: False
-        learn_bias: True
+        learn_bias: False
 
     # base_path: models/FPN_ResNet34_batch_norm_fix
     # decoder_norm_layer: GroupNorm
@@ -141,8 +141,8 @@ parent_model:
             # - models/DeepLabV3_ResNet50/VOC2012/pascal_voc/DeepLabV3_ResNet50_epoch-25.pth
             # - models/DeepLabV3Plus_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus_ResNet101_epoch-5.pth
             # - models/DeepLabV3Plus2_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_epoch-20.pth
-            # - models/DeepLabV3Plus2_ResNet101_FULL/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_epoch-15.pth
-            - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
+            - models/DeepLabV3Plus2_ResNet101_FULL/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_epoch-15.pth
+            # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
             # - models/DeepLabV3Plus_ResNet101_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus_ResNet101_cross_entropy_epoch-265.pth
             # - models/FPN_ResNet34_normalize_input_cross_entropy/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_cross_entropy_epoch-200.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
@@ -166,8 +166,8 @@ parent_model:
             # - models/DeepLabV3_ResNet50/VOC2012/pascal_voc/DeepLabV3_ResNet50_epoch-25.pth
             # - models/DeepLabV3Plus_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus_ResNet101_epoch-5.pth
             # - models/DeepLabV3Plus2_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_epoch-20.pth
-            # - models/DeepLabV3Plus2_ResNet101_FULL/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_epoch-15.pth
-            - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
+            - models/DeepLabV3Plus2_ResNet101_FULL/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_epoch-15.pth
+            # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
             # - models/FPN_ResNet34_normalize_input_cross_entropy/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_cross_entropy_epoch-200.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
         val_split_files:

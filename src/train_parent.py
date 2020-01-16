@@ -13,7 +13,6 @@ import torch.nn as nn
 import torch.optim as optim
 from data import DAVIS, VOC2012, YouTube
 from data import custom_transforms as tr
-from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
 from mypath import Path
 from networks.drn_seg import DRNSeg
 from networks.fpn import FPN
@@ -26,7 +25,7 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from util import visualize as viz
-from util.helper_func import eval_loader, run_loader
+from util.helper_func import eval_loader, run_loader, compute_loss
 
 # Select which GPU, -1 if CPU
 gpu_id = 0
@@ -86,9 +85,9 @@ train_dataset = 'pascal_voc'
 # model_name = 'FPN_ResNet101'
 # model_name = 'FPN_efficientnet-b3'
 # model_name = 'DeepLabV3_ResNet50'
-model_name = 'DeepLabV3Plus2_ResNet101_FULL'
-# loss_func = 'cross_entropy'
-loss_func = 'dice'
+model_name = 'DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2'
+loss_func = 'cross_entropy'
+# loss_func = 'dice'
 
 if 'VGG' in model_name:
     load_caffe_vgg = True
@@ -321,13 +320,7 @@ for epoch in range(resume_epoch, nEpochs):
         # Compute the losses
         losses = [0] * num_losses
         for i in range(num_losses):
-            if loss_func == 'cross_entropy':
-                losses[i] = class_balanced_cross_entropy_loss(outputs[i], gts)
-            elif loss_func == 'dice':
-                losses[i] = dice_loss(outputs[i], gts)
-            else:
-                raise NotImplementedError
-
+            losses[i] = compute_loss(loss_func, outputs[i], gts)
             running_loss_tr[i] += losses[i].item()
         loss = (1 - epoch / nEpochs)*sum(losses[:-1]) + losses[-1]
 

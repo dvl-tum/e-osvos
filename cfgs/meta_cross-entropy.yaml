@@ -1,4 +1,10 @@
 loss_func: cross_entropy
-meta_optim_cfg:
-    # [1e-6, 1e-5]
-    lr_range: [0.00000001, 0.00001]
+parent_model:
+    train:
+        paths:
+            # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
+            - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2_epoch-15.pth
+    val:
+        paths:
+            # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
+            - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2_epoch-15.pth
