@@ -308,7 +308,7 @@ def device_for_process(rank: int, _config: dict, gpu_per_dataset_eval: bool):
                         if v is not None}
             gpu_rank += len(datasets)
         else:
-            gpu_rank + 1
+            gpu_rank += 1
     else:
         gpu_rank = rank // _config['num_meta_processes_per_gpu']
 
@@ -333,8 +333,9 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
 
     # _, parent_states = init_parent_model(**_config['parent_model'])
     # meta_model, _ = init_parent_model(**_config['parent_model'])
-
+    
     meta_optim = MetaOptimizer(model, **_config['meta_optim_cfg'])
+
     meta_optim.load_state_dict(meta_optim_state_dict)
 
     # model.to(device)
@@ -490,6 +491,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
                 bptt_loss = 0
 
             if stop_train:
+                meta_optim.reset()
                 break
 
         # loss_batches, _ = run_loader(model, meta_loader, loss_func)
@@ -863,7 +865,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             num_meta_processes -= 1
 
     num_meta_processes *= num_meta_processes_per_gpu
-
+    
     num_meta_tasks = len(generate_meta_train_tasks())  # pylint: disable=E1120
     if meta_batch_size == 'full_batch' or meta_batch_size > num_meta_tasks:
         meta_batch_size = num_meta_tasks
@@ -917,9 +919,11 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
                                         lr=meta_optim_optim_cfg['lr'])
     # if resume_meta_run_epoch is not None:
     #     meta_optim_optim.load_state_dict(saved_meta_run['meta_optim_optim_state_dict'])
-
-    meta_optim_param_grad = process_manager.dict({name: torch.zeros_like(param).cpu()
-                                                  for name, param in meta_optim.named_parameters()})
+    
+    meta_optim_param_grad = {name: torch.zeros_like(param).cpu()
+                             for name, param in meta_optim.named_parameters()}
+    if num_meta_processes > 1:
+        meta_optim_param_grad = process_manager.dict(meta_optim_param_grad)
 
     for rank, p in enumerate(meta_processes):
         train_loader, _, meta_loader = data_loaders(datasets['train'])
@@ -956,14 +960,14 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             # start train and val evaluation
             for rank, (dataset_key, p) in enumerate(eval_processes.items()):
                 if 'process' not in p or not p['process'].is_alive():
-                    p['meta_iter'] = ((i - 1) * meta_iters_per_epoch) + meta_iter
+                    p['meta_iter'] = (i - 1) * meta_iters_per_epoch + meta_iter
                     p['return_dict'] = process_manager.dict()
                     rank = rank if gpu_per_dataset_eval else 0
                     process_args = [rank, dataset_key, copy.deepcopy(meta_optim.state_dict()),
                                     _config, p['return_dict']]
                     p['process'] = mp.Process(target=evaluate, args=process_args)
                     p['process'].start()
-
+            
             # filter None values from grouper
             meta_mini_batch = [s for s in meta_mini_batch if s is not None]
 
@@ -985,13 +989,18 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
                                 _config, datasets['train'], p['return_dict'],
                                 p['model'], p['parent_states'], p['device'],
                                 p['meta_device'], p['train_loader'], p['meta_loader']]
-                p['process'] = mp.Process(target=meta_run, args=process_args)
-                p['process'].start()
+
+                if num_meta_processes > 1:
+                    p['process'] = mp.Process(target=meta_run, args=process_args)
+                    p['process'].start()
+                else:
+                    meta_run(*process_args)
 
             # join meta run processes and update meta iter and seq metrics
             meta_iter_metrics = {}
             for p in meta_processes:
-                p['process'].join()
+                if num_meta_processes > 1:
+                    p['process'].join()
                 global_rng_state = p['return_dict']['global_rng_state']
 
                 for metric, seqs_values in p['return_dict']['seqs_metrics'].items():

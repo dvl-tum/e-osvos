@@ -86,7 +86,7 @@ train_dataset = 'pascal_voc'
 # model_name = 'FPN_ResNet101'
 # model_name = 'FPN_efficientnet-b3'
 # model_name = 'DeepLabV3_ResNet50'
-model_name = 'DeepLabV3Plus2_ResNet101'
+model_name = 'DeepLabV3Plus2_ResNet50'
 loss_func = 'cross_entropy'
 # loss_func = 'dice'
 
@@ -153,6 +153,11 @@ elif 'DeepLabV3Plus2_ResNet101' in model_name:
     lr = 5e-6
 
     net = DeepLabV3Plus2('resnet101', num_classes=1)
+elif 'DeepLabV3Plus2_ResNet50' in model_name:
+    num_losses = 1
+    lr = 1e-6
+
+    net = DeepLabV3Plus2('resnet50', num_classes=1)
 elif 'DeepLabV3Plus_ResNet101' in model_name:
     num_losses = 1
     lr = 1e-5

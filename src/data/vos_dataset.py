@@ -27,6 +27,10 @@ class VOSDataset(Dataset):
         self.multi_object = multi_object
         self.multi_object_id = None
         self.flip_label = flip_label
+        self.seqs = None
+
+        self.preloaded_imgs = {}
+        self.preloaded_labels = {}
 
     @property
     def num_seqs(self):
@@ -154,6 +158,10 @@ class VOSDataset(Dataset):
         """
         Make the image-ground-truth pair
         """
+        if self.imgs[idx] in self.preloaded_imgs:
+            print(self.imgs[idx])
+            return self.preloaded_imgs[self.imgs[idx]], self.preloaded_labels[self.labels[idx]]
+
         img = cv2.imread(os.path.join(
             self.root_dir, self.imgs[idx]), cv2.IMREAD_COLOR)
         
@@ -230,4 +238,6 @@ class VOSDataset(Dataset):
         if self.flip_label:
             label = np.logical_not(label).astype(np.float32)
 
+        self.preloaded_imgs[self.imgs[idx]] = img
+        self.preloaded_labels[self.labels[idx]] = label
         return img, label

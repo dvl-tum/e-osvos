@@ -1,10 +1,13 @@
 loss_func: cross_entropy
 parent_model:
+    encoder: resnet50
     train:
         paths:
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
-            - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2_epoch-15.pth
+            # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2_epoch-15.pth
+            - models/DeepLabV3Plus2_ResNet50/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_epoch-15.pth
     val:
         paths:
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
-            - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2_epoch-15.pth
+            # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2_epoch-15.pth
+            - models/DeepLabV3Plus2_ResNet50/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_epoch-15.pth
