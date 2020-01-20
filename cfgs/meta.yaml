@@ -1,5 +1,6 @@
 seed: 1
 num_meta_processes_per_gpu: 1
+gpu_per_dataset_eval: True
 # number of random samples [seq, train_frame_id, meta_frame_id] used for collecting gradients for a single meta update.
 meta_batch_size: 5
 env_suffix: null

@@ -299,12 +299,16 @@ def load_state_dict(model, seq_name, parent_states):
 
 
 @ex.capture
-def device_for_process(rank: int, _config: dict):
+def device_for_process(rank: int, _config: dict, gpu_per_dataset_eval: bool):
     if _config['eval_datasets']:
-        gpu_rank = (rank // _config['num_meta_processes_per_gpu']) + 1
-        # datasets = {k: v for k, v in _config['datasets'].items() if v is not None}
-        # device = torch.device(f"cuda:{rank + len(datasets)}")
-        # meta_device = torch.device(f"cuda:{rank + len(datasets)}")
+        
+        gpu_rank = (rank // _config['num_meta_processes_per_gpu'])
+        if gpu_per_dataset_eval:
+            datasets = {k: v for k, v in _config['datasets'].items()
+                        if v is not None}
+            gpu_rank += len(datasets)
+        else:
+            gpu_rank + 1
     else:
         gpu_rank = rank // _config['num_meta_processes_per_gpu']
 
@@ -441,6 +445,21 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
                 # bptt_loss.backward()
                 meta_optim_grads = torch.autograd.grad(bptt_loss,
                                                        meta_optim.parameters())
+                
+                # def jacobian(y, x, create_graph=False):                                                               
+                #     jac = []                                                                                          
+                #     flat_y = y.reshape(-1)                                                                            
+                #     grad_y = torch.zeros_like(flat_y)                                                                 
+                #     for i in range(len(flat_y)):                                                                      
+                #         grad_y[i] = 1.                                                                                
+                #         grad_x, = torch.autograd.grad(flat_y, x, grad_y, retain_graph=True, create_graph=create_graph)
+                #         jac.append(grad_x.reshape(x.shape))                                                           
+                #         grad_y[i] = 0.                                                                                
+                #     return torch.stack(jac).reshape(y.shape + x.shape) 
+
+                # hessians = [jacobian(g, p).diag() for g, p in zip(meta_optim_grads, meta_optim.parameters())]
+                # print(meta_optim_grads[0].shape, meta_optim_grads[0].abs().sum())
+                # print(hessians[0].shape, hessians[0].abs().sum())
 
                 for (name, _), grads in zip(meta_optim.named_parameters(), meta_optim_grads):
                     # print(name, grads.shape, grads.abs().mean(), grads.abs().max())
@@ -799,7 +818,8 @@ def generate_meta_train_tasks(datasets: dict, random_meta_frame_transform_per_ta
 def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
          eval_datasets: bool, num_meta_processes_per_gpu: int, datasets: dict,
          meta_optim_optim_cfg: dict, meta_batch_size: int, seed: int,
-         _config: dict, _log: logging, meta_optim_model_file: str):
+         _config: dict, _log: logging, meta_optim_model_file: str,
+         gpu_per_dataset_eval: bool):
     mp.set_start_method('spawn')
 
     assert datasets['train'] is not None
@@ -834,8 +854,13 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
     # processes
     #
     num_meta_processes = torch.cuda.device_count()
+    eval_processes = {}
     if eval_datasets:
-        num_meta_processes -= 1 #len(datasets)
+        eval_processes = {k: {} for k, v in datasets.items() if v is not None}
+        if gpu_per_dataset_eval:
+            num_meta_processes -= len(eval_processes)
+        else:
+            num_meta_processes -= 1
 
     num_meta_processes *= num_meta_processes_per_gpu
 
@@ -849,10 +874,6 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
     num_tasks_per_process = math.floor(meta_batch_size / num_meta_processes)
     process_manager = mp.Manager()
     meta_processes = [dict() for _ in range(num_meta_processes)]
-
-    eval_processes = {}
-    if eval_datasets:
-        eval_processes = {k: {} for k, v in datasets.items() if v is not None}
 
     #
     # Meta model
@@ -931,14 +952,14 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
 
         # assert (len(meta_taks) / meta_batch_size).is_integer()
 
-        for meta_iter, meta_mini_batch in enumerate(grouper(meta_batch_size, meta_taks)):
-
+        for meta_iter, meta_mini_batch in enumerate(grouper(meta_batch_size, meta_taks), start=1):
             # start train and val evaluation
             for rank, (dataset_key, p) in enumerate(eval_processes.items()):
                 if 'process' not in p or not p['process'].is_alive():
-                    p['meta_iter'] = ((i - 1) * meta_iters_per_epoch) + meta_iter + 1
+                    p['meta_iter'] = ((i - 1) * meta_iters_per_epoch) + meta_iter
                     p['return_dict'] = process_manager.dict()
-                    process_args = [0, dataset_key, copy.deepcopy(meta_optim.state_dict()),
+                    rank = rank if gpu_per_dataset_eval else 0
+                    process_args = [rank, dataset_key, copy.deepcopy(meta_optim.state_dict()),
                                     _config, p['return_dict']]
                     p['process'] = mp.Process(target=evaluate, args=process_args)
                     p['process'].start()
@@ -1004,7 +1025,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
                             meta_iter_meta_loss.min()]
             meta_metrics.append((timeit.default_timer() - start_time) / 60)
             vis_dict['meta_metrics_vis'].plot(
-                meta_metrics, (i - 1) * meta_iters_per_epoch + meta_iter + 1)
+                meta_metrics, (i - 1) * meta_iters_per_epoch + meta_iter)
 
             if meta_optim._lr_per_tensor:
                 meta_init_lr = [meta_optim.log_init_lr.mean(),
@@ -1016,7 +1037,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
                                 init_lr.std()]
                 meta_init_lr += init_lr.detach().numpy().tolist()
             vis_dict['init_lr_vis'].plot(
-                meta_init_lr, (i - 1) * meta_iters_per_epoch + meta_iter + 1)
+                meta_init_lr, (i - 1) * meta_iters_per_epoch + meta_iter)
 
             for p in meta_processes:
                 for seq_name, vis_data in p['return_dict']['vis_data_seqs'].items():
