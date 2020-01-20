@@ -39,7 +39,7 @@ meta_optim_cfg:
     matching_input: False
     second_order_gradients: False
 meta_optim_optim_cfg:
-    model_init_lr: 0.000005
+    model_init_lr: 0.000001
     log_init_lr_lr: 0.001
     lr: 0.001
     param_group_lstm_init_lr: 0.001

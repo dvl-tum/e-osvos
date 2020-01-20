@@ -34,7 +34,7 @@ def compute_loss(loss_func, outputs, gts, loss_kwargs=None):
         loss_kwargs = {}
 
     if loss_func == 'cross_entropy':
-        
+
         reduction = 'mean'
         if 'batch_average' in loss_kwargs and not loss_kwargs['batch_average']:
             reduction = 'none'

@@ -16,6 +16,7 @@ class DeepLabHead(nn.Sequential):
     def __init__(self, in_channels, num_classes):
         super(DeepLabHead, self).__init__(
             ASPP(in_channels, [12, 24, 36]),
+            # ASPP(in_channels, [6, 12, 18]),
         )
 
 class _DeepLabV3Plus2(nn.Module):
@@ -142,6 +143,10 @@ class DeepLabV3Plus2(_DeepLabV3Plus2):
                 if isinstance(m, torch.nn.BatchNorm2d):
                     m.weight.requires_grad = batch_norm['learn_weight']
                     m.bias.requires_grad = batch_norm['learn_bias']
+
+        # print('backbone.layer4 ', sum([p.numel() for p in self.backbone.layer4.parameters() if p.requires_grad]))
+        # print('classifier ', sum([p.numel() for p in self.classifier.parameters() if p.requires_grad]))
+        # print('decoder ', sum([p.numel() for p in self.decoder.parameters() if p.requires_grad]))
 
     def train(self, mode=True):
         super(DeepLabV3Plus2, self).train(mode)

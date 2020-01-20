@@ -21,6 +21,7 @@ from networks.vgg_osvos import OSVOSVgg
 from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
 from networks.deeplabv3plus_2 import DeepLabV3Plus2
+from networks.deeplabv3plus_3 import DeepLabV3Plus3
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -85,7 +86,7 @@ train_dataset = 'pascal_voc'
 # model_name = 'FPN_ResNet101'
 # model_name = 'FPN_efficientnet-b3'
 # model_name = 'DeepLabV3_ResNet50'
-model_name = 'DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2'
+model_name = 'DeepLabV3Plus2_ResNet101'
 loss_func = 'cross_entropy'
 # loss_func = 'dice'
 
@@ -166,6 +167,11 @@ elif 'DeepLabV3Plus_ResNet101' in model_name:
     pretrained_state_dict['decoder.last_conv.8.weight'] = state_dict['decoder.last_conv.8.weight']
     pretrained_state_dict['decoder.last_conv.8.bias'] = state_dict['decoder.last_conv.8.bias']
     net.load_state_dict(pretrained_state_dict)
+elif 'DeepLabV3Plus3_ResNet101' in model_name:
+    num_losses = 1
+    lr = 1e-5
+
+    net = DeepLabV3Plus3(num_classes=1)
 
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)

@@ -16,7 +16,7 @@ def sigmoid_np(x):
     return 1/(1+np.exp(-x))
 
 
-def class_balanced_cross_entropy_loss(output, label, size_average=False, batch_average=True):
+def class_balanced_cross_entropy_loss(output, label, size_average=True, batch_average=True):
     """Define the class balanced cross entropy loss to train the network
     Args:
     output: Output of the network
@@ -42,9 +42,6 @@ def class_balanced_cross_entropy_loss(output, label, size_average=False, batch_a
         loss_neg = torch.sum(-torch.mul(1.0 - labels, loss_val).view(batch_size, -1), dim=1, keepdim=True)
 
         final_loss = num_labels_neg / num_total * loss_pos + num_labels_pos / num_total * loss_neg
-
-        if size_average:
-            final_loss /= np.prod(label.size())
     else:
         num_labels_pos = torch.sum(labels)
         num_labels_neg = torch.sum(1.0 - labels)
@@ -62,7 +59,7 @@ def class_balanced_cross_entropy_loss(output, label, size_average=False, batch_a
         final_loss /= label.size()[0]
 
     if size_average:
-        final_loss /= np.prod(label.size())
+        final_loss /= np.prod(label.size()[1:])
 
     return final_loss
 

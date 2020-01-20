@@ -363,8 +363,8 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
         prev_bptt_iter_loss = torch.zeros(1).to(meta_device)
         train_loss_hist = []
 
-        meta_optim_param_grad_seq = {name: torch.zeros_like(param).cpu()
-                                    for name, param in meta_optim.named_parameters()}
+        # meta_optim_param_grad_seq = {name: torch.zeros_like(param).cpu()
+        #                             for name, param in meta_optim.named_parameters()}
 
         load_state_dict(model, seq_name, parent_states['train'])
         meta_optim.load_state_dict(meta_optim_state_dict)
@@ -443,6 +443,8 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
                                                        meta_optim.parameters())
 
                 for (name, _), grads in zip(meta_optim.named_parameters(), meta_optim_grads):
+                    # print(name, grads.shape, grads.abs().mean(), grads.abs().max())
+
                     grad_clip = _config['meta_optim_optim_cfg']['grad_clip']
                     if grad_clip is not None:
                         grads.clamp_(-1.0 * grad_clip, grad_clip)
@@ -450,16 +452,16 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
                     if ('model_init' in name and
                         _config['learn_model_init_only_from_multi_object_seqs']):
                         if train_loader.dataset.num_objects > 1:
-                            meta_optim_param_grad_seq[name] += grads.clone().cpu()
+                            meta_optim_param_grad[name] += grads.clone().cpu()
                     elif 'model_init_meta_optim_split' in parent_states:
                         if seq_name in parent_states['model_init_meta_optim_split']['splits'][0]:
                             if 'model_init' in name:
-                                meta_optim_param_grad_seq[name] += grads.clone().cpu()
+                                meta_optim_param_grad[name] += grads.clone().cpu()
                         else:
                             if 'model_init' not in name:
-                                meta_optim_param_grad_seq[name] += grads.clone().cpu()
+                                meta_optim_param_grad[name] += grads.clone().cpu()
                     else:
-                        meta_optim_param_grad_seq[name] += grads.clone().cpu()
+                        meta_optim_param_grad[name] += grads.clone().cpu()
 
                 if _config['meta_optim_optim_cfg']['step_in_seq']:
                     meta_optim_optim.step()
@@ -484,8 +486,8 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
         seqs_metrics['train_loss'][seq_name].append(train_loss_hist[-1])
 
         # normalize over epochs
-        for name, grad in meta_optim_param_grad_seq.items():
-            meta_optim_param_grad[name] += grad
+        # for name, grad in meta_optim_param_grad_seq.items():
+        #     meta_optim_param_grad[name] += grad
 
     return_dict['seqs_metrics'] = seqs_metrics
     return_dict['vis_data_seqs'] = {}  # vis_data_seqs
@@ -518,6 +520,11 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
     train_loader, test_loader, meta_loader = data_loaders(  # pylint: disable=E1120
         datasets[dataset_key], **_config['data_cfg'])
 
+    # if _config['random_flip_label']:
+    #     train_loader.dataset.flip_label = True
+    #     test_loader.dataset.flip_label = True
+    #     meta_loader.dataset.flip_label = True
+
     def early_stopping_func(loss_hist):
         return early_stopping(loss_hist, **_config['train_early_stopping_cfg'])
 
@@ -527,6 +534,8 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
 
     # save predictions in human readable format
     if _config['save_eval_preds']:
+    # if _config['random_flip_label']:
+        print('save_eval_preds')
         preds_save_dir = os.path.join(f"log/eval/{_config['env_suffix']}")
         if not os.path.exists(preds_save_dir):
             os.makedirs(preds_save_dir)
@@ -682,10 +691,14 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
             file_name = test_loader.dataset[frame_id]['file_name']
             pred = np.transpose(pred.cpu().numpy(), (1, 2, 0)).astype(np.uint8)
 
+            if test_loader.dataset.flip_label:
+                pred = np.logical_not(pred).astype(np.uint8)
+
             pred_path = os.path.join(temp_preds_save_dir, seq_name, os.path.basename(file_name) + '.png')
             imageio.imsave(pred_path, pred)
 
             if _config['save_eval_preds']:
+            # if _config['random_flip_label']:
                 pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(file_name) + '.png')
                 # TODO: implement color palette for labels
                 imageio.imsave(pred_path, 20 * pred)
@@ -731,7 +744,7 @@ def generate_meta_train_tasks(datasets: dict, random_meta_frame_transform_per_ta
         for train_idx, meta_idx in frame_combs:
             if train_idx >= meta_idx:
                 continue
-            
+
             for obj_id in range(train_loader.dataset.num_objects):
             # multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
                 train_loader.dataset.multi_object_id = obj_id
@@ -891,7 +904,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
         train_loader, _, meta_loader = data_loaders(datasets['train'])
         model, parent_states = init_parent_model(**_config['parent_model'])
         device, meta_device = device_for_process(rank)
-        
+
         p['model'] = model.to(device)
         p['parent_states'] = parent_states
         p['device'] = device
@@ -970,6 +983,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
 
             # optimize meta_optim
             meta_optim.zero_grad()
+
             for name, param in meta_optim.named_parameters():
                 # normalize over batch
                 param.grad = meta_optim_param_grad[name] / len(meta_mini_batch)
