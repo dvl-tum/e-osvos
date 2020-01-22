@@ -239,4 +239,5 @@ class VOSDataset(Dataset):
 
         self.preloaded_imgs[self.imgs[idx]] = img
         self.preloaded_labels[self.labels[idx]] = label
+
         return img, label

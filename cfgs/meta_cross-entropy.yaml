@@ -3,17 +3,21 @@ parent_model:
     # architecture: DeepLabV3
     # architecture: DeepLabV3Plus
     architecture: DeepLabV3Plus2
-    encoder: resnet50
-    # encoder: resnet101
+    # encoder: resnet50
+    encoder: resnet101
     train:
         paths:
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2_epoch-15.pth
-            - models/DeepLabV3Plus2_ResNet50/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_epoch-30.pth
+            # - models/DeepLabV3Plus2_ResNet50/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_epoch-30.pth
+            - models/DeepLabV3Plus2_ResNet101_FAST/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FAST_epoch-110.pth
+            # - models/DeepLabV3Plus2_ResNet50_FAST/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_FAST_epoch-35.pth
             # - models/DeepLabV3Plus3_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus3_ResNet101_epoch-30.pth
     val:
         paths:
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2_epoch-15.pth
-            - models/DeepLabV3Plus2_ResNet50/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_epoch-30.pth
+            # - models/DeepLabV3Plus2_ResNet50/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_epoch-30.pth
+            - models/DeepLabV3Plus2_ResNet101_FAST/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FAST_epoch-110.pth
+            # - models/DeepLabV3Plus2_ResNet50_FAST/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_FAST_epoch-35.pth
             # - models/DeepLabV3Plus3_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus3_ResNet101_epoch-30.pth

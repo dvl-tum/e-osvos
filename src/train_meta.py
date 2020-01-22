@@ -353,6 +353,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
         train_loader.dataset.set_seq(seq_name)
         train_loader.dataset.frame_id = sample['train_frame_id']
         train_loader.dataset.multi_object_id = sample['multi_object_id']
+        train_loader.dataset.transform = sample['train_transform']
         train_loader.dataset.flip_label = sample['flip_label']
 
         meta_loader.dataset.set_seq(seq_name)
@@ -371,7 +372,7 @@ def meta_run(i: int, rank: int, samples: list, meta_optim_state_dict: dict,
         # meta_optim_param_grad_seq = {name: torch.zeros_like(param).cpu()
         #                             for name, param in meta_optim.named_parameters()}
 
-        load_state_dict(model, seq_name, parent_states['train'])
+        # load_state_dict(model, seq_name, parent_states['train'])
         meta_optim.load_state_dict(meta_optim_state_dict)
         meta_optim.reset()
 
@@ -528,15 +529,13 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
     device = torch.device(f'cuda:{rank}')
 
     model, parent_states = init_parent_model(**_config['parent_model'])
-    # meta_model, _ = init_parent_model(**_config['parent_model'])
+    model.load_state_dict(parent_states[dataset_key]['states'][0])
 
     meta_optim = MetaOptimizer(model, **_config['meta_optim_cfg'])
     meta_optim.load_state_dict(meta_optim_state_dict)
 
     model.to(device)
     meta_optim.to(device)
-    # meta_model.to(device)
-    # meta_model.to('cpu')
 
     train_loader, test_loader, meta_loader = data_loaders(  # pylint: disable=E1120
         datasets[dataset_key], **_config['data_cfg'])
@@ -556,7 +555,6 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
     # save predictions in human readable format
     if _config['save_eval_preds']:
     # if _config['random_flip_label']:
-        print('save_eval_preds')
         preds_save_dir = os.path.join(f"log/eval/{_config['env_suffix']}")
         if not os.path.exists(preds_save_dir):
             os.makedirs(preds_save_dir)
@@ -586,7 +584,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
         if train_loader.dataset.num_objects == 1:
             test_loader.dataset.multi_object_id = 0
 
-            load_state_dict(model, seq_name, parent_states[dataset_key])
+            # load_state_dict(model, seq_name, parent_states[dataset_key])
             meta_optim.load_state_dict(meta_optim_state_dict)
             meta_optim.reset()
             meta_optim.eval()
@@ -643,7 +641,7 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
 
                 num_frames += eval_frame_range_max - eval_frame_range_min
 
-                load_state_dict(model, seq_name, parent_states[dataset_key])
+                # load_state_dict(model, seq_name, parent_states[dataset_key])
                 meta_optim.load_state_dict(meta_optim_state_dict)
                 meta_optim.reset()
                 meta_optim.eval()
@@ -738,8 +736,8 @@ def evaluate(rank: int, dataset_key: str, meta_optim_state_dict: dict, _config: 
 
 
 @ex.capture
-def generate_meta_train_tasks(datasets: dict, random_meta_frame_transform_per_task: bool,
-                              change_frame_ids_per_seq_epoch: dict, random_flip_label: bool):
+def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: bool,
+                              random_flip_label: bool, data_cfg: dict):
     train_loader, test_loader, meta_loader = data_loaders(datasets['train'])  # pylint: disable=E1120
 
     # prepare mini batches for epoch. sequences and random frames.
@@ -775,28 +773,17 @@ def generate_meta_train_tasks(datasets: dict, random_meta_frame_transform_per_ta
                 meta_loader.dataset.multi_object_id = obj_id
                 meta_loader.dataset.frame_id = meta_idx
 
-                if change_frame_ids_per_seq_epoch['train'] == 'random':
-                    raise NotImplementedError
-                    train_loader.dataset.set_random_frame_id_with_label()
-                elif change_frame_ids_per_seq_epoch['train'] == 'next':
-                    raise NotImplementedError
-
-                if change_frame_ids_per_seq_epoch['meta'] == 'random':
-                    raise NotImplementedError
-                    meta_loader.dataset.set_random_frame_id_with_label()
-                elif change_frame_ids_per_seq_epoch['meta'] == 'next':
-                    raise NotImplementedError
-
-                # # ensure train and meta frames are not the same
-                # if (_config['change_frame_ids_per_seq_epoch']['train'] or
-                #     _config['change_frame_ids_per_seq_epoch']['meta']):
-                #     if train_loader.dataset.frame_id == meta_loader.dataset.frame_id:
-                #         train_loader.dataset.set_next_frame_id()
                 meta_transform = meta_loader.dataset.transform
-                if random_meta_frame_transform_per_task:
+                if random_frame_transform_per_task:
+                    assert not data_cfg['random_train_transform']
+                    train_transform = transforms.Compose([custom_transforms.RandomHorizontalFlip(deterministic=True),
+                                                        custom_transforms.RandomScaleNRotate(rots=(-30, 30),
+                                                                                             scales=(.5, 1.5),
+                                                                                             deterministic=True),
+                                                        custom_transforms.ToTensor(),])
                     meta_transform = transforms.Compose([custom_transforms.RandomHorizontalFlip(deterministic=True),
                                                         custom_transforms.RandomScaleNRotate(rots=(-30, 30),
-                                                                                             scales=(.75, 1.25),
+                                                                                             scales=(.5, 1.5),
                                                                                              deterministic=True),
                                                         custom_transforms.ToTensor(),])
 
@@ -807,6 +794,7 @@ def generate_meta_train_tasks(datasets: dict, random_meta_frame_transform_per_ta
                 if train_loader.dataset.has_frame_object():
                     meta_taks.append({'seq_name': seq_name,
                                         'train_frame_id': train_loader.dataset.frame_id,
+                                        'train_transform': train_transform,
                                         'meta_frame_id': meta_loader.dataset.frame_id,
                                         'meta_transform': meta_transform,
                                         'multi_object_id': obj_id,
@@ -882,7 +870,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
     #
     model, parent_states = init_parent_model(**_config['parent_model'])
     # meta_model, _ = init_parent_model(**_config['parent_model'])
-
+    
     if _config['meta_optim_cfg']['learn_model_init']:
         # must not learn model init if we work with splits on training
         if parent_states['train']['states']:
@@ -929,6 +917,8 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
         train_loader, _, meta_loader = data_loaders(datasets['train'])
         model, parent_states = init_parent_model(**_config['parent_model'])
         device, meta_device = device_for_process(rank)
+
+        model.load_state_dict(parent_states['train']['states'][0])
 
         p['model'] = model.to(device)
         p['parent_states'] = parent_states
@@ -1035,7 +1025,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             meta_metrics.append((timeit.default_timer() - start_time) / 60)
             vis_dict['meta_metrics_vis'].plot(
                 meta_metrics, (i - 1) * meta_iters_per_epoch + meta_iter)
-
+            
             if meta_optim._lr_per_tensor:
                 meta_init_lr = [meta_optim.log_init_lr.mean(),
                                 meta_optim.log_init_lr.std()]

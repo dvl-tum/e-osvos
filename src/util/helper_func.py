@@ -21,6 +21,7 @@ from networks.vgg_osvos import OSVOSVgg
 from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
 from networks.deeplabv3plus_2 import DeepLabV3Plus2
+from networks.deeplabv3plus_3 import DeepLabV3Plus3
 from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
@@ -275,6 +276,9 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer, 
     elif architecture == 'DeepLabV3Plus2':
         model = DeepLabV3Plus2(
             encoder, num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
+    elif architecture == 'DeepLabV3Plus3':
+        model = DeepLabV3Plus3(
+            num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
     else:
         raise NotImplementedError
 
@@ -292,6 +296,12 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer, 
         parent_states[k]['splits'] = [np.loadtxt(p, dtype=str).tolist()
                                       for p in v['val_split_files']]
 
+    # model.load_state_dict(parent_states['train']['states'][0])
+    # model.merge_batch_norms_with_convs()
+    # import copy
+    # parent_states['train']['states'][0] = copy.deepcopy(model.state_dict())
+    # parent_states['val']['states'][0] = copy.deepcopy(model.state_dict())
+    
     return model, parent_states
 
 

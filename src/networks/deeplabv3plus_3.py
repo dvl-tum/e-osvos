@@ -223,8 +223,14 @@ class DeepLabV3Plus3(ResNet):
             Bottleneck, [3, 4, 23, 3], num_classes, 16)
 
         if not train_encoder:
-            self.backbone.requires_grad_(False)
-            self.backbone.layer4.requires_grad_(True)
+            self.conv1.requires_grad_(False)
+            self.bn1.requires_grad_(False)
+            self.relu.requires_grad_(False)
+            self.maxpool.requires_grad_(False)
+
+            self.layer1.requires_grad_(False)
+            self.layer2.requires_grad_(False)
+            self.layer3.requires_grad_(False)
 
         self._accum_batch_norm_stats = True
         if batch_norm is not None:

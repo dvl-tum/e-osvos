@@ -15,8 +15,8 @@ from collections import OrderedDict
 class DeepLabHead(nn.Sequential):
     def __init__(self, in_channels, num_classes):
         super(DeepLabHead, self).__init__(
-            ASPP(in_channels, [12, 24, 36]),
-            # ASPP(in_channels, [6, 12, 18]),
+            # ASPP(in_channels, [12, 24, 36]),
+            ASPP(in_channels, [6, 12, 18]),
         )
 
 class _DeepLabV3Plus2(nn.Module):
@@ -131,6 +131,15 @@ class DeepLabV3Plus2(_DeepLabV3Plus2):
 
             self.load_state_dict(pretrained_state_dict)
 
+        self.backbone.layer3[0].conv1.stride = (2, 2)
+        self.backbone.layer3[0].downsample[0].stride = (2, 2)
+
+        for l in self.backbone.layer3:
+            l.conv2.dilation = (1, 1)
+            l.conv2.padding = (1, 1)
+        self.backbone.layer4[2].conv2.dilation = (8, 8)
+        self.backbone.layer4[2].conv2.padding = (8, 8)
+
         if not train_encoder:
             self.backbone.requires_grad_(False)
             self.backbone.layer4.requires_grad_(True)
@@ -148,6 +157,88 @@ class DeepLabV3Plus2(_DeepLabV3Plus2):
         # print('classifier ', sum([p.numel() for p in self.classifier.parameters() if p.requires_grad]))
         # print('decoder ', sum([p.numel() for p in self.decoder.parameters() if p.requires_grad]))
 
+    #     input_layer = 'layer4'
+    #     remove_layers = []
+    #     for name, module in self.backbone.items():
+    #         if input_layer in name:
+    #             break
+    #         remove_layers.append(name)
+    #     for l in remove_layers:
+    #         del self.backbone[l]
+
+    # def load_state_dict(self, state_dict):
+    #     model_state_dict = self.state_dict()
+    #     state_dict = {k: v for k, v in state_dict.items()
+    #                   if k in model_state_dict}
+
+    #     super(DeepLabV3Plus2, self).load_state_dict(state_dict)
+
+    def merge_batch_norms_with_convs(self):
+        module_list = list(self.modules())
+        # fused_convs_list = 
+        for i, m in enumerate(module_list[:-1]):
+            if isinstance(m, torch.nn.Conv2d):
+                conv = m
+                bn = module_list[i + 1]
+
+                # fused_conv = torch.nn.Conv2d(
+                #     conv.in_channels,
+                #     conv.out_channels,
+                #     kernel_size=conv.kernel_size,
+                #     stride=conv.stride,
+                #     padding=conv.padding,
+                #     bias=True
+                # )
+
+                # w = conv.weight
+                # mean = bn.running_mean
+                # var_sqrt = torch.sqrt(bn.running_var + bn.eps)
+                # beta = bn.weight
+                # gamma = bn.bias
+                # if conv.bias is not None:
+                #     b = conv.bias
+                # else:
+                #     b = mean.new_zeros(mean.shape)
+                # w = w * (beta / var_sqrt).reshape([conv.out_channels, 1, 1, 1])
+                # b = (b - mean) / var_sqrt * beta + gamma
+                # requires_grad = conv.weight.requires_grad
+                
+                # conv.weight = nn.Parameter(w)
+                # conv.bias = nn.Parameter(b)
+                # conv.weight.requires_grad = requires_grad
+                # conv.bias.requires_grad = False
+
+                requires_grad = conv.weight.requires_grad
+
+                # weight
+                w_conv = conv.weight.clone().view(conv.out_channels, -1)
+                w_bn = torch.diag(bn.weight.div(torch.sqrt(bn.eps + bn.running_var)))
+                # fused_conv.weight.copy_(torch.mm(w_bn, w_conv).view(conv.weight.size()))
+                # fused_conv.weight.requires_grad = requires_grad
+
+                conv.weight = nn.Parameter(torch.mm(w_bn, w_conv).view(conv.weight.size()))
+                conv.weight.requires_grad = requires_grad
+
+                # bias
+                if conv.bias is not None:
+                    b_conv = conv.bias
+                else:
+                    b_conv = torch.zeros(conv.weight.size(0))
+                b_bn = bn.bias - bn.weight.mul(bn.running_mean).div(torch.sqrt(bn.running_var + bn.eps))
+                # fused_conv.bias.copy_(b_conv + b_bn)
+                # fused_conv.bias.requires_grad = False
+
+                # fused_convs_list.append(fused_conv)
+
+                conv.bias = nn.Parameter(b_conv + b_bn)
+                conv.bias.requires_grad = requires_grad
+
+        for module in module_list:
+            bn_keys = [k for k, m in module._modules.items()
+                       if isinstance(m, torch.nn.BatchNorm2d)]
+            for k in bn_keys:
+                module._modules[k] = nn.Identity()
+        
     def train(self, mode=True):
         super(DeepLabV3Plus2, self).train(mode)
 
