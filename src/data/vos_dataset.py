@@ -159,7 +159,6 @@ class VOSDataset(Dataset):
         Make the image-ground-truth pair
         """
         if self.imgs[idx] in self.preloaded_imgs:
-            print(self.imgs[idx])
             return self.preloaded_imgs[self.imgs[idx]], self.preloaded_labels[self.labels[idx]]
 
         img = cv2.imread(os.path.join(
