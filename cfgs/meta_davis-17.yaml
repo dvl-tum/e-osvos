@@ -1,92 +1,17 @@
-learn_model_init_only_from_multi_object_seqs: True
+learn_only_from_multi_object_seqs: True
+datasets:
+    train:
+        name: 'DAVIS-2017'
+        split: train_seqs
+    val:
+        name: 'DAVIS-2017'
+        split: val_seqs
+    val_16:
+        name: 'DAVIS-2016'
+        split: val_seqs
+    test: null
 data_cfg:
-    root_dir: data/DAVIS-2017
     multi_object: single_id
     # crop_sizes:
     #     train: [480, 854]
     #     meta: [480, 854]
-parent_model:
-    # base_path: /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/DAVIS-2017
-    # decoder_norm_layer: GroupNorm
-    # train:
-    #     paths:
-    #         - train_split_1_train/FPN_ResNet34_epoch-120.pth
-    #         - train_split_2_train/FPN_ResNet34_epoch-460.pth
-    #         - train_split_3_train/FPN_ResNet34_epoch-140.pth
-    #     val_split_files:
-    #         - data/DAVIS-2017/train_split_1_val.txt
-    #         - data/DAVIS-2017/train_split_2_val.txt
-    #         - data/DAVIS-2017/train_split_3_val.txt
-    # val:
-    #     paths:
-    #         - train_seqs/FPN_ResNet34_epoch-295.pth
-    #     val_split_files:
-    #         - data/DAVIS-2017/val_seqs.txt
-
-#     # base_path: models/FPN_ResNet34_decoder_batch_norm/DAVIS-2017
-#     # decoder_norm_layer: BatchNorm2d
-#     # train:
-#     #     paths:
-#     #         - train_seqs/FPN_ResNet34_decoder_batch_norm_epoch-210.pth
-#     #     val_split_files:
-#     #         - data/DAVIS-2017/val_seqs.txt
-
-#     # base_path: models/FPN_ResNet101/DAVIS-2017
-#     # decoder_norm_layer: GroupNorm
-#     # train:
-#     #     paths:
-#     #         - train_seqs/FPN_ResNet101_epoch-215.pth
-#     #     val_split_files:
-#     #         - data/DAVIS-2017/val_seqs.txt
-
-    # base_path: models/FPN_ResNet34_single_first/DAVIS-2017
-    # decoder_norm_layer: GroupNorm
-    # train:
-    #     paths:
-    #         - train_seqs/FPN_ResNet34_single_first_epoch-375.pth
-    #     val_split_files:
-    #         - data/DAVIS-2017/val_seqs.txt
-    # val:
-    #     paths:
-    #         - train_seqs/FPN_ResNet34_single_first_epoch-375.pth
-    #     val_split_files:
-    #         - data/DAVIS-2017/val_seqs.txt
-
-    # base_path: models/FPN_ResNet34_single_random/DAVIS-2017
-    # decoder_norm_layer: GroupNorm
-    # train:
-    #     paths:
-    #         - train_seqs/FPN_ResNet34_single_random_epoch-215.pth
-    #     val_split_files:
-    #         - data/DAVIS-2017/train_seqs.txt
-    # val:
-    #     paths:
-    #         - train_seqs/FPN_ResNet34_single_random_epoch-215.pth
-    #     val_split_files:
-    #         - data/DAVIS-2017/val_seqs.txt
-
-    # base_path: models/FPN_ResNet34_batch_norm_fix
-    # decoder_norm_layer: GroupNorm
-    # train:
-    #     paths:
-    #        - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
-    #     val_split_files:
-    #         - data/DAVIS-2017/val_seqs.txt
-    # val:
-    #     paths:
-    #        - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
-    #     val_split_files:
-    #         - data/DAVIS-2016/val_seqs.txt
-
-    decoder_norm_layer: GroupNorm
-    encoder: resnet34-group-norm
-    train:
-        paths:
-            - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/YouTube-VOS/train/FPN_ResNet34_epoch-55.pth
-        val_split_files:
-            - data/DAVIS-2017/val_seqs.txt
-    val:
-        paths:
-            - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/YouTube-VOS/train/FPN_ResNet34_epoch-55.pth
-        val_split_files:
-            - data/DAVIS-2017/val_seqs.txt

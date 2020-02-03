@@ -64,6 +64,8 @@ class DAVIS(VOSDataset):
 
     def setup_davis_eval(self):
         eval_cfg.MULTIOBJECT = bool(self.multi_object)
+        if self.year == 2016:
+            eval_cfg.MULTIOBJECT = False
         eval_cfg.YEAR = self.year
         eval_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
         eval_cfg.PATH.DATA = os.path.abspath(os.path.join(eval_cfg.PATH.ROOT, self.root_dir))

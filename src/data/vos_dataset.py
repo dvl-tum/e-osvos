@@ -15,7 +15,8 @@ class VOSDataset(Dataset):
     meanval = None
 
     def __init__(self, seqs_key, root_dir, frame_id=None,
-                 crop_size=None, transform=None, multi_object=False, flip_label=False):
+                 crop_size=None, transform=None, multi_object=False,
+                 flip_label=False, no_label=False):
         """Loads image to label pairs.
         root_dir: dataset directory with subfolders "JPEGImages" and "Annotations"
         """
@@ -27,10 +28,11 @@ class VOSDataset(Dataset):
         self.multi_object = multi_object
         self.multi_object_id = None
         self.flip_label = flip_label
+        self.no_label = no_label
         self.seqs = None
 
-        self.preloaded_imgs = {}
-        self.preloaded_labels = {}
+        # self.preloaded_imgs = {}
+        # self.preloaded_labels = {}
 
     @property
     def num_seqs(self):
@@ -71,7 +73,7 @@ class VOSDataset(Dataset):
     def set_random_frame_id(self):
         self.frame_id = torch.randint(len(self.imgs), (1,)).item()
         return self.frame_id
-    
+
     def set_frame_id_with_biggest_label(self):
         num_labels = [np.count_nonzero(self.make_img_label_pair(idx)[1])
                       for idx in range(len(self.imgs))]
@@ -158,12 +160,12 @@ class VOSDataset(Dataset):
         """
         Make the image-ground-truth pair
         """
-        if self.imgs[idx] in self.preloaded_imgs:
-            return self.preloaded_imgs[self.imgs[idx]], self.preloaded_labels[self.labels[idx]]
+        # if self.imgs[idx] in self.preloaded_imgs:
+        #     return self.preloaded_imgs[self.imgs[idx]], self.preloaded_labels[self.labels[idx]]
 
         img = cv2.imread(os.path.join(
             self.root_dir, self.imgs[idx]), cv2.IMREAD_COLOR)
-        
+
         im = Image.open(os.path.join(self.root_dir, self.labels[idx]))
         label = np.atleast_3d(im)[...,0]
 
@@ -201,7 +203,7 @@ class VOSDataset(Dataset):
         label = np.array(label, dtype=np.float32)
         # print(self.labels[idx], np.unique(label, return_counts=True))
         label = label
-        
+
         assert len(
             img.shape) == 3, f"Image broken ({img.shape}): {self.root_dir, self.imgs[idx]}"
         assert len(
@@ -215,7 +217,7 @@ class VOSDataset(Dataset):
             unique_labels = [l for l in np.unique(label)
                             #  if l != 0.0 and l != 1.0]
                              if l != 0.0]
-            
+
             if unique_labels:
                 # all objects stacked in third axis
                 label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)
@@ -233,11 +235,14 @@ class VOSDataset(Dataset):
         else:
             label = np.where(label != 0.0, 1.0, 0.0).astype(np.float32)
         # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)
-        
+
         if self.flip_label:
             label = np.logical_not(label).astype(np.float32)
 
-        self.preloaded_imgs[self.imgs[idx]] = img
-        self.preloaded_labels[self.labels[idx]] = label
+        if self.no_label:
+            label[:] = 0.0
+
+        # self.preloaded_imgs[self.imgs[idx]] = img
+        # self.preloaded_labels[self.labels[idx]] = label
 
         return img, label

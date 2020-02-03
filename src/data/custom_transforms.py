@@ -120,6 +120,44 @@ class RandomHorizontalFlip:
         return sample
 
 
+class RandomRemoveLabelRectangle:
+
+    def __init__(self, size, deterministic=False):
+        self.deterministic = deterministic
+        self._size = size
+        self._random_square = None
+
+    def _get_random_square(self, label):
+        h, w = label.shape[:2]
+        th, tw = self._size
+        
+        i = random.randint(0, h - th)
+        j = random.randint(0, w - tw)
+
+        return i, j, th, tw
+
+    def __call__(self, sample):
+        if self.deterministic:
+            if self._random_square is None:
+                self._random_square = self._get_random_square(sample['gt'])
+            random_square = self._random_square
+        else:
+            random_square = self._get_random_square(sample['gt'])
+        
+        i, j, h, w = random_square
+        
+        # print(sample['gt'].sum())
+        sample['gt'][i:i + h, j:j + w] = 0.0
+        # print(sample['gt'].sum())
+        
+        # pred = sample['gt'].astype(np.uint8)
+        # import os, imageio
+        # pred_path = os.path.join(f"{sample['file_name']}.png")
+        # imageio.imsave(pred_path, 20 * pred)
+        # exit()
+        return sample
+
+        
 class ToTensor:
     """Convert ndarrays in sample to Tensors."""
 

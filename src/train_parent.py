@@ -86,9 +86,10 @@ train_dataset = 'pascal_voc'
 # model_name = 'FPN_ResNet101'
 # model_name = 'FPN_efficientnet-b3'
 # model_name = 'DeepLabV3_ResNet50'
-model_name = 'DeepLabV3Plus2_ResNet50_FAST'
-loss_func = 'cross_entropy'
-# loss_func = 'dice'
+model_name = 'DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice'
+# loss_func = 'cross_entropy'
+# loss_func = 'class_balanced_cross_entropy'
+loss_func = 'dice'
 
 if 'VGG' in model_name:
     load_caffe_vgg = True
@@ -157,7 +158,7 @@ elif 'DeepLabV3Plus2_ResNet101' in model_name:
     num_losses = 1
     lr = 1e-6
 
-    net = DeepLabV3Plus2('resnet101', num_classes=1)
+    net = DeepLabV3Plus2('resnet101', num_classes=1, replace_batch_with_group_norms=True)
 elif 'DeepLabV3Plus_ResNet101' in model_name:
     num_losses = 1
     lr = 1e-5
@@ -177,7 +178,6 @@ elif 'DeepLabV3Plus3_ResNet101' in model_name:
     lr = 1e-5
 
     net = DeepLabV3Plus3(num_classes=1)
-
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 
@@ -220,23 +220,23 @@ if vis_net:
     g.view()
 
 # Use the following optimizer
-wd = 0.0002
+weight_decay = 0.0002
 if 'VGG' in model_name:
     optimizer = optim.SGD([
-        {'params': [pr[1] for pr in net.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd,
+        {'params': [pr[1] for pr in net.stages.named_parameters() if 'weight' in pr[0]], 'weight_decay': weight_decay,
          'initial_lr': lr},
         {'params': [pr[1] for pr in net.stages.named_parameters() if 'bias' in pr[0]], 'lr': 2 * lr, 'initial_lr': 2 * lr},
-        {'params': [pr[1] for pr in net.side_prep.named_parameters() if 'weight' in pr[0]], 'weight_decay': wd,
+        {'params': [pr[1] for pr in net.side_prep.named_parameters() if 'weight' in pr[0]], 'weight_decay': weight_decay,
          'initial_lr': lr},
         {'params': [pr[1] for pr in net.side_prep.named_parameters() if 'bias' in pr[0]], 'lr': 2 * lr,
          'initial_lr': 2 * lr},
         {'params': [pr[1] for pr in net.score_dsn.named_parameters() if 'weight' in pr[0]], 'lr': lr / 10,
-         'weight_decay': wd, 'initial_lr': lr / 10},
+         'weight_decay': weight_decay, 'initial_lr': lr / 10},
         {'params': [pr[1] for pr in net.score_dsn.named_parameters() if 'bias' in pr[0]], 'lr': 2 * lr / 10,
          'initial_lr': 2 * lr / 10},
         {'params': [pr[1] for pr in net.upscale.named_parameters() if 'weight' in pr[0]], 'lr': 0, 'initial_lr': 0},
         {'params': [pr[1] for pr in net.upscale_.named_parameters() if 'weight' in pr[0]], 'lr': 0, 'initial_lr': 0},
-        {'params': net.fuse.weight, 'lr': lr / 100, 'initial_lr': lr / 100, 'weight_decay': wd},
+        {'params': net.fuse.weight, 'lr': lr / 100, 'initial_lr': lr / 100, 'weight_decay': weight_decay},
         {'params': net.fuse.bias, 'lr': 2 * lr / 100, 'initial_lr': 2 * lr / 100},
     ], lr=lr, momentum=0.9)
 else:

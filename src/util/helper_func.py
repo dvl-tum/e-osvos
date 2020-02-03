@@ -44,8 +44,8 @@ def compute_loss(loss_func, outputs, gts, loss_kwargs=None):
         if reduction == 'none':
             loss = loss.view(loss.shape[0], -1).mean(dim=1)
         return loss
-
-        # return class_balanced_cross_entropy_loss(outputs, gts, **loss_kwargs)
+    elif loss_func == 'class_balanced_cross_entropy':
+        return class_balanced_cross_entropy_loss(outputs, gts, **loss_kwargs)
     elif loss_func == 'dice':
         return dice_loss(outputs, gts, **loss_kwargs)
     else:
@@ -86,6 +86,9 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
             if img_save_dir is not None:
                 # preds = 1 * preds
                 preds = np.transpose(preds.cpu().numpy(), (0, 2, 3, 1)).astype(np.uint8)
+                
+                if loader.dataset.flip_label:
+                    preds = np.logical_not(preds).astype(np.uint8)
 
                 for file_name, pred in zip(file_names, preds):
                     pred_path = os.path.join(img_save_dir, os.path.basename(file_name) + '.png')
@@ -146,9 +149,8 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
 
             if isinstance(optim, MetaOptimizer):
                 optim.set_train_loss(train_loss)
-
-            # if optim is a model
-            with torch.no_grad():
+                optim.step(train_loss)
+            else:
                 optim.step()
 
             if lr_scheduler is not None:
@@ -252,7 +254,8 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
     return train_loader, test_loader, meta_loader
 
 
-def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer, batch_norm, **datasets):
+def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
+                      replace_batch_with_group_norms, batch_norm, **datasets):
     # if 'VGG' in base_path:
     #     model = OSVOSVgg(pretrained=0)
     # elif 'DRN_D_22' in base_path:
@@ -275,7 +278,8 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer, 
                               sync_bn=False, freeze_bn=True, batch_norm=batch_norm, train_encoder=train_encoder)
     elif architecture == 'DeepLabV3Plus2':
         model = DeepLabV3Plus2(
-            encoder, num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
+            encoder, num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder,
+            replace_batch_with_group_norms=replace_batch_with_group_norms)
     elif architecture == 'DeepLabV3Plus3':
         model = DeepLabV3Plus3(
             num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
@@ -301,7 +305,13 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer, 
     # import copy
     # parent_states['train']['states'][0] = copy.deepcopy(model.state_dict())
     # parent_states['val']['states'][0] = copy.deepcopy(model.state_dict())
-    
+
+    # state_dict = model.state_dict()
+    # for n, p in model.named_parameters():
+    #     if p.requires_grad:
+    #         parent_states['train']['states'][0][n] = state_dict[n]
+    # parent_states['train']['states'][0] = model.state_dict()
+
     return model, parent_states
 
 

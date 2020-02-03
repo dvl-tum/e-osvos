@@ -103,7 +103,8 @@ class Decoder(nn.Module):
 
 class DeepLabV3Plus2(_DeepLabV3Plus2):
 
-    def __init__(self, backbone, num_classes, batch_norm=None, train_encoder=True):
+    def __init__(self, backbone, num_classes, batch_norm=None, train_encoder=True,
+                 replace_batch_with_group_norms=False):
         classifier = DeepLabHead(2048, num_classes)
         aux_classifier = None
         return_layers = {'layer4': 'out', 'layer1': 'low_level_feat'}
@@ -150,8 +151,8 @@ class DeepLabV3Plus2(_DeepLabV3Plus2):
 
             for m in self.modules():
                 if isinstance(m, torch.nn.BatchNorm2d):
-                    m.weight.requires_grad = batch_norm['learn_weight']
-                    m.bias.requires_grad = batch_norm['learn_bias']
+                    m.weight.requires_grad = m.weight.requires_grad and batch_norm['learn_weight']
+                    m.bias.requires_grad = m.bias.requires_grad and batch_norm['learn_bias']
 
         # print('backbone.layer4 ', sum([p.numel() for p in self.backbone.layer4.parameters() if p.requires_grad]))
         # print('classifier ', sum([p.numel() for p in self.classifier.parameters() if p.requires_grad]))
@@ -172,6 +173,22 @@ class DeepLabV3Plus2(_DeepLabV3Plus2):
     #                   if k in model_state_dict}
 
     #     super(DeepLabV3Plus2, self).load_state_dict(state_dict)
+        
+        if replace_batch_with_group_norms:
+            self.replace_batch_with_group_norms()
+
+    def replace_batch_with_group_norms(self):
+        for module in self.modules():
+            bn_keys = [k for k, m in module._modules.items()
+                       if isinstance(m, torch.nn.BatchNorm2d)]
+            for k in bn_keys:
+                batch_norm = module._modules[k]
+                
+                group_norm = nn.GroupNorm(16, batch_norm.num_features)
+                group_norm.weight = batch_norm.weight
+                group_norm.bias = batch_norm.bias
+
+                module._modules[k] = group_norm
 
     def merge_batch_norms_with_convs(self):
         module_list = list(self.modules())
@@ -246,6 +263,14 @@ class DeepLabV3Plus2(_DeepLabV3Plus2):
             for m in self.modules():
                 if isinstance(m, torch.nn.BatchNorm2d):
                     m.eval()
+
+    # def eval(self):
+    #     super(DeepLabV3Plus2, self).eval()
+
+    #     if self._accum_batch_norm_stats:
+    #         for m in self.modules():
+    #             if isinstance(m, torch.nn.BatchNorm2d):
+    #                 m.train()
 
     def train_without_dropout(self):
         self.train()
