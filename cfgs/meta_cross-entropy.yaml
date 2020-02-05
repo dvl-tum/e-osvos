@@ -8,24 +8,27 @@ parent_model:
     encoder: resnet101
     replace_batch_with_group_norms: True
     train:
+        # paths: []
         paths:
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2_epoch-15.pth
             # - models/DeepLabV3Plus2_ResNet50/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_epoch-30.pth
             # - models/DeepLabV3Plus2_ResNet101_FAST/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FAST_epoch-220.pth
-            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy_epoch-120.pth
+            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy_epoch-500.pth
             # - models/DeepLabV3Plus2_ResNet50_FAST/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_FAST_epoch-35.pth
             # - models/DeepLabV3Plus3_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus3_ResNet101_epoch-30.pth
     val:
+        # paths: []
         paths:
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_v2_epoch-15.pth
             # - models/DeepLabV3Plus2_ResNet50/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_epoch-30.pth
             # - models/DeepLabV3Plus2_ResNet101_FAST/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FAST_epoch-220.pth
-            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy_epoch-120.pth
+            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy_epoch-500.pth
             # - models/DeepLabV3Plus2_ResNet50_FAST/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet50_FAST_epoch-35.pth
             # - models/DeepLabV3Plus3_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus3_ResNet101_epoch-30.pth
     val_16:
+        # paths: []
         paths:
             # - models/DeepLabV3Plus2_ResNet101_FAST/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FAST_epoch-220.pth
-            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy_epoch-120.pth
+            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_class_balanced_cross_entropy_epoch-500.pth

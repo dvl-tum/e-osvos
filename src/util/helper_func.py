@@ -48,6 +48,8 @@ def compute_loss(loss_func, outputs, gts, loss_kwargs=None):
         return class_balanced_cross_entropy_loss(outputs, gts, **loss_kwargs)
     elif loss_func == 'dice':
         return dice_loss(outputs, gts, **loss_kwargs)
+    elif loss_func == 'class_balanced_cross_entropy_and_dice':
+        return class_balanced_cross_entropy_loss(outputs, gts, **loss_kwargs) - (1 - dice_loss(outputs, gts, **loss_kwargs)).log()
     else:
         raise NotImplementedError
 

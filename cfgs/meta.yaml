@@ -43,6 +43,7 @@ meta_optim_optim_cfg:
     param_group_lstm_init_lr: 0.001
     step_in_seq: False
     grad_clip: null
+    weight_decay: 0.0
 loss_func: dice
 # evalute all datasets
 eval_datasets: True
