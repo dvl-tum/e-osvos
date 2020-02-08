@@ -35,7 +35,6 @@ def compute_loss(loss_func, outputs, gts, loss_kwargs=None):
         loss_kwargs = {}
 
     if loss_func == 'cross_entropy':
-
         reduction = 'mean'
         if 'batch_average' in loss_kwargs and not loss_kwargs['batch_average']:
             reduction = 'none'
@@ -48,8 +47,16 @@ def compute_loss(loss_func, outputs, gts, loss_kwargs=None):
         return class_balanced_cross_entropy_loss(outputs, gts, **loss_kwargs)
     elif loss_func == 'dice':
         return dice_loss(outputs, gts, **loss_kwargs)
-    elif loss_func == 'class_balanced_cross_entropy_and_dice':
-        return class_balanced_cross_entropy_loss(outputs, gts, **loss_kwargs) - (1 - dice_loss(outputs, gts, **loss_kwargs)).log()
+    elif loss_func == 'cross_entropy_and_dice':
+        reduction = 'mean'
+        if 'batch_average' in loss_kwargs and not loss_kwargs['batch_average']:
+            reduction = 'none'
+        criterion = nn.BCEWithLogitsLoss(reduction=reduction).cuda()
+        loss = criterion(outputs, gts)
+        if reduction == 'none':
+            loss = loss.view(loss.shape[0], -1).mean(dim=1)
+
+        return loss - (1 - dice_loss(outputs, gts, **loss_kwargs)).log()
     else:
         raise NotImplementedError
 

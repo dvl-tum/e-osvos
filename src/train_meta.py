@@ -30,6 +30,7 @@ from util.helper_func import (compute_loss, data_loaders, early_stopping,
                               epoch_iter, eval_davis_seq, eval_loader, grouper,
                               init_parent_model, run_loader, train_val, update_dict)
 from util.shared_optim import SharedAdam, ensure_shared_grads
+from radam import RAdam
 
 # mp.set_sharing_strategy('file_system')
 # mp.set_start_method('spawn')
@@ -147,13 +148,23 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
               for n, p in model.named_parameters()
               if p.requires_grad]
     opts = dict(
-        title=f"INIT LR (RUN: {_run._id})",
+        title=f"FIRST EPOCH INIT LR (RUN: {_run._id})",
         xlabel='META ITERS',
         ylabel='LR',
         width=750,
         height=750,
         legend=legend)
     vis_dict['init_lr_vis'] = LineVis(
+        opts, env=run_name, resume=resume, **torch_cfg['vis'])
+
+    opts = dict(
+        title=f"INIT LRS (RUN: {_run._id})",
+        xlabel='EPOCHS',
+        ylabel='LR',
+        width=600,
+        height=300,
+        legend=['MEAN', 'STD'])
+    vis_dict['init_lrs_vis'] = LineVis(
         opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     return vis_dict
@@ -820,22 +831,29 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
 
         num_frames = 1
         epsilon = 10
+        # epsilon = len(test_loader.dataset) - 1
         train_idxs = torch.randint(low=0 , high=len(test_loader.dataset) - epsilon, size=(num_frames, ))
+        # train_idxs = [torch.tensor(0)]
         epsilons = torch.randint(low=1, high=epsilon + 1, size=(num_frames, ))
         frame_combs = [(train_idx.item(), train_idx.item() + eps.item()) for train_idx, eps in zip(train_idxs, epsilons)]
 
         # for i in range(len(frame_combs)):
         #     meta_idx = frame_combs[i][1]
         #     frame_combs.append((meta_idx, meta_idx))
+
         for train_idx, meta_idx in frame_combs:
 
             if train_idx > meta_idx:
                 continue
 
-            random_obj_ids = torch.randperm(train_loader.dataset.num_objects)
+            random_obj_ids = [obj_id.item() for obj_id
+                              in torch.randperm(train_loader.dataset.num_objects)]
+            
+            if learn_only_from_multi_object_seqs and train_loader.dataset.num_objects == 1:
+                random_obj_ids = [0, 1]
 
             for obj_id in random_obj_ids[:2]:
-                obj_id = obj_id.item()
+
             # for obj_id in range(train_loader.dataset.num_objects):
             # multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
                 train_loader.dataset.multi_object_id = obj_id
@@ -997,7 +1015,9 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
         else:
             lr = meta_optim_optim_cfg['lr']
         meta_optim_params.append({'params': [p], 'lr': lr})
-    meta_optim_optim = torch.optim.Adam(meta_optim_params,
+        
+    meta_optim_optim = RAdam(meta_optim_params,
+    # meta_optim_optim = torch.optim.Adam(meta_optim_params,
                                         lr=meta_optim_optim_cfg['lr'],
                                         weight_decay=meta_optim_optim_cfg['weight_decay'])
 
@@ -1097,7 +1117,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             meta_optim_optim.zero_grad()
             for grad in shared_meta_optim_grads.values():
                 grad.zero_()
-
+            
             #
             # VIS
             #
@@ -1141,6 +1161,14 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
                     meta_init_lr += init_lr.detach().numpy().tolist()
                 vis_dict['init_lr_vis'].plot(
                     meta_init_lr, shared_variables['meta_iter'])
+
+                
+                vis_dict['init_lrs_vis'].reset()
+                for epoch in range(_config['num_epochs']):
+                    log_init_lr_epoch = meta_optim.log_init_lr[:, epoch]
+                    vis_dict['init_lrs_vis'].plot(
+                        [log_init_lr_epoch.mean(), log_init_lr_epoch.std()],
+                        epoch + 1)
 
             # EPOCH
             if not meta_mini_batches:

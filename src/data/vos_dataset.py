@@ -30,6 +30,7 @@ class VOSDataset(Dataset):
         self.flip_label = flip_label
         self.no_label = no_label
         self.seqs = None
+        self.augment_with_single_obj_seq_key = None
 
         # self.preloaded_imgs = {}
         # self.preloaded_labels = {}
@@ -142,6 +143,19 @@ class VOSDataset(Dataset):
                 idx = self.frame_id
 
         img, label = self.make_img_label_pair(idx)
+
+        if self.augment_with_single_obj_seq_key is not None:
+            assert self.num_objects == 1
+
+            prev_seq_key = self.seq_key
+
+            self.set_seq(self.augment_with_single_obj_seq_key)
+
+            aug_img, label = self.make_img_label_pair(idx)
+
+            img[label] = aug_img[label]
+            
+            self.set_seq(prev_seq_key)
 
         sample = {'image': img, 'gt': label,
                   'file_name': os.path.splitext(os.path.basename(self.imgs[idx]))[0]}

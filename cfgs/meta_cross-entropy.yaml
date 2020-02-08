@@ -1,5 +1,6 @@
-# loss_func: cross_entropy
-loss_func: class_balanced_cross_entropy
+loss_func: cross_entropy
+# loss_func: class_balanced_cross_entropy
+# loss_func: cross_entropy_and_dice
 parent_model:
     # architecture: DeepLabV3
     # architecture: DeepLabV3Plus
@@ -7,6 +8,7 @@ parent_model:
     # encoder: resnet50
     encoder: resnet101
     replace_batch_with_group_norms: True
+    # replace_batch_with_group_norms: False
     train:
         # paths: []
         paths:

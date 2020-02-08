@@ -144,7 +144,7 @@ parent_model:
             # - models/DeepLabV3Plus2_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_epoch-20.pth
             # - models/DeepLabV3Plus2_ResNet101_FULL/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_epoch-15.pth
             # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
-            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-75.pth
+            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
             # - models/DeepLabV3Plus_ResNet101_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus_ResNet101_cross_entropy_epoch-265.pth
             # - models/FPN_ResNet34_normalize_input_cross_entropy/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_cross_entropy_epoch-200.pth
@@ -171,7 +171,7 @@ parent_model:
             # - models/DeepLabV3Plus2_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_epoch-20.pth
             # - models/DeepLabV3Plus2_ResNet101_FULL/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_epoch-15.pth
             # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
-            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-75.pth
+            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
             # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
             # - models/FPN_ResNet34_normalize_input_cross_entropy/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_cross_entropy_epoch-200.pth
             # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
@@ -182,7 +182,7 @@ parent_model:
     val_16:
         paths:
             # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
-            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-75.pth
+            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
         val_split_files:
             - data/DAVIS-2017/train_val_seqs.txt
     # model_init_meta_optim_split:
@@ -200,7 +200,7 @@ data_cfg:
     multi_object: False
     random_train_transform: False
     num_workers: 0
-    pin_memory: True
+    pin_memory: False
     # integer or str for frame mode, e.g., 'random', 'middle'
     frame_ids:
         train: 0
