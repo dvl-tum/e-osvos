@@ -1,17 +1,18 @@
-learn_only_from_multi_object_seqs: True
+single_obj_seq_mode: AUGMENT
 datasets:
     train:
-        name: 'DAVIS-2017'
+        name: DAVIS-2017
         split: train_seqs
     val:
-        name: 'DAVIS-2017'
+        name: DAVIS-2017
         split: val_seqs
-    val_16:
-        name: 'DAVIS-2016'
-        split: val_seqs
+    val_16: null
+    # val_16:
+    #     name: DAVIS-2016
+    #     split: val_seqs
     test: null
 data_cfg:
     multi_object: single_id
-    # crop_sizes:
-    #     train: [480, 854]
-    #     meta: [480, 854]
+    crop_sizes:
+        train: [480, 854]
+        meta: [480, 854]

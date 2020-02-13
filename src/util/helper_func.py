@@ -22,6 +22,7 @@ from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
 from networks.deeplabv3plus_2 import DeepLabV3Plus2
 from networks.deeplabv3plus_3 import DeepLabV3Plus3
+from networks.mask_rcnn import MaskRCNN
 from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
 from pytorch_tools.ingredients import set_random_seeds
@@ -69,33 +70,43 @@ def epoch_iter(num_epochs: int):
         return range(1, num_epochs + 1)
 
 
-def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
+def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False):
     device = next(model.parameters()).device
 
     metrics = {n: [] for n in ['loss_batches', 'acc_batches']}
 
-    preds_all = []
+    probs_all = []
+    boxes_all =[]
     with torch.no_grad():
         for sample_batched in loader:
             imgs, gts, file_names = sample_batched['image'], sample_batched['gt'], sample_batched['file_name']
             inputs, gts = imgs.to(device), gts.to(device)
 
             model.eval()
-            outputs = model.forward(inputs)
 
-            loss = compute_loss(loss_func, outputs[-1], gts, {'batch_average': False})
-            metrics['loss_batches'].append(loss)
+            outputs = model(inputs)
 
-            preds = torch.sigmoid(outputs[-1])
-            preds = preds.ge(0.5).float()
-            preds_all.append(preds)
+            if isinstance(model, MaskRCNN):
+                probs = outputs[0]
+
+                metrics['loss_batches'].append(torch.tensor([0.0]))
+
+                boxes_all.append(outputs[1])
+            else:
+                probs = torch.sigmoid(outputs[-1])
+
+                loss = compute_loss(loss_func, outputs[-1], gts, {'batch_average': False})
+                metrics['loss_batches'].append(loss)
+
+            preds = probs.ge(0.5).float()
+            probs_all.append(probs)
             # print(preds.eq(gts.bool()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()).shape)
             metrics['acc_batches'].append(preds.bool().eq(gts.bool()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()))
 
             if img_save_dir is not None:
                 # preds = 1 * preds
                 preds = np.transpose(preds.cpu().numpy(), (0, 2, 3, 1)).astype(np.uint8)
-                
+
                 if loader.dataset.flip_label:
                     preds = np.logical_not(preds).astype(np.uint8)
 
@@ -104,8 +115,8 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_preds=False):
                     imageio.imsave(pred_path, pred)
 
     metrics = {n: torch.cat(m).cpu() for n, m in metrics.items()}
-    if return_preds:
-        return metrics['loss_batches'], metrics['acc_batches'], torch.cat(preds_all)
+    if return_probs:
+        return metrics['loss_batches'], metrics['acc_batches'], torch.cat(probs_all), torch.cat(boxes_all)
     return metrics['loss_batches'], metrics['acc_batches']
 
 
@@ -116,7 +127,7 @@ def eval_loader(model, loader, loss_func, img_save_dir=None, return_preds=False)
         img_save_dir = tempfile.mkdtemp()
         os.makedirs(os.path.join(img_save_dir, seq_name))
 
-    loss_batches, acc_batches, preds = run_loader(model, loader, loss_func, os.path.join(img_save_dir, seq_name), True)
+    loss_batches, acc_batches, preds, _ = run_loader(model, loader, loss_func, os.path.join(img_save_dir, seq_name), True)
 
     evaluation = eval_davis_seq(img_save_dir, seq_name)
 
@@ -148,18 +159,22 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
             inputs, gts = inputs.to(device), gts.to(device)
 
             model.train_without_dropout()
-            outputs = model(inputs)
 
-            train_loss = compute_loss(loss_func, outputs[-1], gts)
+            if isinstance(model, MaskRCNN):
+                train_loss = model(inputs, gts)[0]
+            else:
+                outputs = model(inputs)
+                train_loss = compute_loss(loss_func, outputs[-1], gts)
+
             metrics['train_loss'].append(train_loss.item())
 
-            # train_loss.backward()
             ave_grad += 1
 
             if isinstance(optim, MetaOptimizer):
                 optim.set_train_loss(train_loss)
                 optim.step(train_loss)
             else:
+                train_loss.backward()
                 optim.step()
 
             if lr_scheduler is not None:
@@ -186,7 +201,8 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
 
 
 def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
-                 frame_ids, num_workers, crop_sizes, multi_object, pin_memory):
+                 frame_ids, num_workers, crop_sizes, multi_object, pin_memory,
+                 normalize):
     # train
     train_transforms = []
     if random_train_transform:
@@ -214,7 +230,8 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
         frame_id=frame_ids['train'],
         transform=composed_transforms,
         crop_size=crop_sizes['train'],
-        multi_object=multi_object,)
+        multi_object=multi_object,
+        normalize=normalize)
 
     # sample epochs into a batch
     batch_sampler = EpochSampler(
@@ -232,7 +249,8 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
         frame_id=frame_ids['test'],
         transform=custom_transforms.ToTensor(),
         crop_size=crop_sizes['test'],
-        multi_object=multi_object,)
+        multi_object=multi_object,
+        normalize=normalize)
     test_loader = DataLoader(
         db_test,
         shuffle=shuffles['test'],
@@ -251,7 +269,8 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
         frame_id=frame_ids['meta'],
         transform=custom_transforms.ToTensor(),
         crop_size=crop_sizes['meta'],
-        multi_object=multi_object,)
+        multi_object=multi_object,
+        normalize=normalize)
 
     meta_loader = DataLoader(
         db_meta,
@@ -292,6 +311,9 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
     elif architecture == 'DeepLabV3Plus3':
         model = DeepLabV3Plus3(
             num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
+    elif architecture == 'MaskRCNN':
+        model = MaskRCNN(
+            encoder, num_classes=2, batch_norm=batch_norm, train_encoder=train_encoder)
     else:
         raise NotImplementedError
 

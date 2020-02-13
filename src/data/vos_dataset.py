@@ -16,7 +16,7 @@ class VOSDataset(Dataset):
 
     def __init__(self, seqs_key, root_dir, frame_id=None,
                  crop_size=None, transform=None, multi_object=False,
-                 flip_label=False, no_label=False):
+                 flip_label=False, no_label=False, normalize=True):
         """Loads image to label pairs.
         root_dir: dataset directory with subfolders "JPEGImages" and "Annotations"
         """
@@ -28,6 +28,7 @@ class VOSDataset(Dataset):
         self.multi_object = multi_object
         self.multi_object_id = None
         self.flip_label = flip_label
+        self.normalize = normalize
         self.no_label = no_label
         self.seqs = None
         self.augment_with_single_obj_seq_key = None
@@ -145,19 +146,27 @@ class VOSDataset(Dataset):
         img, label = self.make_img_label_pair(idx)
 
         if self.augment_with_single_obj_seq_key is not None:
-            assert self.num_objects == 1
+            assert self.num_objects == 1, f'{self.seq_key} is not a single object sequence.'
 
             prev_seq_key = self.seq_key
 
             self.set_seq(self.augment_with_single_obj_seq_key)
 
-            aug_img, label = self.make_img_label_pair(idx)
+            aug_img, label = self.make_img_label_pair(min(idx, len(self.imgs) - 1))
 
-            img[label] = aug_img[label]
-            
+            obj_mask = label == 1.0
+            img[obj_mask] = aug_img[obj_mask]
+
+            # import imageio
+            # # pred = np.transpose(img, (1, 2, 0))
+            # imageio.imsave(f"img.png", (img * 255).astype(np.uint8))
+            # imageio.imsave(f"label.png", (label * 255).astype(np.uint8))
+            # exit()
+
             self.set_seq(prev_seq_key)
 
-        sample = {'image': img, 'gt': label,
+        sample = {'image': img,
+                  'gt': label,
                   'file_name': os.path.splitext(os.path.basename(self.imgs[idx]))[0]}
 
         if self.transform is not None:
@@ -178,7 +187,7 @@ class VOSDataset(Dataset):
         #     return self.preloaded_imgs[self.imgs[idx]], self.preloaded_labels[self.labels[idx]]
 
         img = cv2.imread(os.path.join(
-            self.root_dir, self.imgs[idx]), cv2.IMREAD_COLOR)
+            self.root_dir, self.imgs[idx]), cv2.IMREAD_COLOR)[..., ::-1]
 
         im = Image.open(os.path.join(self.root_dir, self.labels[idx]))
         label = np.atleast_3d(im)[...,0]
@@ -211,7 +220,8 @@ class VOSDataset(Dataset):
                 label = label_pad[h_off: h_off + crop_h, w_off: w_off + crop_w]
 
         img = np.array(img, dtype=np.float32)
-        img = np.subtract(img, np.array(self.meanval, dtype=np.float32))
+        if self.normalize:
+            img = np.subtract(img, np.array(self.meanval, dtype=np.float32))
         img = img / 255.0
 
         label = np.array(label, dtype=np.float32)
@@ -240,7 +250,8 @@ class VOSDataset(Dataset):
                 # single object from stack
                 # if only one object on the frame this object is selected
                 if self.multi_object == 'single_id':
-                    # if a frame does not include all objects
+                    # if a frame does not include all objects and in particular not
+                    # the object with self.multi_object_id
                     assert self.multi_object_id < self.num_objects
                     if self.num_objects > len(unique_labels) and self.multi_object_id >= len(unique_labels):
                         label = np.zeros((label.shape[0], label.shape[1]), dtype=np.float32)

@@ -11,8 +11,7 @@ resume_meta_run_epoch: null
 # increases seed random seed after each meta run. supposed to enrich the training and improve generalization.
 increase_seed_per_meta_run: False
 random_frame_transform_per_task: False
-learn_only_from_multi_object_seqs: False
-# if null run meta model until meta_optim returns stop_train=True
+# if meta_optim_cfg.lr_per_tensor=False meta learning is done for a single epoch and num_epochs is only evaluated
 num_epochs: 5
 bptt_epochs: 10
 # number of frames after which the model is fine-tuned (on the first frame) again.
@@ -43,24 +42,25 @@ meta_optim_optim_cfg:
     param_group_lstm_init_lr: 0.001
     step_in_seq: False
     grad_clip: null
-    weight_decay: 0.0
+    model_init_weight_decay: 0.0
 loss_func: dice
 # evalute all datasets
 eval_datasets: True
 save_eval_preds: False
 datasets:
     train:
-        name: 'DAVIS-2016'
+        name: DAVIS-2016
         split: train_seqs
     val:
-        name: 'DAVIS-2016'
+        name: DAVIS-2016
         split: val_seqs
     test: null
 parent_model:
     # architecture: FPN
     # architecture: DeepLabV3
     # architecture: DeepLabV3Plus
-    architecture: DeepLabV3Plus2
+    # architecture: DeepLabV3Plus2
+    architecture: MaskRCNN
     train_encoder: True
     batch_norm:
         accum_stats: False
@@ -68,87 +68,21 @@ parent_model:
         learn_bias: False
     replace_batch_with_group_norms: False
 
-    # base_path: models/FPN_ResNet34_batch_norm_fix
-    # decoder_norm_layer: GroupNorm
-    # train:
-    #     paths:
-    #         - train_split_1_train/FPN_ResNet34_batch_norm_fix_epoch-40.pth
-    #         - train_split_2_train/FPN_ResNet34_batch_norm_fix_epoch-230.pth
-    #         - train_split_3_train/FPN_ResNet34_batch_norm_fix_epoch-295.pth
-    #     val_split_files:
-    #         - data/DAVIS-2016/train_split_1_val.txt
-    #         - data/DAVIS-2016/train_split_2_val.txt
-    #         - data/DAVIS-2016/train_split_3_val.txt
-    # train:
-    #     paths:
-    #        - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
-    #     val_split_files:
-    #         - data/DAVIS-2016/val_seqs.txt
-    # val:
-    #     paths:
-    #        - train_seqs/FPN_ResNet34_batch_norm_fix_epoch-75.pth
-    #     val_split_files:
-    #         - data/DAVIS-2016/val_seqs.txt
-
-    # base_path: models/FPN_ResNet34_decoder_batch_norm/DAVIS-2016
-    # decoder_norm_layer: BatchNorm2d
-    # train:
-    #     paths:
-    #         - train_split_1_train/FPN_ResNet34_decoder_batch_norm_epoch-25.pth
-    #         - train_split_2_train/FPN_ResNet34_decoder_batch_norm_epoch-160.pth
-    #         - train_split_3_train/FPN_ResNet34_decoder_batch_norm_epoch-45.pth
-    #     val_split_files:
-    #         - data/DAVIS-2016/train_split_1_val.txt
-    #         - data/DAVIS-2016/train_split_2_val.txt
-    #         - data/DAVIS-2016/train_split_3_val.txt
-    # val:
-    #     paths:
-    #        - train_seqs/FPN_ResNet34_decoder_batch_norm_epoch-105.pth
-    #     val_split_files:
-    #         - data/DAVIS-2016/val_seqs.txt
-
-    # decoder_norm_layer: GroupNorm
-    # base_path: models/FPN_ResNet34/YouTube-VOS
-    # train:
-    #     paths:
-    #         - train/FPN_ResNet34_epoch-55.pth
-    #     val_split_files:
-    #         - data/DAVIS-2016/train_seqs.txt
-    # val:
-    #     paths:
-    #         - train/FPN_ResNet34_epoch-55.pth
-    #     val_split_files:
-    #         - data/DAVIS-2016/val_seqs.txt
-
     decoder_norm_layer: GroupNorm
     # decoder_norm_layer: BatchNorm2d
     # encoder: resnet34
-    encoder: resnet101
+    # encoder: resnet101
+    encoder: resnet50
     # encoder: resnet34-group-norm
     # encoder: resnet101-group-norm
     replace_batch_with_group_norms: True
     train:
-        # paths: []
-
-        paths:
-            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_epoch-325.pth
-            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
-            # - models/FPN_ResNet34_decoder_norm_layer=BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_norm_layer=BatchNorm2d_epoch-215.pth
-            # - models/FPN_ResNet101_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet101_group_norm_epoch-160.pth
-            # - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
-            # - models/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d/VOC2012/pascal_voc/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d_epoch-60.pth
-            # - models/FPN_ResNet34_new/VOC2012/pascal_voc/FPN_ResNet34_new_epoch-50.pth
-            # - models/DeepLabV3_ResNet101/VOC2012/pascal_voc/DeepLabV3_ResNet101_epoch-65.pth
-            # - models/DeepLabV3_ResNet50/VOC2012/pascal_voc/DeepLabV3_ResNet50_epoch-25.pth
-            # - models/DeepLabV3Plus_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus_ResNet101_epoch-5.pth
-            # - models/DeepLabV3Plus2_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_epoch-20.pth
-            # - models/DeepLabV3Plus2_ResNet101_FULL/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_epoch-15.pth
-            # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
-            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
-            # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
-            # - models/DeepLabV3Plus_ResNet101_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus_ResNet101_cross_entropy_epoch-265.pth
-            # - models/FPN_ResNet34_normalize_input_cross_entropy/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_cross_entropy_epoch-200.pth
-            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
+        paths: []
+        # paths: ['models/MaskRCNN_ResNet50_train_encoder=False/VOC2012/pascal_voc/MaskRCNN_ResNet50_train_encoder=False_epoch-50.pth']
+        # paths:
+        #     # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
+        #     - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
+        #     # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
         val_split_files:
             # - data/DAVIS-2016/train_split_balanced_val.txt
             # - data/DAVIS-2016/val_seqs.txt
@@ -156,33 +90,22 @@ parent_model:
             - data/DAVIS-2017/train_val_seqs.txt
             # - data/YouTube-VOS/train.txt
     val:
-        # paths: []
-        paths:
-            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_epoch-325.pth
-            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_group_norm_epoch-115.pth
-            # - models/FPN_ResNet34_decoder_norm_layer=BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_norm_layer=BatchNorm2d_epoch-215.pth
-            # - models/FPN_ResNet101_group_norm/DAVIS-2016/train_split_balanced_train/FPN_ResNet101_group_norm_epoch-160.pth
-            # - models/FPN_ResNet34_group_norm/VOC2012/pascal_voc/FPN_ResNet34_group_norm_epoch-220.pth
-            # - models/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d/VOC2012/pascal_voc/FPN_ResNet34_new_decoder_norm_layer=BatchNorm2d_epoch-60.pth
-            # - models/FPN_ResNet34_new/VOC2012/pascal_voc/FPN_ResNet34_new_epoch-50.pth
-            # - models/DeepLabV3_ResNet101/VOC2012/pascal_voc/DeepLabV3_ResNet101_epoch-65.pth
-            # - models/DeepLabV3_ResNet50/VOC2012/pascal_voc/DeepLabV3_ResNet50_epoch-25.pth
-            # - models/DeepLabV3Plus_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus_ResNet101_epoch-5.pth
-            # - models/DeepLabV3Plus2_ResNet101/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_epoch-20.pth
-            # - models/DeepLabV3Plus2_ResNet101_FULL/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_epoch-15.pth
-            # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
-            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
-            # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
-            # - models/FPN_ResNet34_normalize_input_cross_entropy/VOC2012/pascal_voc/FPN_ResNet34_normalize_input_cross_entropy_epoch-200.pth
-            # - /storage/user/meinhard/meta_osvos/models/FPN_ResNet34_decoder_BatchNorm2d/DAVIS-2016/train_split_balanced_train/FPN_ResNet34_decoder_BatchNorm2d_epoch-45.pth
+        paths: []
+        # paths: ['models/MaskRCNN_ResNet50_train_encoder=False/VOC2012/pascal_voc/MaskRCNN_ResNet50_train_encoder=False_epoch-50.pth']
+        # paths:
+        #     # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
+        #     - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
+        #     # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
         val_split_files:
             # - data/DAVIS-2016/train_seqs.txt
             # - data/DAVIS-2016/val_seqs.txt
             - data/DAVIS-2017/train_val_seqs.txt
     val_16:
-        paths:
-            # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
-            - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
+        paths: []
+        # paths: ['models/MaskRCNN_ResNet50_train_encoder=False/VOC2012/pascal_voc/MaskRCNN_ResNet50_train_encoder=False_epoch-50.pth']
+        # paths:
+        #     # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
+        #     - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
         val_split_files:
             - data/DAVIS-2017/train_val_seqs.txt
     # model_init_meta_optim_split:
@@ -193,6 +116,7 @@ parent_model:
 train_early_stopping_cfg:
     patience: null
     min_loss_improv: 0.001
+single_obj_seq_mode: KEEP                           # [KEEP, IGNORE, AUGMENT]
 random_flip_label: False
 random_no_label: False
 # [train_seqs, test_seqs, blackswan, ...]
@@ -201,6 +125,7 @@ data_cfg:
     random_train_transform: False
     num_workers: 0
     pin_memory: False
+    normalize: True
     # integer or str for frame mode, e.g., 'random', 'middle'
     frame_ids:
         train: 0

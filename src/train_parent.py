@@ -22,6 +22,7 @@ from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
 from networks.deeplabv3plus_2 import DeepLabV3Plus2
 from networks.deeplabv3plus_3 import DeepLabV3Plus3
+from networks.mask_rcnn import MaskRCNN
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -86,7 +87,8 @@ train_dataset = 'pascal_voc'
 # model_name = 'FPN_ResNet101'
 # model_name = 'FPN_efficientnet-b3'
 # model_name = 'DeepLabV3_ResNet50'
-model_name = 'DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice'
+# model_name = 'DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice'
+model_name = 'MaskRCNN_ResNet50_train_encoder=False'
 # loss_func = 'cross_entropy'
 # loss_func = 'class_balanced_cross_entropy'
 loss_func = 'dice'
@@ -178,6 +180,11 @@ elif 'DeepLabV3Plus3_ResNet101' in model_name:
     lr = 1e-5
 
     net = DeepLabV3Plus3(num_classes=1)
+elif 'MaskRCNN_ResNet50' in model_name:
+    num_losses = 1
+    lr = 0.0001
+
+    net = MaskRCNN('resnet50', num_classes=2, train_encoder=False)
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 
@@ -201,7 +208,7 @@ if not os.path.exists(os.path.join(save_dir, model_name, db_root_dir.split('/')[
 #                                 map_location=lambda storage, loc: storage))
 
 print(log_dir)
-print(f'NUM MODEL PARAMS - {model_name}: {sum([p.numel() for p in net.parameters()])}')
+print(f'NUM MODEL PARAMS - {model_name}: {sum([p.numel()for p in net.parameters() if p.requires_grad])}')
 
 # Logging into Tensorboard
 if log_to_tb:
@@ -300,8 +307,15 @@ else:
 
 print(f"DATA - TRAIN LENGTH: {len(db_train)} - TEST LENGTH: {len(db_test)}")
 
+
+def remove_no_obj_imgs_collate(batch):
+    batch = [sample for sample in batch
+             if len(torch.unique(sample['gt'])) > 1]
+    return torch.utils.data.dataloader.default_collate(batch)
+
 train_loader = DataLoader(db_train, batch_size=train_batch,
-                          shuffle=True, num_workers=2, drop_last=True)
+                          shuffle=True, num_workers=2, drop_last=True,
+                          collate_fn=remove_no_obj_imgs_collate)
 test_loader = DataLoader(db_test, batch_size=test_batch,
                          shuffle=False, num_workers=2)
 
@@ -322,7 +336,7 @@ for epoch in range(resume_epoch, nEpochs):
         inputs, gts = sample_batched['image'], sample_batched['gt']
 
         # Forward-Backward of the mini-batch
-        inputs.requires_grad_()
+        # inputs.requires_grad_()
         inputs, gts = inputs.to(device), gts.to(device)
 
         net.train()
