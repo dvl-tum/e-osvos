@@ -36,6 +36,7 @@ class _DeepLabV3Plus2(nn.Module):
 
         result = OrderedDict()
         x = features["out"]
+        
         x = self.classifier(x)
         x = self.decoder(x, features["low_level_feat"])
         x = F.interpolate(x, size=input_shape,

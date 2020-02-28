@@ -18,9 +18,7 @@ class RandomScaleNRotate:
         self.rots = rots
         self.scales = scales
         self.deterministic = deterministic
-
-        if deterministic:
-            self.rot, self.sc = self._get_rot_and_sc()
+        self.deteministic_rot_sc = {}
 
     def _get_rot_and_sc(self):
         if type(self.rots) == tuple:
@@ -37,29 +35,44 @@ class RandomScaleNRotate:
 
         return rot, sc
 
-    def __call__(self, sample):
-        if self.deterministic:
-            rot, sc = self.rot, self.sc
+    def _rot_and_sc(self, tmp, rot, sc):
+        h, w = tmp.shape[:2]
+        center = (w / 2, h / 2)
+        assert(center != 0)  # Strange behaviour warpAffine
+        M = cv2.getRotationMatrix2D(center, rot, sc)
+
+        if ((tmp == 0) | (tmp == 1)).all():
+            flagval = cv2.INTER_NEAREST
         else:
-            rot, sc = self._get_rot_and_sc()
+            flagval = cv2.INTER_CUBIC
+        tmp = cv2.warpAffine(tmp, M, (w, h), flags=flagval)
+        return tmp
 
-        for k in sample.keys():
-            if 'file_name' in k:
-                continue
-
-            tmp = sample[k]
-            h, w = tmp.shape[:2]
-            center = (w / 2, h / 2)
-            assert(center != 0)  # Strange behaviour warpAffine
-            M = cv2.getRotationMatrix2D(center, rot, sc)
-
-            if ((tmp == 0) | (tmp == 1)).all():
-                flagval = cv2.INTER_NEAREST
+    def __call__(self, sample):
+        still_has_object = False
+        while not still_has_object:
+            if self.deteministic_rot_sc:
+                rot, sc = self.deteministic_rot_sc['rot'], self.deteministic_rot_sc['sc']
             else:
-                flagval = cv2.INTER_CUBIC
-            tmp = cv2.warpAffine(tmp, M, (w, h), flags=flagval)
+                rot, sc = self._get_rot_and_sc()
 
-            sample[k] = tmp
+            aug_label = self._rot_and_sc(sample['gt'], rot, sc)
+
+            # never had an object
+            if not len(np.unique(sample['gt'])) > 1:
+                break
+
+            still_has_object = len(np.unique(aug_label)) > 1
+
+            if self.deteministic_rot_sc:
+                assert still_has_object
+
+        sample['gt'] = aug_label
+        sample['image'] = self._rot_and_sc(sample['image'], rot, sc)
+
+        if self.deterministic:
+            self.deteministic_rot_sc['rot'] = rot
+            self.deteministic_rot_sc['sc'] = sc
 
         return sample
 
@@ -130,7 +143,7 @@ class RandomRemoveLabelRectangle:
     def _get_random_square(self, label):
         h, w = label.shape[:2]
         th, tw = self._size
-        
+
         i = random.randint(0, h - th)
         j = random.randint(0, w - tw)
 
@@ -143,13 +156,13 @@ class RandomRemoveLabelRectangle:
             random_square = self._random_square
         else:
             random_square = self._get_random_square(sample['gt'])
-        
+
         i, j, h, w = random_square
-        
+
         # print(sample['gt'].sum())
         sample['gt'][i:i + h, j:j + w] = 0.0
         # print(sample['gt'].sum())
-        
+
         # pred = sample['gt'].astype(np.uint8)
         # import os, imageio
         # pred_path = os.path.join(f"{sample['file_name']}.png")
@@ -157,7 +170,7 @@ class RandomRemoveLabelRectangle:
         # exit()
         return sample
 
-        
+
 class ToTensor:
     """Convert ndarrays in sample to Tensors."""
 

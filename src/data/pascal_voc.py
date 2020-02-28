@@ -130,7 +130,7 @@ class Normalize(object):
 
         img /= 255.0
         # img -= 255 * np.array(self.mean)
-        img -= self.mean
+        # img -= self.mean
         # img /= self.std
         mask /= 255.0
 

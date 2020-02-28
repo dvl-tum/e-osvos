@@ -34,13 +34,24 @@ class DAVIS(VOSDataset):
         else:
             seqs_keys = [self.seqs_key]
 
+        res_folder = '480p'
+        if self._full_resolution:
+            if self.year == 2016:
+                res_folder = '1080p'
+            else:
+                res_folder = 'Full-Resolution'
+
         # Initialize the per sequence images for online training
         for k in seqs_keys:
-            images = np.sort(listdir_nohidden(os.path.join(self.root_dir, 'JPEGImages/480p/', k)))
-            imgs_seq = list(map(lambda x: os.path.join('JPEGImages/480p/', k, x), images))
+            images = np.sort(listdir_nohidden(os.path.join(
+                self.root_dir, 'JPEGImages', res_folder, k)))
+            imgs_seq = list(map(lambda x: os.path.join(
+                self.root_dir, 'JPEGImages', res_folder, k, x), images))
 
-            lab = np.sort(listdir_nohidden(os.path.join(self.root_dir, 'Annotations/480p/', k)))
-            labels_seq = list(map(lambda x: os.path.join('Annotations/480p/', k, x), lab))
+            lab = np.sort(listdir_nohidden(os.path.join(
+                self.root_dir, 'Annotations', res_folder, k)))
+            labels_seq = list(map(lambda x: os.path.join(
+                self.root_dir, 'Annotations', res_folder, k, x), lab))
 
             assert (len(labels_seq) == len(imgs_seq)), f'failure in: {k}'
 
@@ -66,10 +77,11 @@ class DAVIS(VOSDataset):
         eval_cfg.MULTIOBJECT = bool(self.multi_object)
         if self.year == 2016:
             eval_cfg.MULTIOBJECT = False
+        if self._full_resolution:
+            eval_cfg.RESOLUTION = '1080p'
         eval_cfg.YEAR = self.year
         eval_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
         eval_cfg.PATH.DATA = os.path.abspath(os.path.join(eval_cfg.PATH.ROOT, self.root_dir))
         eval_cfg.PATH.SEQUENCES = os.path.join(eval_cfg.PATH.DATA, "JPEGImages", eval_cfg.RESOLUTION)
         eval_cfg.PATH.ANNOTATIONS = os.path.join(eval_cfg.PATH.DATA, "Annotations", eval_cfg.RESOLUTION)
         eval_cfg.PATH.PALETTE = os.path.abspath(os.path.join(eval_cfg.PATH.ROOT, 'data/palette.txt'))
-

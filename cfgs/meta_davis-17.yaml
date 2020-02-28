@@ -13,6 +13,6 @@ datasets:
     test: null
 data_cfg:
     multi_object: single_id
-    crop_sizes:
-        train: [480, 854]
-        meta: [480, 854]
+    # crop_sizes:
+    #     train: [480, 854]
+    #     meta: [480, 854]

@@ -7,7 +7,7 @@ meta_batch_size: 5
 env_suffix: null
 # saves training in '{save_dir}/{env_suffix}'
 save_dir: null
-resume_meta_run_epoch: null
+resume_meta_run_epoch_mode: null        # [None, BEST_VAL, LAST]
 # increases seed random seed after each meta run. supposed to enrich the training and improve generalization.
 increase_seed_per_meta_run: False
 random_frame_transform_per_task: False
@@ -46,8 +46,9 @@ meta_optim_optim_cfg:
 loss_func: dice
 # evalute all datasets
 eval_datasets: True
-save_eval_preds: False
+# evaluation is done on all datasets
 datasets:
+    # meta train dataset
     train:
         name: DAVIS-2016
         split: train_seqs
@@ -67,6 +68,10 @@ parent_model:
         learn_weight: False
         learn_bias: False
     replace_batch_with_group_norms: False
+
+    roi_pool_output_sizes:
+        box: 7
+        mask: 14
 
     decoder_norm_layer: GroupNorm
     # decoder_norm_layer: BatchNorm2d
@@ -119,6 +124,7 @@ train_early_stopping_cfg:
 single_obj_seq_mode: KEEP                           # [KEEP, IGNORE, AUGMENT]
 random_flip_label: False
 random_no_label: False
+random_box_coord_perm: True
 # [train_seqs, test_seqs, blackswan, ...]
 data_cfg:
     multi_object: False
@@ -126,6 +132,7 @@ data_cfg:
     num_workers: 0
     pin_memory: False
     normalize: True
+    full_resolution: False
     # integer or str for frame mode, e.g., 'random', 'middle'
     frame_ids:
         train: 0

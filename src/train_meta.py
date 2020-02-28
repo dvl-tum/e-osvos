@@ -59,12 +59,10 @@ train_val = ex.capture(train_val)
 
 @ex.capture
 def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
-             torch_cfg: dict, datasets: dict, resume_meta_run_epoch: int):
+             torch_cfg: dict, datasets: dict, resume_meta_run_epoch_mode: str):
     run_name = f"{_run.experiment_info['name']}_{datasets['train']['name']}_{env_suffix}"
     vis_dict = {}
-
-    # resume  = False if resume_meta_run_epoch is None else True
-    resume = resume_meta_run_epoch
+    resume  = False if resume_meta_run_epoch_mode is None else True
 
     opts = dict(title=f"CONFIG and NON META BASELINE (RUN: {_run._id})",
                 width=900, height=2000)
@@ -101,7 +99,12 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
 
             for flip_label in flip_labels:
                 loader, *_ = data_loaders(dataset)  # pylint: disable=E1120
-                legend = ['TIME PER FRAME', 'F MEAN', 'INIT J MEAN (SINGLE OBJ SEQS)', 'J MEAN']
+                legend = ['TIME PER FRAME', 'MEAN_TRAIN_LOSS']
+                if _config['parent_model']['architecture'] == 'MaskRCNN':
+                    legend.extend(['MEAN_TRAIN_LOSS_cls_score',
+                                   'MEAN_TRAIN_LOSS_bbox_pred',
+                                   'MEAN_TRAIN_LOSS_mask_fcn_logits'])
+                legend.extend(['F MEAN', 'INIT J MEAN (SINGLE OBJ SEQS)', 'J MEAN'])
                 for seq_name in loader.dataset.seqs_names:
                     loader.dataset.set_seq(seq_name)
                     if loader.dataset.num_objects == 1:
@@ -128,7 +131,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         legend.extend(['MEAN cls_score', 'MEAN bbox_pred', 'MEAN mask_fcn_logits'])
     legend.extend([f"{seq_name}" for seq_name in train_loader.dataset.seqs_names])
     opts = dict(
-        title=f"META LOSS (RUN: {_run._id})",
+        title=f"FINAL META LOSS (RUN: {_run._id})",
         xlabel='META EPOCHS',
         ylabel=f'META LOSS',
         width=900,
@@ -140,7 +143,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
     legend = ['MEAN', 'MEAN cls_score', 'MEAN bbox_pred', 'MEAN mask_fcn_logits'] + \
         [f"{seq_name}" for seq_name in train_loader.dataset.seqs_names]
     opts = dict(
-        title=f"TRAIN LOSS (RUN: {_run._id})",
+        title=f"INIT TRAIN LOSS (RUN: {_run._id})",
         xlabel='META EPOCHS',
         ylabel=f'TRAIN LOSS',
         width=900,
@@ -176,13 +179,13 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     opts = dict(
-        title=f"INIT LRS (RUN: {_run._id})",
+        title=f"LRS HIST (RUN: {_run._id})",
         xlabel='EPOCHS',
         ylabel='LR',
         width=900,
         height=450,
-        legend=['MEAN', 'STD'])
-    vis_dict['init_lrs_vis'] = LineVis(
+        legend=legend)
+    vis_dict['lrs_hist_vis'] = LineVis(
         opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     return vis_dict
@@ -357,21 +360,21 @@ def device_for_process(rank: int, _config: dict):
     return device, meta_device
 
 
-def ensure_shared_grads(model, shared_model):
-    """ working comment --- maintains the grads on the CPU """
-    for param, shared_param in zip(model.parameters(),
-                                   shared_model.parameters()):
+# def ensure_shared_grads(model, shared_model):
+#     """ working comment --- maintains the grads on the CPU """
+#     for param, shared_param in zip(model.parameters(),
+#                                    shared_model.parameters()):
 
-        # if shared_param.grad is None:
-        #     shared_param.grad = param.grad.cpu()
-        # else:
-        shared_param.grad += param.grad.cpu()
+#         # if shared_param.grad is None:
+#         #     shared_param.grad = param.grad.cpu()
+#         # else:
+#         shared_param.grad += param.grad.cpu()
 
 
 def meta_run(rank: int,
              shared_meta_optim_state_dict: dict,
              global_rng_state: torch.ByteTensor, _config: dict, dataset: str,
-             return_dict: dict, shared_variables: dict,
+             shared_dict: dict, shared_variables: dict,
              shared_meta_optim_grads: dict):
 
     device, meta_device = device_for_process(rank, _config)
@@ -389,6 +392,11 @@ def meta_run(rank: int,
         model.load_state_dict(parent_states['train']['states'][0])
     model_state_dict = model.state_dict()
 
+    if _config['parent_model']['architecture'] == 'MaskRCNN':
+        model.rpn.augment_target_proposals_mode = None
+        # model.rpn.augment_target_proposals_mode = 'REPLACE'
+        # model.rpn.augment_target_proposals_num_box_augs = None
+
     meta_optim = MetaOptimizer(model, **_config['meta_optim_cfg'])
     # meta_optim.load_state_dict(meta_optim_state_dict)
 
@@ -398,10 +406,10 @@ def meta_run(rank: int,
 
     while True:
         # main process sets iter_done=False after shared_meta_optim is updated
-        while return_dict['sub_iter_done']:
+        while shared_dict['sub_iter_done']:
             time.sleep(0.25)
         else:
-            meta_mini_batch = return_dict['sub_meta_mini_batch']
+            meta_mini_batch = shared_dict['sub_meta_mini_batch']
             # filter None values from grouper
             meta_mini_batch = [s for s in meta_mini_batch if s is not None]
 
@@ -419,24 +427,25 @@ def meta_run(rank: int,
         model.to(device)
         meta_optim.to(meta_device)
 
+        # TODO: refactor and combine seqs_metrics and vis_data_seqs
         seqs_metrics = ['train_loss', 'train_losses', 'meta_loss',
                         'meta_losses', 'loss', 'J', 'F']
         seqs_metrics = {m: {s['seq_name']: []
                             for s in meta_mini_batch}
                         for m in seqs_metrics}
+        vis_data_seqs = {s['seq_name']: [] for s in meta_mini_batch}
 
-        vis_data_seqs = {}
         for sample in meta_mini_batch:
             seq_name = sample['seq_name']
             train_loader = sample['train_loader']
             meta_loader = sample['meta_loader']
 
-            vis_data_seqs[seq_name] = []
-
             bptt_loss = 0
             stop_train = False
             prev_bptt_iter_loss = torch.zeros(1).to(meta_device)
             train_loss_hist = []
+            train_losses_hist = []
+            vis_data_seqs[seq_name].append([])
 
             # meta_optim_param_grad_seq = {name: torch.zeros_like(param).cpu()
             #                             for name, param in meta_optim.named_parameters()}
@@ -473,7 +482,11 @@ def meta_run(rank: int,
                     model.train_without_dropout()
 
                     if _config['parent_model']['architecture'] == 'MaskRCNN':
-                        train_loss, train_losses = model(train_inputs, train_gts)
+                        train_loss, train_losses = model(
+                            train_inputs, train_gts, sample['box_coord_perm'],
+                            train_loader.dataset.flip_label)
+                        train_losses_hist.append({k: v.cpu().item()
+                                                  for k, v in train_losses.items()})
                     else:
                         train_outputs = model(train_inputs)
                         train_loss = compute_loss(_config['loss_func'],
@@ -500,7 +513,9 @@ def meta_run(rank: int,
                         meta_device), meta_gts.to(meta_device)
 
                     if _config['parent_model']['architecture'] == 'MaskRCNN':
-                        meta_loss, meta_losses = model(meta_inputs, meta_gts)
+                        meta_loss, meta_losses = model(
+                            meta_inputs, meta_gts, sample['box_coord_perm'],
+                            meta_loader.dataset.flip_label)
                     else:
                         meta_outputs = model(meta_inputs)
                         meta_loss = compute_loss(_config['loss_func'],
@@ -513,13 +528,15 @@ def meta_run(rank: int,
                 prev_bptt_iter_loss = bptt_iter_loss.detach()
 
                 # visualization
-                # lr = meta_optim.state["log_lr"].exp()
-                # # lr_mom = meta_optim.state["lr_mom_logit"].sigmoid()
-                # # weight_decay = meta_optim.state["log_weight_decay"].exp()
+                lr = meta_optim.state["log_lr"].exp()
+                if not meta_optim.lr_per_tensor:
+                    lr = torch.tensor([l.mean() for l in lr])
 
-                # vis_data = [train_loss.item(), bptt_loss.item(),
-                #             lr.mean().item(), lr.std().item(),]
-                # vis_data_seqs[seq_name].append(vis_data)
+                # lr_mom = meta_optim.state["lr_mom_logit"].sigmoid()
+                # weight_decay = meta_optim.state["log_weight_decay"].exp()
+
+                vis_data = [train_loss.item(), bptt_loss.item(), lr.cpu().detach().numpy()]
+                vis_data_seqs[seq_name][-1].append(vis_data)
 
                 stop_train = stop_train or early_stopping(
                     train_loss_hist, **_config['train_early_stopping_cfg'])
@@ -591,23 +608,22 @@ def meta_run(rank: int,
             # seqs_metrics['J'][seq_name] = J
             # seqs_metrics['F'][seq_name] = F
             # seqs_metrics['train_loss'][seq_name].append(train_loss_hist[-1])
-            seqs_metrics['train_loss'][seq_name].append(train_loss.item())
+            seqs_metrics['train_loss'][seq_name].append(train_loss_hist[0])
             if _config['parent_model']['architecture'] == 'MaskRCNN':
-                seqs_metrics['train_losses'][seq_name].append({k: v.cpu().item()
-                                                            for k, v in train_losses.items()})
+                seqs_metrics['train_losses'][seq_name].append(train_losses_hist[0])
 
         for name, param in meta_optim.named_parameters():
             shared_meta_optim_grads[name] += param.grad.cpu()
 
-        return_dict['seqs_metrics'] = seqs_metrics
-        return_dict['vis_data_seqs'] = {}  # vis_data_seqs
-        return_dict['global_rng_state'] = global_rng_state
-        return_dict['sub_iter_done'] = True
+        shared_dict['seqs_metrics'] = seqs_metrics
+        shared_dict['vis_data_seqs'] = vis_data_seqs
+        shared_dict['global_rng_state'] = global_rng_state
+        shared_dict['sub_iter_done'] = True
 
 
 def evaluate(rank: int, dataset_key: str, flip_label: bool,
              shared_meta_optim_state_dict: dict, shared_variables: dict,
-             _config: dict, return_dict: dict):
+             _config: dict, shared_dict: dict, save_dir: str, vis_win_names: dict):
     seed = _config['seed']
     loss_func = _config['loss_func']
     datasets = _config['datasets']
@@ -619,6 +635,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
     while True:
         meta_optim_state_dict = copy.deepcopy(shared_meta_optim_state_dict)
         meta_iter = shared_variables['meta_iter']
+        meta_epoch = shared_variables['meta_epoch']
 
         set_random_seeds(seed)
         device = torch.device(f'cuda:{rank}')
@@ -653,10 +670,12 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             assert _config['meta_optim_cfg']['matching_input'], (
                 'Online adaptation must have meta_optim_cfg.matching_input=True. ')
 
-        # save predictions in human readable format
-        if _config['save_eval_preds']:
-            preds_save_dir = os.path.join(
-                f"log/eval/{datasets[dataset_key]['name']}_{_config['env_suffix']}")
+        # save predictions in human readable format and with boxes
+        if save_dir is not None:
+            preds_save_dir = os.path.join(save_dir,
+                                          'best_eval_preds',
+                                          f"{datasets[dataset_key]['name']}",
+                                          f"{datasets[dataset_key]['split']}")
             if not os.path.exists(preds_save_dir):
                 os.makedirs(preds_save_dir)
             for seq_name in train_loader.dataset.seqs_names:
@@ -673,11 +692,19 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         num_frames = 0
         init_J_seq = []
         J_seq = []
+        train_loss_seq = []
+        train_losses_seq = []
         F_seq = []
+        masks = {}
+        boxes = {}
         for seq_name in train_loader.dataset.seqs_names:
             train_loader.dataset.set_seq(seq_name)
             test_loader.dataset.set_seq(seq_name)
             meta_loader.dataset.set_seq(seq_name)
+
+            if _config['parent_model']['architecture'] == 'MaskRCNN':
+                model.rpn.augment_target_proposals_mode = 'EXTEND'
+                # model.rpn.augment_target_proposals_num_box_augs = 10
 
             # initial metrics
             # if multi object is treated as multiple single objects, init J without
@@ -692,9 +719,10 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                 _, _, J, _,  = eval_loader(model, test_loader, loss_func)
                 init_J_seq.extend(J)
+                # init_J_seq.extend([0.0])
 
-            preds = []
-            boxes = []
+            masks[seq_name] = []
+            boxes[seq_name] = []
             for obj_id in range(train_loader.dataset.num_objects):
                 train_loader.dataset.multi_object_id = obj_id
                 meta_loader.dataset.multi_object_id = obj_id
@@ -726,9 +754,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         train_frame_gt = train_frame['gt']
 
                         if not obj_id:
-                            preds.append((obj_id + 1) * train_frame_gt)
+                            masks[seq_name].append((obj_id + 1) * train_frame_gt)
                         else:
-                            preds[i][train_frame_gt == 1.0] = obj_id + 1
+                            masks[seq_name][i][train_frame_gt == 1.0] = obj_id + 1
 
                         eval_frame_range_min = 1
                         eval_frame_range_max = eval_online_adapt_step // 2 + 1
@@ -756,35 +784,52 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         # for module in model.modules_with_requires_grad_params():
                         #     print(dataset_key, seq_name, module.match_embed.mean(dim=0, keepdim=True).detach().mean())
 
-                    train_val(  # pylint: disable=E1120
-                        model, train_loader, None, meta_optim, _config['num_epochs'], seed,
-                        early_stopping_func=early_stopping_func,
-                        validate_inter=None,
-                        loss_func=loss_func)
+                    if _config['parent_model']['architecture'] == 'MaskRCNN':
+                        model.rpn.augment_target_proposals_mode = None
+                        # model.rpn.augment_target_proposals_num_box_augs = 10
 
-                    # for epoch in epoch_iter(_config['num_epochs']):
-                    #     set_random_seeds(_config['seed'] + epoch)
+                    # train_val(
+                    #     model, train_loader, None, meta_optim, _config['num_epochs'], seed,
+                    #     early_stopping_func=early_stopping_func,
+                    #     validate_inter=None,
+                    #     loss_func=loss_func)
 
-                    #     train_loss_hist = []
-                    #     for train_batch in train_loader:
-                    #         train_inputs, train_gts = train_batch['image'], train_batch['gt']
-                    #         train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
+                    train_loss_hist = []
+                    for epoch in epoch_iter(_config['num_epochs']):
+                        set_random_seeds(_config['seed'] + epoch)
 
-                    #         model.train_without_dropout()
-                    #         train_outputs = model(train_inputs)
+                        for _, sample_batched in enumerate(train_loader):
+                            inputs, gts = sample_batched['image'], sample_batched['gt']
+                            inputs, gts = inputs.to(device), gts.to(device)
 
-                    #         train_loss = compute_loss(loss_func, train_outputs[-1], train_gts)
-                    #         train_loss_hist.append(train_loss.detach())
+                            model.train_without_dropout()
 
-                    #         model.zero_grad()
-                    #         train_loss.backward()
+                            if isinstance(model, MaskRCNN):
+                                train_loss, train_losses = model(inputs, gts)
+                            else:
+                                outputs = model(inputs)
+                                train_loss = compute_loss(loss_func, outputs[-1], gts)
 
-                    #         meta_optim.set_train_loss(train_loss)
-                    #         with torch.no_grad():
-                    #             meta_optim.step()
+                            train_loss_hist.append(train_loss.item())
 
-                    #         if early_stopping_func(train_loss_hist):
-                    #             break
+                            model.zero_grad()
+
+                            meta_optim.set_train_loss(train_loss)
+                            meta_optim.step(train_loss)
+
+                            if early_stopping_func(train_loss_hist):
+                                break
+
+                        if early_stopping_func(train_loss_hist):
+                            break
+
+                    train_loss_seq.append(train_loss.item())
+
+                    if _config['parent_model']['architecture'] == 'MaskRCNN':
+                        train_losses_seq.append({k: v.cpu().item()
+                                                 for k, v in train_losses.items()})
+                        model.rpn.augment_target_proposals_mode = 'EXTEND'
+                        # model.rpn.augment_target_proposals_num_box_augs = 10
 
                     # run model on frame range
                     test_loader.sampler.indices = range(eval_frame_range_min, eval_frame_range_max)
@@ -792,66 +837,17 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     probs_frame_range = probs_frame_range.cpu()
 
                     for frame_id, probs, box in zip(test_loader.sampler.indices, probs_frame_range, boxes_frame_range):
-
-                        # if frame_id == 7:
-
-                        #     for train_batch in train_loader:
-                        #         _, train_gts = train_batch['image'], train_batch['gt']
-
-                        #         pred_ = np.transpose(train_gts[0].cpu().numpy(), (1, 2, 0)).astype(np.uint8)
-                        #         # pred = mask.cpu().numpy().astype(np.uint8)
-                        #         pred_path_ = os.path.join(f"gt_{obj_id}.png")
-                        #         imageio.imsave(pred_path_, 20 * pred_)
-
-                        #     pred = probs.gt(0.5)
-                        #     pred_ = np.transpose(pred.cpu().numpy(), (1, 2, 0)).astype(np.uint8)
-                        #     # pred = mask.cpu().numpy().astype(np.uint8)
-                        #     pred_path_ = os.path.join(f"mask_{obj_id}.png")
-                        #     imageio.imsave(pred_path_, 20 * pred_)
-
                         if not obj_id:
-                            preds.append(probs)
-                            boxes.append(box.unsqueeze(dim=0))
+                            masks[seq_name].append(probs)
+                            boxes[seq_name].append(box.unsqueeze(dim=0))
                         else:
-                            preds[frame_id] = torch.cat([preds[frame_id], probs])
-                            boxes[frame_id - 1] = torch.cat([boxes[frame_id - 1], box.unsqueeze(dim=0)])
+                            masks[seq_name][frame_id] = torch.cat([masks[seq_name][frame_id], probs])
+                            boxes[seq_name][frame_id - 1] = torch.cat([boxes[seq_name][frame_id - 1], box.unsqueeze(dim=0)])
 
                         if obj_id == train_loader.dataset.num_objects - 1:
-                            background_mask = preds[frame_id].max(dim=0, keepdim=True)[0].lt(0.5)
-                            preds[frame_id] = preds[frame_id].argmax(dim=0, keepdim=True).float() + 1.0
-                            preds[frame_id][background_mask] = 0.0
-
-                            # if frame_id == 7:
-                            #     pred_ = np.transpose(preds[frame_id].cpu().numpy(), (1, 2, 0)).astype(np.uint8)
-                            #     # pred = mask.cpu().numpy().astype(np.uint8)
-                            #     imageio.imsave(f"mask.png", 20 * pred_)
-
-                            #     pred_ *= 20
-                            #     import matplotlib.pyplot as plt
-
-                            #     fig = plt.figure()
-                            #     ax = plt.Axes(fig, [0., 0., 1., 1.])
-                            #     ax.set_axis_off()
-                            #     fig.add_axes(ax)
-                            #     ax.imshow(pred_.squeeze(2))
-
-                            #     if frame_id:
-                            #         for box in boxes[frame_id - 1]:
-                            #             ax.add_patch(
-                            #                 plt.Rectangle(
-                            #                     (box[0], box[1]),
-                            #                     box[2] - box[0],
-                            #                     box[3] - box[1],
-                            #                     fill=False,
-                            #                     linewidth=1.0,
-                            #                 ))
-
-                            #     plt.axis('off')
-                            #     # plt.tight_layout()
-                            #     plt.draw()
-                            #     plt.savefig(f"mask_with_boxes.png", dpi=100)
-                            #     plt.close()
-                            #     exit()
+                            background_mask = masks[seq_name][frame_id].max(dim=0, keepdim=True)[0].lt(0.5)
+                            masks[seq_name][frame_id] = masks[seq_name][frame_id].argmax(dim=0, keepdim=True).float() + 1.0
+                            masks[seq_name][frame_id][background_mask] = 0.0
 
                     test_loader.sampler.indices = None
 
@@ -861,67 +857,106 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 eval_time += timeit.default_timer() - start_eval
 
             # TODO: refactor
+            # assert test_loader.dataset.frame_id is None
             test_loader_frame_id = test_loader.dataset.frame_id
             test_loader.dataset.frame_id = None
-            for frame_id, pred in enumerate(preds):
+            for frame_id, mask_frame in enumerate(masks[seq_name]):
                 file_name = test_loader.dataset[frame_id]['file_name']
-                pred = np.transpose(pred.cpu().numpy(), (1, 2, 0)).astype(np.uint8)
+                mask_frame = np.transpose(mask_frame.cpu().numpy(), (1, 2, 0)).astype(np.uint8)
 
                 if flip_label:
-                    pred = np.logical_not(pred).astype(np.uint8)
+                    mask_frame = np.logical_not(mask_frame).astype(np.uint8)
 
                 pred_path = os.path.join(temp_preds_save_dir, seq_name, os.path.basename(file_name) + '.png')
-                imageio.imsave(pred_path, pred)
 
-                if _config['save_eval_preds']:
-                    pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(file_name) + f'_flip_label_{flip_label}.png')
-                    # TODO: implement color palette for labels
+                # if _config['data_cfg']['full_resolution']:
+                #     import cv2
+                #     w, h, _ = mask_frame.shape
+                #     print(mask_frame.shape)
+                #     scaling_factor = 480 / h
 
-                    fig = plt.figure()
-                    ax = plt.Axes(fig, [0., 0., 1., 1.])
-                    ax.set_axis_off()
-                    fig.add_axes(ax)
+                #     mask_frame = cv2.resize(mask_frame, dsize=(
+                #         math.ceil(w * scaling_factor), 480), interpolation=cv2.INTER_CUBIC)
 
-                    ax.imshow(pred.squeeze(2), cmap='jet', vmin=0, vmax=train_loader.dataset.num_objects)
-
-                    if frame_id:
-                        for box in boxes[frame_id - 1]:
-                            ax.add_patch(
-                                plt.Rectangle(
-                                    (box[0], box[1]),
-                                    box[2] - box[0],
-                                    box[3] - box[1],
-                                    fill=False,
-                                    linewidth=1.0,
-                                ))
-
-                    plt.axis('off')
-                    # plt.tight_layout()
-                    plt.draw()
-                    plt.savefig(pred_path, dpi=100)
-                    plt.close()
-                    # imageio.imsave(pred_path, pred)
-
+                imageio.imsave(pred_path, mask_frame)
             test_loader.dataset.frame_id = test_loader_frame_id
 
             evaluation = eval_davis_seq(temp_preds_save_dir, seq_name)
+            # print(evaluation)
             J_seq.extend(evaluation['J']['mean'])
             F_seq.extend(evaluation['F']['mean'])
 
         shutil.rmtree(temp_preds_save_dir)
 
-        return_dict['init_J_seq'] = init_J_seq
-        return_dict['J_seq'] = J_seq
-        return_dict['F_seq'] = F_seq
-        return_dict['time_per_frame'] = eval_time / num_frames
+        mean_J = torch.tensor(J_seq).mean().item()
+        if mean_J > shared_dict['best_mean_J']:
+            shared_dict['best_mean_J'] = mean_J
+
+            if save_dir is not None:
+                save_meta_run = {'meta_optim_state_dict': meta_optim.state_dict(),
+                                #  'meta_optim_optim_state_dict': meta_optim_optim.state_dict(),
+                                 'vis_win_names': vis_win_names,
+                                 'meta_iter': meta_iter,
+                                 'meta_epoch': meta_epoch,}
+                torch.save(save_meta_run, os.path.join(
+                    save_dir, f"best_{dataset_key}_meta_iter.model"))
+
+                test_loader_frame_id = test_loader.dataset.frame_id
+                test_loader.dataset.frame_id = None
+                for (seq_name, masks_seq), (_, boxes_seq) in zip(masks.items(), boxes.items()):
+                    test_loader.dataset.set_seq(seq_name)
+                    test_loader.dataset.multi_object_id = 0
+
+                    for frame_id, mask_frame in enumerate(masks_seq):
+                        file_name = test_loader.dataset[frame_id]['file_name']
+                        mask_frame = np.transpose(mask_frame.cpu().numpy(), (1, 2, 0)).astype(np.uint8)
+                        if flip_label:
+                            mask_frame = np.logical_not(mask_frame).astype(np.uint8)
+
+                        pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(file_name) + f'_flip_label_{flip_label}.png')
+                        # TODO: implement color palette for labels
+
+                        fig = plt.figure()
+                        ax = plt.Axes(fig, [0., 0., 1., 1.])
+                        ax.set_axis_off()
+                        fig.add_axes(ax)
+
+                        ax.imshow(mask_frame.squeeze(2), cmap='jet', vmin=0, vmax=test_loader.dataset.num_objects)
+
+                        if frame_id:
+                            for box in boxes_seq[frame_id - 1]:
+                                ax.add_patch(
+                                    plt.Rectangle(
+                                        (box[0], box[1]),
+                                        box[2] - box[0],
+                                        box[3] - box[1],
+                                        fill=False,
+                                        linewidth=1.0,
+                                    ))
+
+                        plt.axis('off')
+                        # plt.tight_layout()
+                        plt.draw()
+                        plt.savefig(pred_path, dpi=100)
+                        plt.close()
+                        # imageio.imsave(pred_path, pred)
+                test_loader.dataset.frame_id = test_loader_frame_id
+
+        shared_dict['init_J_seq'] = init_J_seq
+        shared_dict['J_seq'] = J_seq
+        shared_dict['train_losses_seq'] = train_losses_seq
+        shared_dict['train_loss_seq'] = train_loss_seq
+        shared_dict['F_seq'] = F_seq
+        shared_dict['time_per_frame'] = eval_time / num_frames
         # set meta_iter here to signal main process that eval is finished
-        return_dict['meta_iter'] = meta_iter
+        shared_dict['meta_iter'] = meta_iter
 
 
 @ex.capture
 def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: bool,
                               random_flip_label: bool, random_no_label: bool,
-                              data_cfg: dict, single_obj_seq_mode: str):
+                              data_cfg: dict, single_obj_seq_mode: str,
+                              random_box_coord_perm: bool):
     train_loader, test_loader, _ = data_loaders(
         datasets['train'], **data_cfg)
     test_dataset = test_loader.dataset
@@ -943,8 +978,8 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
         test_dataset.set_seq(seq_name)
         num_objects = test_dataset.num_objects
 
-        if num_objects == 1 and single_obj_seq_mode == 'IGNORE':
-            continue
+        # if num_objects == 1 and single_obj_seq_mode == 'IGNORE':
+        #     continue
 
         # train_frame_id = 0
         # for meta_frame_id in range(len(test_dataset)):
@@ -964,111 +999,131 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
         # frame_combs = [(train_frame_id.item(), train_frame_id.item() + eps.item())
         #                for train_frame_id, eps in zip(train_idxs, epsilons)]
 
-        min_per_seq_tasks = 1
-        if not num_objects == 1 or single_obj_seq_mode == 'AUGMENT':
-            min_per_seq_tasks = 2
+        # min_per_seq_tasks = 1
+        # if not num_objects == 1 or single_obj_seq_mode == 'AUGMENT':
+        #     min_per_seq_tasks = 2
 
-        seq_tasks = []
-        while len(seq_tasks) < min_per_seq_tasks:
-            seq_tasks = []
-            train_ids = torch.randint(low=0 , high=len(test_dataset), size=(1, ))
-            # train_ids = [torch.tensor(0)]
-            meta_ids = torch.randint(low=0 , high=len(test_dataset), size=(1, ))
-            frame_combs = [(train_frame_id.item(), meta_frame_id.item())
-                        for train_frame_id, meta_frame_id in zip(train_ids, meta_ids)]
+        # seq_tasks = []
+        # while len(seq_tasks) < min_per_seq_tasks:
+        #     seq_tasks = []
 
-            # for i in range(len(frame_combs)):
-            #     meta_frame_id = frame_combs[i][1]
-            #     frame_combs.append((meta_frame_id, meta_frame_id))
+        #     train_ids = torch.randint(low=0 , high=len(test_dataset), size=(1, ))
+        #     # train_ids = [torch.tensor(0)]
+        #     meta_ids = torch.randint(low=0 , high=len(test_dataset), size=(1, ))
+        #     frame_combs = [(train_frame_id.item(), meta_frame_id.item())
+        #                 for train_frame_id, meta_frame_id in zip(train_ids, meta_ids)]
 
-            for train_frame_id, meta_frame_id in frame_combs:
+        #     # for i in range(len(frame_combs)):
+        #     #     meta_frame_id = frame_combs[i][1]
+        #     #     frame_combs.append((meta_frame_id, meta_frame_id))
 
-                if train_frame_id == meta_frame_id:
-                    continue
+        #     for train_frame_id, meta_frame_id in frame_combs:
 
-                if num_objects == 1:
-                    seq_obj_ids = [0]
+        #         if train_frame_id == meta_frame_id:
+        #             continue
 
-                    if single_obj_seq_mode == 'AUGMENT':
-                        seq_obj_ids = [0, 1]
-                else:
-                    # pick 2 random obj ids such that each batch contains 2 obj per sequence
-                    seq_obj_ids = [obj_id.item() for obj_id
-                                   in torch.randperm(test_dataset.num_objects)]
-                    seq_obj_ids = seq_obj_ids[:2]
+        if num_objects == 1:
+            if single_obj_seq_mode == 'IGNORE':
+                continue
+            elif single_obj_seq_mode == 'AUGMENT':  # or single_obj_seq_mode == 'KEEP':
+                seq_obj_ids = [0, 1]
+            elif single_obj_seq_mode == 'KEEP':
+                seq_obj_ids = [0]
+            else:
+                raise NotImplementedError
+        else:
+            # pick 2 random obj ids such that each batch contains 2 obj per sequence
+            seq_obj_ids = [obj_id.item() for obj_id
+                           in torch.randperm(test_dataset.num_objects)]
+            seq_obj_ids = seq_obj_ids[:2]
 
-                for obj_id in seq_obj_ids:
+        for obj_id in seq_obj_ids:
 
-                # for obj_id in range(train_loader.dataset.num_objects):
-                # multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
+        # for obj_id in range(train_loader.dataset.num_objects):
+        # multi_object_id = torch.randint(train_loader.dataset.num_objects, (1,)).item()
 
-                    train_loader, _, meta_loader = data_loaders(
-                        datasets['train'], **data_cfg)
+            train_loader, _, meta_loader = data_loaders(
+                datasets['train'], **data_cfg)
 
-                    train_loader.dataset.set_seq(seq_name)
-                    meta_loader.dataset.set_seq(seq_name)
+            train_loader.dataset.set_seq(seq_name)
+            meta_loader.dataset.set_seq(seq_name)
 
-                    train_loader.dataset.multi_object_id = obj_id
-                    train_loader.dataset.frame_id = train_frame_id
+            train_loader.dataset.multi_object_id = obj_id
+            # train_loader.dataset.frame_id = train_frame_id
+            train_loader.dataset.set_random_frame_id_with_label()
 
-                    meta_loader.dataset.set_seq(seq_name)
-                    meta_loader.dataset.multi_object_id = obj_id
-                    meta_loader.dataset.frame_id = meta_frame_id
+            meta_loader.dataset.multi_object_id = obj_id
+            # meta_loader.dataset.frame_id = meta_frame_id
 
+            meta_frame_ids = [meta_loader.dataset.set_random_frame_id_with_label()
+                              for _ in range(data_cfg['batch_sizes']['meta'])]
+            meta_loader.dataset.frame_id = None
+            meta_loader.sampler.indices = meta_frame_ids
 
-                    if num_objects == 1 and single_obj_seq_mode == 'AUGMENT' and obj_id:
-                        single_obj_seqs_ids = list(range(len(single_obj_seqs)))
-                        single_obj_seqs_ids.pop(single_obj_seqs.index(seq_name))
+            if num_objects == 1 and single_obj_seq_mode == 'AUGMENT':
+                single_obj_seqs_ids = list(range(len(single_obj_seqs)))
+                single_obj_seqs_ids.pop(single_obj_seqs.index(seq_name))
 
-                        random_other_single_obj_seq = single_obj_seqs[random.choice(
-                            single_obj_seqs_ids)]
+                random_other_single_obj_seq = single_obj_seqs[random.choice(
+                    single_obj_seqs_ids)]
 
-                        train_loader.dataset.augment_with_single_obj_seq_key = random_other_single_obj_seq
-                        meta_loader.dataset.augment_with_single_obj_seq_key = random_other_single_obj_seq
-                        train_loader.dataset.multi_object_id = 0
-                        meta_loader.dataset.multi_object_id = 0
+                train_loader.dataset.augment_with_single_obj_seq_key = random_other_single_obj_seq
+                meta_loader.dataset.augment_with_single_obj_seq_key = random_other_single_obj_seq
 
-                    if random_frame_transform_per_task:
-                        assert not data_cfg['random_train_transform']
+            if random_frame_transform_per_task:
+                # if train_frame_id == meta_frame_id:
+                #     random_transform.append(custom_transforms.RandomRemoveLabelRectangle((90, 854)))
 
-                        random_transform = [custom_transforms.RandomHorizontalFlip(deterministic=True)]
+                random_transform = [custom_transforms.RandomHorizontalFlip(),
+                                    custom_transforms.RandomScaleNRotate(rots=(-30, 30),
+                                                                         scales=(.5, 1.5)),
+                                    custom_transforms.ToTensor(),]
+                random_transform = transforms.Compose(random_transform)
 
-                        # if train_frame_id == meta_frame_id:
-                        #     random_transform.append(custom_transforms.RandomRemoveLabelRectangle((90, 854)))
+                meta_loader.dataset.transform = random_transform
 
-                        random_transform.extend([custom_transforms.RandomScaleNRotate(rots=(-30, 30),
-                                                                                    scales=(.5, 1.5),
-                                                                                    deterministic=True),
-                                                custom_transforms.ToTensor(),])
-                        random_transform = transforms.Compose(random_transform)
+                if not data_cfg['random_train_transform']:
+                    # random_transform = [custom_transforms.RandomHorizontalFlip()]
 
-                        meta_loader.dataset.transform = random_transform
-                        train_loader.dataset.transform = random_transform
+                    # random_transform.extend([custom_transforms.RandomScaleNRotate(rots=(-30, 30),
+                    #                                                                 scales=(.5, 1.5)),
+                    #                             custom_transforms.ToTensor(),])
+                    # random_transform = transforms.Compose(random_transform)
+                    train_loader.dataset.transform = random_transform
 
-                    # flip_label = False
-                    if random_flip_label:
-                        flip_label = bool(random.getrandbits(1))
-                        train_loader.dataset.flip_label = flip_label
-                        meta_loader.dataset.flip_label = flip_label
+            # flip_label = False
+            if random_flip_label:
+                flip_label = bool(random.getrandbits(1))
+                train_loader.dataset.flip_label = flip_label
+                meta_loader.dataset.flip_label = flip_label
 
-                    # no_label = False
-                    if random_no_label:
-                        no_label = bool(random.getrandbits(1))
-                        train_loader.dataset.no_label = no_label
-                        meta_loader.dataset.no_label = no_label
+            # no_label = False
+            if random_no_label:
+                no_label = bool(random.getrandbits(1))
+                train_loader.dataset.no_label = no_label
+                meta_loader.dataset.no_label = no_label
 
-                    # check if train and meta frame have an object after random_frame_transform_per_task is applied
-                    if len(torch.unique(list(train_loader)[0]['gt'])) > 1 and len(torch.unique(list(meta_loader)[0]['gt'])) > 1:
-                    # if train_loader.dataset.has_frame_object() and meta_loader.dataset.has_frame_object():
-                        seq_tasks.append({'seq_name': seq_name,
-                                          'train_loader': train_loader,
-                                          'meta_loader': meta_loader})
-                    else:
-                        # if one object is not on frame. remove entire frame.
-                        seq_tasks = []
-                        break
+            box_coord_perm = None
+            if random_box_coord_perm:
+                box_coord_perm = torch.randperm(4)
 
-        meta_tasks.extend(seq_tasks)
+            meta_tasks.append({'seq_name': seq_name,
+                               'box_coord_perm': box_coord_perm,
+                               'train_loader': train_loader,
+                               'meta_loader': meta_loader})
+
+            # # check if train and meta frame have an object after random_frame_transform_per_task is applied
+            # if len(torch.unique(list(train_loader)[0]['gt'])) > 1 and len(torch.unique(list(meta_loader)[0]['gt'])) > 1:
+            # # if train_loader.dataset.has_frame_object() and meta_loader.dataset.has_frame_object():
+            #     seq_tasks.append({'seq_name': seq_name,
+            #                         'train_loader': train_loader,
+            #                         'meta_loader': meta_loader})
+            # else:
+            #     # if one object is not on frame. remove entire frame.
+            #     seq_tasks = []
+            #     break
+
+        # meta_tasks.extend(seq_tasks)
 
     # random_meta_task_idx = torch.randperm(len(meta_tasks))
     # return [meta_tasks[i] for i in random_meta_task_idx]
@@ -1086,7 +1141,7 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
 
 
 @ex.automain
-def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
+def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
          eval_datasets: bool, num_meta_processes_per_gpu: int, datasets: dict,
          meta_optim_optim_cfg: dict, seed: int, _config: dict, _log: logging,
          meta_optim_model_file: str, gpu_per_dataset_eval: bool,
@@ -1103,18 +1158,20 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
     if save_dir is not None:
         save_dir = os.path.join(save_dir, f"{datasets['train']['name']}_{env_suffix}")
         if os.path.exists(save_dir):
-            # if resume_meta_run_epoch is None:
-            if not resume_meta_run_epoch:
+            if resume_meta_run_epoch_mode is None:
                 shutil.rmtree(save_dir)
                 os.makedirs(save_dir)
         else:
             os.makedirs(save_dir)
 
-    # if resume_meta_run_epoch is not None:
-    if resume_meta_run_epoch:
-        saved_meta_run = torch.load(
-            # os.path.join(save_dir, f"meta_run_{resume_meta_run_epoch}.model"))
-            os.path.join(save_dir, f"last_meta_epoch.model"))
+    if resume_meta_run_epoch_mode is not None:
+        if resume_meta_run_epoch_mode == 'LAST':
+            resume_model_name = f"last_meta_epoch.model"
+        elif resume_meta_run_epoch_mode == 'BEST_VAL':
+            resume_model_name = f"best_val_iter.model"
+        else:
+            raise NotImplementedError
+        saved_meta_run = torch.load(os.path.join(save_dir, resume_model_name))
         # TODO: refactor and do in init_vis method
         for n in vis_dict.keys():
             if n in saved_meta_run['vis_win_names']:
@@ -1145,15 +1202,20 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
         else:
             num_meta_processes -= 1
 
-    num_meta_processes *= num_meta_processes_per_gpu
+    if num_meta_processes:
+        num_meta_processes *= num_meta_processes_per_gpu
 
-    num_meta_tasks = len(generate_meta_train_tasks())  # pylint: disable=E1120
-    if meta_batch_size == 'full_batch' or meta_batch_size > num_meta_tasks:
-        meta_batch_size = num_meta_tasks
-        _log.info(f"Meta batch size is full batch: meta_batch_size={meta_batch_size}.")
-    if data_cfg['multi_object']:
-        assert not meta_batch_size % 2, (f'meta_batch_size {meta_batch_size} is not a multiple of 2 for multi object training.')
-    assert not meta_batch_size % num_meta_processes, ('meta_batch_size is not a multiple of num_meta_processes.')
+        meta_tasks = generate_meta_train_tasks()  # pylint: disable=E1120
+        num_meta_tasks = len(meta_tasks)
+        if meta_batch_size == 'full_batch' or meta_batch_size > num_meta_tasks:
+            meta_batch_size = num_meta_tasks
+            _log.warning(f"Meta batch size is full batch: meta_batch_size={meta_batch_size}.")
+        if data_cfg['multi_object']:
+            assert not meta_batch_size % 2, (f'meta_batch_size {meta_batch_size} is not a multiple of 2 for multi object training.')
+        assert not meta_batch_size % num_meta_processes, ('meta_batch_size is not a multiple of num_meta_processes.')
+    else:
+        _log.warning(f"EVAL modus.")
+
     process_manager = mp.Manager()
     meta_processes = [dict() for _ in range(num_meta_processes)]
 
@@ -1173,13 +1235,24 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
     meta_optim.init_zero_grad()
 
     if meta_optim_model_file is not None:
-        meta_optim_state_dict = torch.load(meta_optim_model_file)['meta_optim_state_dict']
-        meta_optim_state_dict['log_init_lr'] = meta_optim_state_dict['log_init_lr'].expand_as(meta_optim.log_init_lr)
-        # meta_optim_state_dict['log_init_lr'] = meta_optim.log_init_lr
-        meta_optim.load_state_dict(meta_optim_state_dict)
+        previous_meta_optim_state_dict = torch.load(meta_optim_model_file)['meta_optim_state_dict']
+        # meta_optim_state_dict = meta_optim.state_dict()
 
-    # if resume_meta_run_epoch is not None:
-    if resume_meta_run_epoch:
+        # for layer in range(previous_meta_optim_state_dict['log_init_lr'].shape[0]):
+        #     meta_optim_state_dict['log_init_lr'][layer] = previous_meta_optim_state_dict['log_init_lr'][layer]
+        #     meta_optim_state_dict['param_group_lstm_hx_init'][:, layer, :] = previous_meta_optim_state_dict['param_group_lstm_hx_init'][:, layer, :]
+        #     meta_optim_state_dict['param_group_lstm_cx_init'][:, layer, :] = previous_meta_optim_state_dict['param_group_lstm_cx_init'][:, layer, :]
+
+        # meta_optim_state_dict = {k: previous_meta_optim_state_dict[k]
+        #                          if k in previous_meta_optim_state_dict and k not in ['log_init_lr', 'param_group_lstm_hx_init', 'param_group_lstm_cx_init']
+        #                          else v
+        #                          for k, v in meta_optim_state_dict.items()}
+
+        # meta_optim_state_dict['log_init_lr'] = meta_optim_state_dict['log_init_lr'].expand_as(meta_optim.log_init_lr)
+        # # meta_optim_state_dict['log_init_lr'] = meta_optim.log_init_lr
+        meta_optim.load_state_dict(previous_meta_optim_state_dict)
+
+    if resume_meta_run_epoch_mode is not None:
         meta_optim.load_state_dict(saved_meta_run['meta_optim_state_dict'])
 
     _log.info(f"Meta optim model parameters: {sum([p.numel() for p in meta_optim.parameters()])}")
@@ -1203,61 +1276,57 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
                                         lr=meta_optim_optim_cfg['lr'])
 
     global_rng_state = torch.get_rng_state()
-    # if resume_meta_run_epoch is not None:
-    if resume_meta_run_epoch:
-        global_rng_state = saved_meta_run['global_rng_state']
 
     # model.share_memory()
     meta_optim.share_memory()
 
-    meta_epoch = 0
-    shared_variables = process_manager.dict({'meta_iter': 0})
+    shared_variables = process_manager.dict({'meta_iter': 0, 'meta_epoch': 0})
 
     shared_meta_optim_grads = {name: torch.zeros_like(param).cpu()
                                for name, param in meta_optim.named_parameters()}
     for grad in shared_meta_optim_grads.values():
         grad.share_memory_()
 
-    # if resume_meta_run_epoch is not None:
-    if resume_meta_run_epoch:
+    if resume_meta_run_epoch_mode is not None:
         shared_variables['meta_iter'] = saved_meta_run['meta_iter']
-        meta_epoch = saved_meta_run['meta_epoch']
+        shared_variables['meta_epoch'] = saved_meta_run['meta_epoch']
 
     # start train and val evaluation
     for rank, p in enumerate(eval_processes):
-        p['return_dict'] = process_manager.dict()
-        p['return_dict']['meta_iter'] = None
+        p['shared_dict'] = process_manager.dict()
+        p['shared_dict']['meta_iter'] = None
+        p['shared_dict']['best_mean_J'] = 0.0
         rank = rank if gpu_per_dataset_eval else 0
         process_args = [rank, p['dataset_key'], p['flip_label'], meta_optim.state_dict(), shared_variables,
-                        _config, p['return_dict']]
+                        _config, p['shared_dict'], save_dir, {n: v.win for n, v in vis_dict.items()}]
         p['process'] = mp.Process(target=evaluate, args=process_args)
         p['process'].start()
 
-    meta_tasks = generate_meta_train_tasks()  # pylint: disable=E1120
-    meta_mini_batches = list(grouper(meta_batch_size, meta_tasks))
-    meta_mini_batch = meta_mini_batches.pop(0)
+    if num_meta_processes:
+        meta_mini_batches = list(grouper(meta_batch_size, meta_tasks))
+        meta_mini_batch = meta_mini_batches.pop(0)
 
-    sub_meta_batch_size = meta_batch_size // num_meta_processes
-    sub_meta_mini_batches = grouper(sub_meta_batch_size, meta_mini_batch)
+        sub_meta_batch_size = meta_batch_size // num_meta_processes
+        sub_meta_mini_batches = grouper(sub_meta_batch_size, meta_mini_batch)
 
-    for rank, (p, sub_meta_mini_batch) in enumerate(zip(meta_processes, sub_meta_mini_batches)):
-        p['return_dict'] = process_manager.dict()
-        p['return_dict']['sub_iter_done'] = None
+        for rank, (p, sub_meta_mini_batch) in enumerate(zip(meta_processes, sub_meta_mini_batches)):
+            p['shared_dict'] = process_manager.dict()
+            p['shared_dict']['sub_iter_done'] = None
 
-        # print('main process',
-        #       sub_meta_mini_batch[0]['seq_name'],
-        #       sub_meta_mini_batch[0]['train_frame_id'],
-        #       sub_meta_mini_batch[0]['meta_frame_id'],
-        #       sub_meta_mini_batch[0]['train_transform'].transforms[1].rot)
+            # print('main process',
+            #       sub_meta_mini_batch[0]['seq_name'],
+            #       sub_meta_mini_batch[0]['train_frame_id'],
+            #       sub_meta_mini_batch[0]['meta_frame_id'],
+            #       sub_meta_mini_batch[0]['train_transform'].transforms[1].rot)
 
-        p['return_dict']['sub_meta_mini_batch'] = sub_meta_mini_batch
+            p['shared_dict']['sub_meta_mini_batch'] = sub_meta_mini_batch
 
-        process_args = [rank, meta_optim.state_dict(), global_rng_state, _config,
-                        datasets['train'], p['return_dict'], shared_variables,
-                        shared_meta_optim_grads]
+            process_args = [rank, meta_optim.state_dict(), global_rng_state, _config,
+                            datasets['train'], p['shared_dict'], shared_variables,
+                            shared_meta_optim_grads]
 
-        p['process'] = mp.Process(target=meta_run, args=process_args)
-        p['process'].start()
+            p['process'] = mp.Process(target=meta_run, args=process_args)
+            p['process'].start()
 
     start_time = timeit.default_timer()
     meta_epoch_metrics = {'train_loss': {}, 'train_losses': {}, 'meta_loss': {},
@@ -1268,22 +1337,29 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
         # VIS EVAL
         #
         for p in eval_processes:
-            if p['return_dict']['meta_iter'] is not None:
+            if p['shared_dict']['meta_iter'] is not None:
                 # copy to avoid overwriting by evaluation subprocess
-                return_dict = copy.deepcopy(p['return_dict'])
+                shared_dict = copy.deepcopy(p['shared_dict'])
 
-                eval_seq_vis = [return_dict['time_per_frame'],
-                                torch.tensor(return_dict['F_seq']).mean(),
-                                torch.tensor(return_dict['init_J_seq']).mean(),
-                                torch.tensor(return_dict['J_seq']).mean()]
-                eval_seq_vis.extend(return_dict['init_J_seq'])
-                eval_seq_vis.extend(return_dict['J_seq'])
+                eval_seq_vis = [shared_dict['time_per_frame'],
+                                torch.tensor(shared_dict['train_loss_seq']).mean()]
+
+                if _config['parent_model']['architecture'] == 'MaskRCNN':
+                    eval_seq_vis.extend([torch.tensor([losses['loss_classifier'] for losses in shared_dict['train_losses_seq']]).mean(),
+                                         torch.tensor([losses['loss_box_reg'] for losses in shared_dict['train_losses_seq']]).mean(),
+                                         torch.tensor([losses['loss_mask'] for losses in shared_dict['train_losses_seq']]).mean()])
+
+                eval_seq_vis.extend([torch.tensor(shared_dict['F_seq']).mean(),
+                                     torch.tensor(shared_dict['init_J_seq']).mean(),
+                                     torch.tensor(shared_dict['J_seq']).mean()])
+                eval_seq_vis.extend(shared_dict['init_J_seq'])
+                eval_seq_vis.extend(shared_dict['J_seq'])
                 vis_dict[f"{p['dataset_key']}_flip_label_{p['flip_label']}_eval_seq_vis"].plot(
-                    eval_seq_vis, return_dict['meta_iter'])
+                    eval_seq_vis, shared_dict['meta_iter'])
 
-                p['return_dict']['meta_iter'] = None
+                p['shared_dict']['meta_iter'] = None
 
-        if all([p['return_dict']['sub_iter_done'] for p in meta_processes]):
+        if num_meta_processes and all([p['shared_dict']['sub_iter_done'] for p in meta_processes]):
             shared_variables['meta_iter'] += 1
 
             #
@@ -1294,21 +1370,38 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
                                  'meta_losses': [], 'loss': [], 'J': [], 'F': []}
 
             for p in meta_processes:
-                return_dict = p['return_dict']
+                shared_dict = p['shared_dict']
 
-                for metric, seqs_values in return_dict['seqs_metrics'].items():
+                for metric, seqs_values in shared_dict['seqs_metrics'].items():
                     for seq_name, seq_values in seqs_values.items():
                         if seq_name not in meta_epoch_metrics[metric]:
                             meta_epoch_metrics[metric][seq_name] = []
+
+                        if metric == 'meta_loss' and torch.isnan(torch.tensor(seq_values)).any():
+                            print(metric, seq_name, shared_variables['meta_iter'])
+                            print('meta_optim.log_init_lr', meta_optim.log_init_lr)
+
+                            print([(t['seq_name'],
+                                    t['train_loader'].dataset.multi_object_id,
+                                    t['meta_loader'].dataset.multi_object_id,
+                                    t['train_loader'].dataset.frame_id,
+                                    t['meta_loader'].dataset.frame_id,
+                                    t['train_loader'].dataset.augment_with_single_obj_seq_key,
+                                    t['meta_loader'].dataset.augment_with_single_obj_seq_key)
+                                   for t in shared_dict['sub_meta_mini_batch']])
+                            print(list(chain.from_iterable(list(p['shared_dict']['vis_data_seqs'].values()))))
+                            exit()
+
                         meta_epoch_metrics[metric][seq_name].extend(seq_values)
                         meta_iter_metrics[metric].extend(seq_values)
-                return_dict['seqs_metrics'] = {}
+                shared_dict['seqs_metrics'] = {}
 
             # ITER
             if shared_variables['meta_iter'] == 1 or not shared_variables['meta_iter'] % vis_interval:
                 # VIS METRICS
                 meta_iter_train_loss = torch.tensor(meta_iter_metrics['train_loss'])
                 meta_iter_meta_loss = torch.tensor(meta_iter_metrics['meta_loss'])
+
                 meta_metrics = [meta_iter_train_loss.mean(),
                                 meta_iter_meta_loss.mean(),
                                 meta_iter_meta_loss.std(),
@@ -1321,16 +1414,32 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
                 # VIS LR
                 if meta_optim.lr_per_tensor:
                     if _config['num_epochs'] > 1:
-                        vis_dict['init_lrs_vis'].reset()
-                        for epoch in range(_config['num_epochs']):
-                            log_init_lr_epoch = meta_optim.log_init_lr[:, epoch]
-                            vis_dict['init_lrs_vis'].plot(
-                                [log_init_lr_epoch.mean(), log_init_lr_epoch.std()],
-                                epoch + 1)
+                        lrs_hist = []
+                        for p in meta_processes:
+                            lrs_hist.extend(chain.from_iterable(list(p['shared_dict']['vis_data_seqs'].values())))
 
-                    log_init_lr = meta_optim.log_init_lr[:, 0]
+                        # [train_loss.item(), bptt_loss.item(), lr.mean().item(), lr.std().item(),]
+                        # lrs_hist = torch.Tensor(lrs_hist)
+
+                        vis_dict['lrs_hist_vis'].reset()
+                        for epoch in range(_config['num_epochs']):
+
+
+                            lrs_hist_epoch = [torch.tensor([s[epoch][2] for s in lrs_hist]).mean(),
+                                              torch.tensor([s[epoch][2] for s in lrs_hist]).std()]
+
+                            for layer in range(lrs_hist[0][epoch][2].shape[0]):
+                                lrs_hist_epoch.append(torch.tensor(
+                                    [s[epoch][2][layer] for s in lrs_hist]).mean())
+
+                            vis_dict['lrs_hist_vis'].plot(lrs_hist_epoch, epoch + 1)
+
+                    # log_init_lr = meta_optim.log_init_lr[:, 0]
+                    log_init_lr = meta_optim.log_init_lr[:, 0].exp()
+                    # log_init_lr = meta_optim.log_init_lr.exp().repeat(1, 2).flatten()
                 else:
-                    log_init_lr = torch.Tensor([log_init_lr.mean() for log_init_lr in meta_optim.log_init_lr])
+                    # log_init_lr = torch.Tensor([l.mean() for l in meta_optim.log_init_lr])
+                    log_init_lr = torch.Tensor([l.exp().mean() for l in meta_optim.log_init_lr])
 
                 meta_init_lr = [log_init_lr.mean(),
                                 log_init_lr.std()]
@@ -1340,7 +1449,7 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
 
             # EPOCH
             if not meta_mini_batches:
-                meta_epoch += 1
+                shared_variables['meta_epoch'] += 1
 
                 # VIS LOSS
                 for loss_name in ['train', 'meta']:
@@ -1360,20 +1469,16 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
                     for m_l in meta_epoch_metrics[f'{loss_name}_loss'].values():
                         meta_loss_seq.append(torch.tensor(m_l).mean())
                     vis_dict[f'{loss_name}_loss_seq_vis'].plot(
-                        meta_loss_seq, meta_epoch)
+                        meta_loss_seq, shared_variables['meta_epoch'])
 
                 # SAVE MODEL
                 if save_dir is not None:
-                    # save_model_to_db(meta_optim, f"update_{i}.model", ex)
                     save_meta_run = {'meta_optim_state_dict': meta_optim.state_dict(),
-                                     'meta_optim_optim_state_dict': meta_optim_optim.state_dict(),
-                                     'global_rng_state': global_rng_state,
+                                    #  'meta_optim_optim_state_dict': meta_optim_optim.state_dict(),
                                      'vis_win_names': {n: v.win for n, v in vis_dict.items()},
                                      'meta_iter': shared_variables['meta_iter'],
-                                     'meta_epoch': meta_epoch,
-                                     'seqs_metrics': meta_epoch_metrics}
+                                     'meta_epoch': shared_variables['meta_epoch']}
                     torch.save(save_meta_run, os.path.join(
-                        # save_dir, f"meta_run_{(shared_variables['meta_epoch'] - num_meta_processes) // num_meta_processes}.model"))
                         save_dir, f"last_meta_epoch.model"))
 
                 meta_epoch_metrics = {'train_loss': {}, 'train_losses': {}, 'meta_loss': {},
@@ -1389,9 +1494,9 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             for name, param in meta_optim.named_parameters():
                 param.grad = shared_meta_optim_grads[name] / meta_batch_size
 
-                if name == 'log_init_lr':
-                    for i, (_, _, _, p) in enumerate(meta_optim.meta_model.param_groups()):
-                        param.grad[i] /= p.numel()
+                # if name == 'log_init_lr':
+                #     for i, (_, _, _, p) in enumerate(meta_optim.meta_model.param_groups()):
+                #         param.grad[i] /= p.numel()
 
                 grad_clip = _config['meta_optim_optim_cfg']['grad_clip']
                 if grad_clip is not None:
@@ -1402,18 +1507,21 @@ def main(save_dir: str, resume_meta_run_epoch: int, env_suffix: str,
             for grad in shared_meta_optim_grads.values():
                 grad.zero_()
 
-            # global_rng_state = process['return_dict']['global_rng_state']
+            # meta_optim.log_init_lr.data.clamp_(-33, torch.tensor(0.01).log())
+            meta_optim.log_init_lr.data.clamp_(-33, 33)
+
+            # global_rng_state = process['shared_dict']['global_rng_state']
             # reset iter_done and continue with next iter in meta_run subprocess
             meta_mini_batch = meta_mini_batches.pop(0)
             sub_meta_mini_batches = grouper(sub_meta_batch_size, meta_mini_batch)
 
             for p, sub_meta_mini_batch in zip(meta_processes, sub_meta_mini_batches):
-                p['return_dict']['sub_meta_mini_batch'] = sub_meta_mini_batch
-                p['return_dict']['sub_iter_done'] = False
+                p['shared_dict']['sub_meta_mini_batch'] = sub_meta_mini_batch
+                p['shared_dict']['sub_iter_done'] = False
             start_time = timeit.default_timer()
 
             # for p in meta_processes:
-            #     for seq_name, vis_data in p['return_dict']['vis_data_seqs'].items():
+            #     for seq_name, vis_data in p['shared_dict']['vis_data_seqs'].items():
             #         # Visdom throws no error for infinte or NaN values
             #         assert not np.isnan(np.array(vis_data)).any() and \
             #             np.isfinite(np.array(vis_data)).all()

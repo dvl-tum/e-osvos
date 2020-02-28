@@ -16,7 +16,8 @@ class VOSDataset(Dataset):
 
     def __init__(self, seqs_key, root_dir, frame_id=None,
                  crop_size=None, transform=None, multi_object=False,
-                 flip_label=False, no_label=False, normalize=True):
+                 flip_label=False, no_label=False, normalize=True,
+                 full_resolution=False):
         """Loads image to label pairs.
         root_dir: dataset directory with subfolders "JPEGImages" and "Annotations"
         """
@@ -32,6 +33,7 @@ class VOSDataset(Dataset):
         self.no_label = no_label
         self.seqs = None
         self.augment_with_single_obj_seq_key = None
+        self._full_resolution = full_resolution
 
         # self.preloaded_imgs = {}
         # self.preloaded_labels = {}
@@ -50,7 +52,7 @@ class VOSDataset(Dataset):
             raise NotImplementedError
         if not self.multi_object:
             return 1
-        im = Image.open(os.path.join(self.root_dir, self.labels[0]))
+        im = Image.open(self.labels[0])
         label = np.atleast_3d(im)[...,0]
         # label = cv2.imread(os.path.join(self.root_dir, self.labels[0]), cv2.IMREAD_GRAYSCALE)
         # label = np.array(label, dtype=np.float32)
@@ -122,11 +124,8 @@ class VOSDataset(Dataset):
         self.set_seq(seq_name)
 
     def set_seq(self, seq_name):
-        imgs = self.seqs[seq_name]['imgs']
-        labels = self.seqs[seq_name]['labels']
-
-        self.imgs = imgs
-        self.labels = labels
+        self.imgs = self.seqs[seq_name]['imgs']
+        self.labels = self.seqs[seq_name]['labels']
         self.seq_key = seq_name
 
     def __len__(self):
@@ -149,21 +148,64 @@ class VOSDataset(Dataset):
             assert self.num_objects == 1, f'{self.seq_key} is not a single object sequence.'
 
             prev_seq_key = self.seq_key
+            prev_frame_id = self.frame_id
 
             self.set_seq(self.augment_with_single_obj_seq_key)
 
-            aug_img, label = self.make_img_label_pair(min(idx, len(self.imgs) - 1))
+            def crop_center(img, crop_w, crop_h):
+                w, h = img.shape[:2]
+                start_w = w // 2 - (crop_w // 2)
+                start_h = h // 2 - (crop_h // 2)
+                return img[start_w:start_w + crop_w, start_h:start_h + crop_h]
 
-            obj_mask = label == 1.0
-            img[obj_mask] = aug_img[obj_mask]
+            has_object = False
+            while not has_object:
+                self.set_random_frame_id_with_label()
 
-            # import imageio
-            # # pred = np.transpose(img, (1, 2, 0))
-            # imageio.imsave(f"img.png", (img * 255).astype(np.uint8))
-            # imageio.imsave(f"label.png", (label * 255).astype(np.uint8))
-            # exit()
+                aug_img, aug_label = self.make_img_label_pair(self.frame_id)
+
+                w, h, _ = img.shape
+                w_a, h_a, _ = aug_img.shape
+
+                pad_w = max(0, w - w_a)
+                pad_h = max(0, h - h_a)
+                aug_img = np.pad(aug_img,
+                    [(0, pad_w), (0, pad_h), (0, 0)], mode='constant')
+                aug_label = np.pad(aug_label,
+                    [(0, pad_w), (0, pad_h)], mode='constant')
+
+                aug_img = crop_center(aug_img, w, h)
+                aug_label = crop_center(aug_label, w, h)
+
+                obj_mask = aug_label == 1.0
+                img[obj_mask] = aug_img[obj_mask]
+
+                if not self.multi_object_id:
+                    aug_label = np.copy(label)
+                    aug_label[obj_mask] = 0
+
+                if len(np.unique(aug_label)) > 1:
+                    has_object = True
+
+                    label = aug_label
+                    # self.multi_object_id = 0
+
+                    # import imageio
+                    # # pred = np.transpose(img, (1, 2, 0))
+                    # imageio.imsave(f"{prev_seq_key}_{prev_frame_id}_{self.seq_key}_{self.frame_id}_img.png", (img * 255).astype(np.uint8))
+                    # imageio.imsave(
+                    #     f"{prev_seq_key}_{prev_frame_id}_{self.seq_key}_{self.frame_id}_label.png", (label * 255).astype(np.uint8))
+                    # print('AUGMENT')
+                    # exit()
 
             self.set_seq(prev_seq_key)
+            self.frame_id = prev_frame_id
+
+        if self.flip_label:
+            label = np.logical_not(label).astype(np.float32)
+
+        if self.no_label:
+            label[:] = 0.0
 
         sample = {'image': img,
                   'gt': label,
@@ -186,10 +228,9 @@ class VOSDataset(Dataset):
         # if self.imgs[idx] in self.preloaded_imgs:
         #     return self.preloaded_imgs[self.imgs[idx]], self.preloaded_labels[self.labels[idx]]
 
-        img = cv2.imread(os.path.join(
-            self.root_dir, self.imgs[idx]), cv2.IMREAD_COLOR)[..., ::-1]
+        img = cv2.imread(self.imgs[idx], cv2.IMREAD_COLOR)[..., ::-1]
 
-        im = Image.open(os.path.join(self.root_dir, self.labels[idx]))
+        im = Image.open(self.labels[idx])
         label = np.atleast_3d(im)[...,0]
 
         # label = cv2.imread(os.path.join(
@@ -229,12 +270,13 @@ class VOSDataset(Dataset):
         label = label
 
         assert len(
-            img.shape) == 3, f"Image broken ({img.shape}): {self.root_dir, self.imgs[idx]}"
+            img.shape) == 3, f"Image broken ({img.shape}): {self.imgs[idx]}"
         assert len(
-            label.shape) == 2, f"Label broken ({label.shape}): {self.root_dir, self.labels[idx]}"
+            label.shape) == 2, f"Label broken ({label.shape}): {self.labels[idx]}"
 
         # multi object
-        if self.multi_object:
+        if self.multi_object and self.num_objects > 1:
+            # multi_object_id = max(self.num_objects - 1, self.multi_object_id)
             if self.multi_object not in ['all', 'single_id']:
                 raise NotImplementedError
 
@@ -252,7 +294,7 @@ class VOSDataset(Dataset):
                 if self.multi_object == 'single_id':
                     # if a frame does not include all objects and in particular not
                     # the object with self.multi_object_id
-                    assert self.multi_object_id < self.num_objects
+                    assert self.multi_object_id < self.num_objects, f"{self.seq_key} {self.multi_object_id} {self.num_objects}"
                     if self.num_objects > len(unique_labels) and self.multi_object_id >= len(unique_labels):
                         label = np.zeros((label.shape[0], label.shape[1]), dtype=np.float32)
                     else:
@@ -260,12 +302,6 @@ class VOSDataset(Dataset):
         else:
             label = np.where(label != 0.0, 1.0, 0.0).astype(np.float32)
         # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)
-
-        if self.flip_label:
-            label = np.logical_not(label).astype(np.float32)
-
-        if self.no_label:
-            label[:] = 0.0
 
         # self.preloaded_imgs[self.imgs[idx]] = img
         # self.preloaded_labels[self.labels[idx]] = label

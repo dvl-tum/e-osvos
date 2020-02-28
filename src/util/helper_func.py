@@ -75,6 +75,15 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False):
 
     metrics = {n: [] for n in ['loss_batches', 'acc_batches']}
 
+    if hasattr(loader.sampler, 'indices') and loader.sampler.indices is not None:
+        assert 1 in loader.sampler.indices
+    loader_frame_id = loader.dataset.frame_id
+    loader.dataset.frame_id = None
+    train_frame = loader.dataset[0]
+    train_frame_gt = train_frame['gt']
+    loader.dataset.frame_id = loader_frame_id
+    targets = train_frame_gt.unsqueeze(dim=0)
+
     probs_all = []
     boxes_all =[]
     with torch.no_grad():
@@ -84,15 +93,19 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False):
 
             model.eval()
 
-            outputs = model(inputs)
-
             if isinstance(model, MaskRCNN):
+                outputs = model(inputs, targets)
+
                 probs = outputs[0]
+                targets = probs.ge(0.5).float()
+                if targets.sum().item() == 0:
+                    targets = train_frame_gt.unsqueeze(dim=0)
 
                 metrics['loss_batches'].append(torch.tensor([0.0]))
 
                 boxes_all.append(outputs[1])
             else:
+                outputs = model(inputs)
                 probs = torch.sigmoid(outputs[-1])
 
                 loss = compute_loss(loss_func, outputs[-1], gts, {'batch_average': False})
@@ -202,7 +215,7 @@ def train_val(model, train_loader, val_loader, optim, num_epochs,
 
 def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
                  frame_ids, num_workers, crop_sizes, multi_object, pin_memory,
-                 normalize):
+                 normalize, full_resolution=False):
     # train
     train_transforms = []
     if random_train_transform:
@@ -231,7 +244,8 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
         transform=composed_transforms,
         crop_size=crop_sizes['train'],
         multi_object=multi_object,
-        normalize=normalize)
+        normalize=normalize,
+        full_resolution=full_resolution)
 
     # sample epochs into a batch
     batch_sampler = EpochSampler(
@@ -250,7 +264,8 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
         transform=custom_transforms.ToTensor(),
         crop_size=crop_sizes['test'],
         multi_object=multi_object,
-        normalize=normalize)
+        normalize=normalize,
+        full_resolution=full_resolution)
     test_loader = DataLoader(
         db_test,
         shuffle=shuffles['test'],
@@ -270,20 +285,23 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
         transform=custom_transforms.ToTensor(),
         crop_size=crop_sizes['meta'],
         multi_object=multi_object,
-        normalize=normalize)
+        normalize=normalize,
+        full_resolution=full_resolution)
 
     meta_loader = DataLoader(
         db_meta,
         shuffle=shuffles['meta'],
         batch_size=batch_sizes['meta'],
         num_workers=num_workers,
+        sampler=SequentialSubsetSampler(db_meta),
         pin_memory=pin_memory)
 
     return train_loader, test_loader, meta_loader
 
 
 def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
-                      replace_batch_with_group_norms, batch_norm, **datasets):
+                      replace_batch_with_group_norms, batch_norm,
+                      roi_pool_output_sizes, **datasets):
     # if 'VGG' in base_path:
     #     model = OSVOSVgg(pretrained=0)
     # elif 'DRN_D_22' in base_path:
@@ -313,7 +331,8 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
             num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
     elif architecture == 'MaskRCNN':
         model = MaskRCNN(
-            encoder, num_classes=2, batch_norm=batch_norm, train_encoder=train_encoder)
+            encoder, num_classes=2, batch_norm=batch_norm, train_encoder=train_encoder,
+            roi_pool_output_sizes=roi_pool_output_sizes)
     else:
         raise NotImplementedError
 

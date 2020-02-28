@@ -340,14 +340,15 @@ for epoch in range(resume_epoch, nEpochs):
         inputs, gts = inputs.to(device), gts.to(device)
 
         net.train()
-        outputs = net.forward(inputs)
+        loss = net(inputs, gts)[0]
+        # outputs = net(inputs)
 
-        # Compute the losses
-        losses = [0] * num_losses
-        for i in range(num_losses):
-            losses[i] = compute_loss(loss_func, outputs[i], gts)
-            running_loss_tr[i] += losses[i].item()
-        loss = (1 - epoch / nEpochs)*sum(losses[:-1]) + losses[-1]
+        # # Compute the losses
+        # losses = [0] * num_losses
+        # for i in range(num_losses):
+        #     losses[i] = compute_loss(loss_func, outputs[i], gts)
+        #     running_loss_tr[i] += losses[i].item()
+        # loss = (1 - epoch / nEpochs)*sum(losses[:-1]) + losses[-1]
 
         # Print stuff
 

@@ -18,6 +18,9 @@ class YouTube(VOSDataset):
     def __init__(self, *args, **kwargs):
         super(YouTube, self).__init__(*args, **kwargs)
 
+        if self._full_resolution:
+            raise NotImplementedError
+
         seqs = OrderedDict()
         imgs = []
         labels = []
