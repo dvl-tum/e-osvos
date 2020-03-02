@@ -26,10 +26,10 @@ class MaskRCNN(_MaskRCNN):
         # rpn_pre_nms_top_n_train = 200
         # rpn_pre_nms_top_n_test = 100
         # rpn_post_nms_top_n_train = 200
-        rpn_post_nms_top_n_test = 500
+        rpn_post_nms_top_n_test = 2000
 
         # large to include all proposals
-        # box_batch_size_per_image = 256
+        box_batch_size_per_image = 10000
 
         # bbox_reg_weights = [10.0, 10.0, 10.0, 10.0]
 
@@ -43,7 +43,7 @@ class MaskRCNN(_MaskRCNN):
                                     #    rpn_pre_nms_top_n_train=rpn_pre_nms_top_n_train,
                                     #    rpn_pre_nms_top_n_test=rpn_pre_nms_top_n_test,
                                     #    rpn_post_nms_top_n_train=rpn_post_nms_top_n_train,
-                                    #    rpn_post_nms_top_n_test=rpn_post_nms_top_n_test,
+                                    #    rpn_post_nms_top_n_test=rpn_post_nms_top_n_test,)
                                     #    box_positive_fraction=0.25)
 
         if 'resnet50' == backbone:
@@ -80,9 +80,24 @@ class MaskRCNN(_MaskRCNN):
             self.roi_heads.box_predictor.requires_grad_(True)
             self.roi_heads.mask_head.requires_grad_(True)
             self.roi_heads.mask_predictor.requires_grad_(True)
-        else:
-            self.requires_grad_(True)
-        #     self.rpn.requires_grad_(False)
+        # else:
+        #     self.backbone.requires_grad_(True)
+
+        #     self.backbone.fpn.requires_grad_(True)
+        #     self.rpn.requires_grad_(True)
+
+        # self._second_order_derivates_module_names = ['rpn', 'roi_heads']
+        self._second_order_derivates_module_names = ['roi_heads']
+
+    def named_parameters_with_second_order_derivate(self, recurse=True):
+        for name, param in self.named_parameters(recurse=recurse):
+            if param.requires_grad and any([module_name in name for module_name in self._second_order_derivates_module_names]):
+                yield name, param
+
+    def named_parameters_without_second_order_derivate(self, recurse=True):
+        for name, param in self.named_parameters(recurse=recurse):
+            if param.requires_grad and not any([module_name in name for module_name in self._second_order_derivates_module_names]):
+                yield name, param
 
     def train(self, mode=True):
         super(MaskRCNN, self).train(mode)
@@ -92,7 +107,9 @@ class MaskRCNN(_MaskRCNN):
             # self.backbone.fpn.train()
             self.rpn.eval()
         # else:
-        #     self.rpn.eval()
+        #     self.backbone.eval()
+        #     self.rpn.train()
+        #     self.backbone.fpn.train()
 
         if not self._accum_batch_norm_stats:
             for m in self.modules():
@@ -222,10 +239,6 @@ class MaskRCNN(_MaskRCNN):
                 # suppose all instances are not crowd
                 iscrowd = torch.zeros((num_objs,), dtype=torch.int64)
 
-                # if box_coord_perm is not None:
-                #     boxes = boxes[:, box_coord_perm]
-                #     boxes.detach()
-
                 if flip_label:
                     masks = 1 - masks
 
@@ -252,28 +265,6 @@ class MaskRCNN(_MaskRCNN):
         #     outputs = outputs[:,:, : -crop[3]]
 
         if self.training:
-            # print('forward', inputs.shape)
-
-            # if torch.isnan(torch.tensor([loss for loss in outputs_raw.values()])).any():
-            #     print(outputs_raw)
-            #     print(inputs.shape)
-
-            #     pred = np.transpose(inputs[0].cpu().numpy(), (1, 2, 0))
-            #     import os, imageio
-            #     pred_path = os.path.join(f"img.png")
-            #     imageio.imsave(pred_path, (pred * 255).astype(np.uint8))
-
-            #     pred = np.transpose(masks.cpu().numpy(), (1, 2, 0)).astype(np.uint8)
-            #     # pred = mask.cpu().numpy().astype(np.uint8)
-            #     import os, imageio
-            #     pred_path = os.path.join(f"mask.png")
-            #     imageio.imsave(pred_path, 20 * pred)
-            #     exit()
-
-            # print([f"{n}: {loss.item()}" for n, loss in outputs_raw.items()
-            #        if loss.requires_grad])
-
-            # outputs_raw['loss_classifier'].zero_()
 
             losses = {loss_name: loss for loss_name, loss in outputs_raw.items()
                       if loss.requires_grad}

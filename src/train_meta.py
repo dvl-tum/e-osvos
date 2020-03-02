@@ -18,6 +18,7 @@ import numpy as np
 import sacred
 import torch
 import torch.multiprocessing as mp
+import torchvision
 from data import custom_transforms
 from meta_optim.meta_optim import MetaOptimizer
 from meta_optim.utils import dict_to_html
@@ -104,7 +105,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
                     legend.extend(['MEAN_TRAIN_LOSS_cls_score',
                                    'MEAN_TRAIN_LOSS_bbox_pred',
                                    'MEAN_TRAIN_LOSS_mask_fcn_logits'])
-                legend.extend(['F MEAN', 'INIT J MEAN (SINGLE OBJ SEQS)', 'J MEAN'])
+                legend.extend(['J & F MEAN', 'J MEAN', 'J RECALL MEAN', 'F MEAN', 'F RECALL MEAN', 'INIT J MEAN (SINGLE OBJ SEQS)'])
                 for seq_name in loader.dataset.seqs_names:
                     loader.dataset.set_seq(seq_name)
                     if loader.dataset.num_objects == 1:
@@ -400,9 +401,7 @@ def meta_run(rank: int,
     meta_optim = MetaOptimizer(model, **_config['meta_optim_cfg'])
     # meta_optim.load_state_dict(meta_optim_state_dict)
 
-    num_epochs = _config['num_epochs']
-    if not _config['meta_optim_cfg']['lr_per_tensor']:
-        num_epochs = 1
+    num_epochs = _config['num_epochs']['train']
 
     while True:
         # main process sets iter_done=False after shared_meta_optim is updated
@@ -528,9 +527,12 @@ def meta_run(rank: int,
                 prev_bptt_iter_loss = bptt_iter_loss.detach()
 
                 # visualization
-                lr = meta_optim.state["log_lr"].exp()
-                if not meta_optim.lr_per_tensor:
-                    lr = torch.tensor([l.mean() for l in lr])
+
+                if meta_optim.lr_per_tensor:
+                    lr = meta_optim.state["log_lr"].exp()
+                else:
+                    lr = torch.tensor([l.exp().mean()
+                                       for l in meta_optim.state["log_lr"]])
 
                 # lr_mom = meta_optim.state["lr_mom_logit"].sigmoid()
                 # weight_decay = meta_optim.state["log_weight_decay"].exp()
@@ -623,7 +625,7 @@ def meta_run(rank: int,
 
 def evaluate(rank: int, dataset_key: str, flip_label: bool,
              shared_meta_optim_state_dict: dict, shared_variables: dict,
-             _config: dict, shared_dict: dict, save_dir: str, vis_win_names: dict):
+             _config: dict, shared_dict: dict, save_dir: str, vis_win_names: dict,):
     seed = _config['seed']
     loss_func = _config['loss_func']
     datasets = _config['datasets']
@@ -672,6 +674,20 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
         # save predictions in human readable format and with boxes
         if save_dir is not None:
+            debug_preds_save_dir = os.path.join(save_dir,
+                                                'best_eval_preds_debug',
+                                                f"{datasets[dataset_key]['name']}",
+                                                f"{datasets[dataset_key]['split']}")
+
+            if not os.path.exists(debug_preds_save_dir):
+                os.makedirs(debug_preds_save_dir)
+
+            for seq_name in train_loader.dataset.seqs_names:
+                if not os.path.exists(os.path.join(debug_preds_save_dir, seq_name)):
+                    os.makedirs(os.path.join(debug_preds_save_dir, seq_name))
+
+        # if eval_only_mode:
+            # assert save_dir is not None
             preds_save_dir = os.path.join(save_dir,
                                           'best_eval_preds',
                                           f"{datasets[dataset_key]['name']}",
@@ -681,20 +697,22 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             for seq_name in train_loader.dataset.seqs_names:
                 if not os.path.exists(os.path.join(preds_save_dir, seq_name)):
                     os.makedirs(os.path.join(preds_save_dir, seq_name))
-
-        # temp directory for predictions for metrics evaluation
-        temp_preds_save_dir = tempfile.mkdtemp()
-        for seq_name in train_loader.dataset.seqs_names:
-            if not os.path.exists(os.path.join(temp_preds_save_dir, seq_name)):
-                os.makedirs(os.path.join(temp_preds_save_dir, seq_name))
+        # else:
+        #     # temp directory for predictions for metrics evaluation
+        #     preds_save_dir = tempfile.mkdtemp()
+        #     for seq_name in train_loader.dataset.seqs_names:
+        #         if not os.path.exists(os.path.join(preds_save_dir, seq_name)):
+        #             os.makedirs(os.path.join(preds_save_dir, seq_name))
 
         eval_time = 0
         num_frames = 0
         init_J_seq = []
         J_seq = []
+        J_recall_seq = []
         train_loss_seq = []
         train_losses_seq = []
         F_seq = []
+        F_recall_seq = []
         masks = {}
         boxes = {}
         for seq_name in train_loader.dataset.seqs_names:
@@ -717,7 +735,10 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 meta_optim.reset()
                 meta_optim.eval()
 
-                _, _, J, _,  = eval_loader(model, test_loader, loss_func)
+                if test_loader.dataset.test_mode:
+                    J = [0.0]
+                else:
+                    _, _, J, _,  = eval_loader(model, test_loader, loss_func)
                 init_J_seq.extend(J)
                 # init_J_seq.extend([0.0])
 
@@ -795,7 +816,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     #     loss_func=loss_func)
 
                     train_loss_hist = []
-                    for epoch in epoch_iter(_config['num_epochs']):
+                    for epoch in epoch_iter(_config['num_epochs']['eval']):
                         set_random_seeds(_config['seed'] + epoch)
 
                         for _, sample_batched in enumerate(train_loader):
@@ -867,7 +888,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 if flip_label:
                     mask_frame = np.logical_not(mask_frame).astype(np.uint8)
 
-                pred_path = os.path.join(temp_preds_save_dir, seq_name, os.path.basename(file_name) + '.png')
+                pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(file_name) + '.png')
 
                 # if _config['data_cfg']['full_resolution']:
                 #     import cv2
@@ -881,12 +902,19 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 imageio.imsave(pred_path, mask_frame)
             test_loader.dataset.frame_id = test_loader_frame_id
 
-            evaluation = eval_davis_seq(temp_preds_save_dir, seq_name)
+            if test_loader.dataset.test_mode:
+                evaluation = {'J': {'mean': [0.0], 'recall': [0.0]},
+                              'F': {'mean': [0.0], 'recall': [0.0]}}
+            else:
+                evaluation = eval_davis_seq(preds_save_dir, seq_name)
+
             # print(evaluation)
             J_seq.extend(evaluation['J']['mean'])
+            J_recall_seq.extend(evaluation['J']['recall'])
             F_seq.extend(evaluation['F']['mean'])
+            F_recall_seq.extend(evaluation['F']['recall'])
 
-        shutil.rmtree(temp_preds_save_dir)
+        # shutil.rmtree(preds_save_dir)
 
         mean_J = torch.tensor(J_seq).mean().item()
         if mean_J > shared_dict['best_mean_J']:
@@ -913,7 +941,8 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         if flip_label:
                             mask_frame = np.logical_not(mask_frame).astype(np.uint8)
 
-                        pred_path = os.path.join(preds_save_dir, seq_name, os.path.basename(file_name) + f'_flip_label_{flip_label}.png')
+                        pred_path = os.path.join(debug_preds_save_dir, seq_name, os.path.basename(
+                            file_name) + f'_flip_label_{flip_label}.png')
                         # TODO: implement color palette for labels
 
                         fig = plt.figure()
@@ -944,9 +973,11 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
         shared_dict['init_J_seq'] = init_J_seq
         shared_dict['J_seq'] = J_seq
+        shared_dict['J_recall_seq'] = J_recall_seq
         shared_dict['train_losses_seq'] = train_losses_seq
         shared_dict['train_loss_seq'] = train_loss_seq
         shared_dict['F_seq'] = F_seq
+        shared_dict['F_recall_seq'] = F_recall_seq
         shared_dict['time_per_frame'] = eval_time / num_frames
         # set meta_iter here to signal main process that eval is finished
         shared_dict['meta_iter'] = meta_iter
@@ -1074,7 +1105,10 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
                 # if train_frame_id == meta_frame_id:
                 #     random_transform.append(custom_transforms.RandomRemoveLabelRectangle((90, 854)))
 
-                random_transform = [custom_transforms.RandomHorizontalFlip(),
+                random_transform = [custom_transforms.ColorJitter(brightness=2, hue=.1, saturation=.1,
+                                                                  deterministic=True),
+                # random_transform = [
+                                    custom_transforms.RandomHorizontalFlip(),
                                     custom_transforms.RandomScaleNRotate(rots=(-30, 30),
                                                                          scales=(.5, 1.5)),
                                     custom_transforms.ToTensor(),]
@@ -1298,7 +1332,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         p['shared_dict']['best_mean_J'] = 0.0
         rank = rank if gpu_per_dataset_eval else 0
         process_args = [rank, p['dataset_key'], p['flip_label'], meta_optim.state_dict(), shared_variables,
-                        _config, p['shared_dict'], save_dir, {n: v.win for n, v in vis_dict.items()}]
+                        _config, p['shared_dict'], save_dir, {n: v.win for n, v in vis_dict.items()},]
         p['process'] = mp.Process(target=evaluate, args=process_args)
         p['process'].start()
 
@@ -1349,15 +1383,20 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                                          torch.tensor([losses['loss_box_reg'] for losses in shared_dict['train_losses_seq']]).mean(),
                                          torch.tensor([losses['loss_mask'] for losses in shared_dict['train_losses_seq']]).mean()])
 
-                eval_seq_vis.extend([torch.tensor(shared_dict['F_seq']).mean(),
-                                     torch.tensor(shared_dict['init_J_seq']).mean(),
-                                     torch.tensor(shared_dict['J_seq']).mean()])
+                eval_seq_vis.extend([(torch.tensor(shared_dict['J_seq']).mean() + torch.tensor(shared_dict['F_seq']).mean()) / 2.0,
+                                     torch.tensor(shared_dict['J_seq']).mean(),
+                                     torch.tensor(shared_dict['J_recall_seq']).mean(),
+                                     torch.tensor(shared_dict['F_seq']).mean(),
+                                     torch.tensor(shared_dict['F_recall_seq']).mean(),
+                                     torch.tensor(shared_dict['init_J_seq']).mean()])
                 eval_seq_vis.extend(shared_dict['init_J_seq'])
                 eval_seq_vis.extend(shared_dict['J_seq'])
                 vis_dict[f"{p['dataset_key']}_flip_label_{p['flip_label']}_eval_seq_vis"].plot(
                     eval_seq_vis, shared_dict['meta_iter'])
 
-                p['shared_dict']['meta_iter'] = None
+                # resume evaluation if not in eval only mode
+                if num_meta_processes:
+                    p['shared_dict']['meta_iter'] = None
 
         if num_meta_processes and all([p['shared_dict']['sub_iter_done'] for p in meta_processes]):
             shared_variables['meta_iter'] += 1
@@ -1379,7 +1418,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
                         if metric == 'meta_loss' and torch.isnan(torch.tensor(seq_values)).any():
                             print(metric, seq_name, shared_variables['meta_iter'])
-                            print('meta_optim.log_init_lr', meta_optim.log_init_lr)
+                            # print('meta_optim.log_init_lr', meta_optim.log_init_lr)
 
                             print([(t['seq_name'],
                                     t['train_loader'].dataset.multi_object_id,
@@ -1413,7 +1452,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
                 # VIS LR
                 if meta_optim.lr_per_tensor:
-                    if _config['num_epochs'] > 1:
+                    if _config['num_epochs']['train'] > 1:
                         lrs_hist = []
                         for p in meta_processes:
                             lrs_hist.extend(chain.from_iterable(list(p['shared_dict']['vis_data_seqs'].values())))
@@ -1422,8 +1461,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                         # lrs_hist = torch.Tensor(lrs_hist)
 
                         vis_dict['lrs_hist_vis'].reset()
-                        for epoch in range(_config['num_epochs']):
-
+                        for epoch in range(_config['num_epochs']['train']):
 
                             lrs_hist_epoch = [torch.tensor([s[epoch][2] for s in lrs_hist]).mean(),
                                               torch.tensor([s[epoch][2] for s in lrs_hist]).std()]
@@ -1494,10 +1532,6 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
             for name, param in meta_optim.named_parameters():
                 param.grad = shared_meta_optim_grads[name] / meta_batch_size
 
-                # if name == 'log_init_lr':
-                #     for i, (_, _, _, p) in enumerate(meta_optim.meta_model.param_groups()):
-                #         param.grad[i] /= p.numel()
-
                 grad_clip = _config['meta_optim_optim_cfg']['grad_clip']
                 if grad_clip is not None:
                     param.grad.clamp_(-1.0 * grad_clip, grad_clip)
@@ -1507,8 +1541,11 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
             for grad in shared_meta_optim_grads.values():
                 grad.zero_()
 
-            # meta_optim.log_init_lr.data.clamp_(-33, torch.tensor(0.01).log())
-            meta_optim.log_init_lr.data.clamp_(-33, 33)
+            if meta_optim.lr_per_tensor:
+                meta_optim.log_init_lr.data.clamp_(-33, 33)
+            else:
+                meta_optim.log_init_lr = [l.data.clamp_(-33, 33)
+                                          for l in meta_optim.log_init_lr]
 
             # global_rng_state = process['shared_dict']['global_rng_state']
             # reset iter_done and continue with next iter in meta_run subprocess

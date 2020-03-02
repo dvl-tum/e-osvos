@@ -12,7 +12,9 @@ resume_meta_run_epoch_mode: null        # [None, BEST_VAL, LAST]
 increase_seed_per_meta_run: False
 random_frame_transform_per_task: False
 # if meta_optim_cfg.lr_per_tensor=False meta learning is done for a single epoch and num_epochs is only evaluated
-num_epochs: 5
+num_epochs:
+    train: 5
+    eval: 5
 bptt_epochs: 10
 # number of frames after which the model is fine-tuned (on the first frame) again.
 # only for evaluation.
@@ -35,6 +37,7 @@ meta_optim_cfg:
     gt_input: False
     matching_input: False
     second_order_gradients: False
+    learn_scheduler: True
 meta_optim_optim_cfg:
     model_init_lr: 0.0000001
     log_init_lr_lr: 0.0001
@@ -105,14 +108,10 @@ parent_model:
             # - data/DAVIS-2016/train_seqs.txt
             # - data/DAVIS-2016/val_seqs.txt
             - data/DAVIS-2017/train_val_seqs.txt
-    val_16:
+    test:
         paths: []
-        # paths: ['models/MaskRCNN_ResNet50_train_encoder=False/VOC2012/pascal_voc/MaskRCNN_ResNet50_train_encoder=False_epoch-50.pth']
-        # paths:
-        #     # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
-        #     - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
         val_split_files:
-            - data/DAVIS-2017/train_val_seqs.txt
+            - data/DAVIS-2017/test-dev_seqs.txt
     # model_init_meta_optim_split:
     #     paths: []
     #     val_split_files:

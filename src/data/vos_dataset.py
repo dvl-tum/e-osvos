@@ -34,6 +34,7 @@ class VOSDataset(Dataset):
         self.seqs = None
         self.augment_with_single_obj_seq_key = None
         self._full_resolution = full_resolution
+        self.test_mode = False
 
         # self.preloaded_imgs = {}
         # self.preloaded_labels = {}
@@ -230,7 +231,11 @@ class VOSDataset(Dataset):
 
         img = cv2.imread(self.imgs[idx], cv2.IMREAD_COLOR)[..., ::-1]
 
-        im = Image.open(self.labels[idx])
+        # load first frame GT as placeholder for test mode
+        if self.test_mode:
+            im = Image.open(self.labels[0])
+        else:
+            im = Image.open(self.labels[idx])
         label = np.atleast_3d(im)[...,0]
 
         # label = cv2.imread(os.path.join(

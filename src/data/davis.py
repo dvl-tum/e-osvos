@@ -22,6 +22,9 @@ class DAVIS(VOSDataset):
         super(DAVIS, self).__init__(*args, **kwargs)
         self.year = int(re.sub("[^0-9]", "", self.root_dir))
 
+        if 'test' in self.seqs_key:
+            self.test_mode = True
+
         seqs = OrderedDict()
         imgs = []
         labels = []
@@ -53,7 +56,8 @@ class DAVIS(VOSDataset):
             labels_seq = list(map(lambda x: os.path.join(
                 self.root_dir, 'Annotations', res_folder, k, x), lab))
 
-            assert (len(labels_seq) == len(imgs_seq)), f'failure in: {k}'
+            if not self.test_mode:
+                assert (len(labels_seq) == len(imgs_seq)), f'failure in: {k}'
 
             seqs[k] = {}
             seqs[k]['imgs'] = imgs_seq
@@ -79,6 +83,8 @@ class DAVIS(VOSDataset):
             eval_cfg.MULTIOBJECT = False
         if self._full_resolution:
             eval_cfg.RESOLUTION = '1080p'
+        if self.test_mode:
+            eval_cfg.PHASE = 'test-dev'
         eval_cfg.YEAR = self.year
         eval_cfg.PATH.ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
         eval_cfg.PATH.DATA = os.path.abspath(os.path.join(eval_cfg.PATH.ROOT, self.root_dir))

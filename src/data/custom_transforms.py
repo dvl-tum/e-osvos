@@ -2,6 +2,8 @@ import random
 import cv2
 import numpy as np
 import torch
+import torchvision
+from PIL import Image
 
 
 class RandomScaleNRotate:
@@ -104,6 +106,39 @@ class Resize:
 
             sample[k] = tmp
 
+        return sample
+
+
+class ColorJitter:
+    """Randomly resize the image and the ground truth to specified scales.
+    Args:
+        scales (list): the list of scales
+    """
+
+    def __init__(self, brightness=0, contrast=0, saturation=0, hue=0, deterministic=False):
+        self.transform = torchvision.transforms.ColorJitter(
+            brightness, contrast, saturation, hue)
+        self._deterministic = deterministic
+
+    def __call__(self, sample):
+        if self._deterministic:
+            self.transform = self.transform.get_params(
+                self.transform.brightness,
+                self.transform.contrast,
+                self.transform.saturation,
+                self.transform.hue)
+            self._deterministic = False
+
+        # import imageio
+        # imageio.imsave("img_pre.png",
+        #                (sample['image'] * 255).astype(np.uint8))
+
+        pil_image = Image.fromarray(np.uint8(sample['image'] * 255))
+        sample['image'] = np.array(self.transform(
+            pil_image), dtype=np.float32) / 255
+
+        # imageio.imsave("img_after.png",
+        #                (sample['image'] * 255).astype(np.uint8))
         return sample
 
 

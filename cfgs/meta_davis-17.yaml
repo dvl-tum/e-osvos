@@ -6,7 +6,6 @@ datasets:
     val:
         name: DAVIS-2017
         split: val_seqs
-    val_16: null
     # val_16:
     #     name: DAVIS-2016
     #     split: val_seqs

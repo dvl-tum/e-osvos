@@ -98,7 +98,9 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False):
 
                 probs = outputs[0]
                 targets = probs.ge(0.5).float()
+                model.rpn.augment_target_proposals_mode = 'REPLACE'
                 if targets.sum().item() == 0:
+                    model.rpn.augment_target_proposals_mode = 'EXTEND'
                     targets = train_frame_gt.unsqueeze(dim=0)
 
                 metrics['loss_batches'].append(torch.tensor([0.0]))
