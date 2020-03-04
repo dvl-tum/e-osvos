@@ -35,6 +35,8 @@ class VOSDataset(Dataset):
         self.augment_with_single_obj_seq_key = None
         self._full_resolution = full_resolution
         self.test_mode = False
+        self._label_id = None
+        self._multi_object_id_to_label = None
 
         # self.preloaded_imgs = {}
         # self.preloaded_labels = {}
@@ -128,6 +130,9 @@ class VOSDataset(Dataset):
         self.imgs = self.seqs[seq_name]['imgs']
         self.labels = self.seqs[seq_name]['labels']
         self.seq_key = seq_name
+
+    def set_gt_frame_id(self):
+        self.frame_id = 0
 
     def __len__(self):
         if self.frame_id is not None:
@@ -233,7 +238,10 @@ class VOSDataset(Dataset):
 
         # load first frame GT as placeholder for test mode
         if self.test_mode:
-            im = Image.open(self.labels[0])
+            if self._label_id is not None:
+                im = Image.open(self.labels[self._label_id])
+            else:
+                im = Image.open(self.labels[0])
         else:
             im = Image.open(self.labels[idx])
         label = np.atleast_3d(im)[...,0]
@@ -300,10 +308,21 @@ class VOSDataset(Dataset):
                     # if a frame does not include all objects and in particular not
                     # the object with self.multi_object_id
                     assert self.multi_object_id < self.num_objects, f"{self.seq_key} {self.multi_object_id} {self.num_objects}"
-                    if self.num_objects > len(unique_labels) and self.multi_object_id >= len(unique_labels):
-                        label = np.zeros((label.shape[0], label.shape[1]), dtype=np.float32)
+                    # if self.num_objects > len(unique_labels) and self.multi_object_id > len(unique_labels):
+                    #     label = np.zeros((label.shape[0], label.shape[1]), dtype=np.float32)
+
+                    multi_object_id = self.multi_object_id + 1.0
+                    if self._multi_object_id_to_label is not None:
+                        multi_object_id = self._multi_object_id_to_label[self.multi_object_id]
+
+                    if self.augment_with_single_obj_seq_key:
+                        multi_object_id = 1.0
+
+                    if multi_object_id in unique_labels:
+                        label = label[:, :, unique_labels.index(multi_object_id)]
                     else:
-                        label = label[:, :, self.multi_object_id]
+                        label = np.zeros(
+                            (label.shape[0], label.shape[1]), dtype=np.float32)
         else:
             label = np.where(label != 0.0, 1.0, 0.0).astype(np.float32)
         # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)

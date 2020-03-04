@@ -1,3 +1,14 @@
+single_obj_seq_mode: AUGMENT
 data_cfg:
-    root_dir: data/YouTube-VOS
     multi_object: single_id
+    # crop_sizes:
+    #     train: [480, 854]
+    #     meta: [480, 854]
+datasets:
+    train:
+        name: YouTube-VOS
+        split: train
+    # val:
+    #     name: DAVIS-2017
+    #     split: val_seqs
+    test: null

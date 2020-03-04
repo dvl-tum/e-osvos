@@ -75,11 +75,12 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False):
 
     metrics = {n: [] for n in ['loss_batches', 'acc_batches']}
 
-    if hasattr(loader.sampler, 'indices') and loader.sampler.indices is not None:
-        assert 1 in loader.sampler.indices
+    # if hasattr(loader.sampler, 'indices') and loader.sampler.indices is not None:
+    #     assert 1 in loader.sampler.indices
     loader_frame_id = loader.dataset.frame_id
-    loader.dataset.frame_id = None
-    train_frame = loader.dataset[0]
+    # loader.dataset.frame_id = None
+    loader.dataset.set_gt_frame_id()
+    train_frame = loader.dataset[loader.dataset.frame_id]
     train_frame_gt = train_frame['gt']
     loader.dataset.frame_id = loader_frame_id
     targets = train_frame_gt.unsqueeze(dim=0)

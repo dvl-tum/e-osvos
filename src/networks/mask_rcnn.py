@@ -145,8 +145,11 @@ class MaskRCNN(_MaskRCNN):
                 mask = target
                 # instances are encoded as different colors
                 obj_ids = torch.unique(mask)
+
                 # first id is the background, so remove it
-                obj_ids = obj_ids[1:]
+                obj_ids = torch.tensor([obj_id.item() for obj_id in obj_ids
+                                        if obj_id.item() != 0.0]).to(obj_ids.device)
+                # obj_ids = obj_ids[1:]
 
                 # split the color-encoded mask into a set
                 # of binary masks

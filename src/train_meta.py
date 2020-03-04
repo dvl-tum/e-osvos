@@ -721,7 +721,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             meta_loader.dataset.set_seq(seq_name)
 
             if _config['parent_model']['architecture'] == 'MaskRCNN':
-                model.rpn.augment_target_proposals_mode = 'EXTEND'
+                model.rpn.augment_target_proposals_mode = _config['eval_augment_target_proposals_mode']
                 # model.rpn.augment_target_proposals_num_box_augs = 10
 
             # initial metrics
@@ -742,12 +742,17 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 init_J_seq.extend(J)
                 # init_J_seq.extend([0.0])
 
+            # masks[seq_name] = [None] * len(test_loader.dataset)
+            boxes[seq_name] = [None] * len(test_loader.dataset)
             masks[seq_name] = []
-            boxes[seq_name] = []
+            # boxes[seq_name] = []
+
             for obj_id in range(train_loader.dataset.num_objects):
                 train_loader.dataset.multi_object_id = obj_id
                 meta_loader.dataset.multi_object_id = obj_id
                 test_loader.dataset.multi_object_id = obj_id
+
+                train_loader.dataset.set_gt_frame_id()
 
                 # evaluation with online adaptation
                 if _config['eval_online_adapt_step'] is None:
@@ -768,18 +773,34 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         # save gt of first frame as prediction of first frame
                         # TODO: refactor
                         # get train frame without random transformation
-                        test_loader_frame_id = test_loader.dataset.frame_id
-                        test_loader.dataset.frame_id = None
-                        train_frame = test_loader.dataset[train_loader.dataset.frame_id]
-                        test_loader.dataset.frame_id = test_loader_frame_id
+                        # test_loader_frame_id = test_loader.dataset.frame_id
+                        # test_loader.dataset.frame_id = None
+                        # train_frame = test_loader.dataset[train_loader.dataset.frame_id]
+                        # test_loader.dataset.frame_id = test_loader_frame_id
+                        # train_frame_gt = train_frame['gt']
+
+                        train_frame = train_loader.dataset[0]
                         train_frame_gt = train_frame['gt']
 
-                        if not obj_id:
-                            masks[seq_name].append((obj_id + 1) * train_frame_gt)
-                        else:
-                            masks[seq_name][i][train_frame_gt == 1.0] = obj_id + 1
+                        for frame_id in range(len(test_loader.dataset)):
+                            if not obj_id:
+                                masks[seq_name].append(torch.zeros_like(train_frame_gt))
+                            else:
+                                masks[seq_name][frame_id] = torch.cat([
+                                    masks[seq_name][frame_id],
+                                    torch.zeros_like(train_frame_gt)])
 
-                        eval_frame_range_min = 1
+                        masks[seq_name][train_loader.dataset.frame_id][obj_id,
+                                                                       :, :] = 2 * train_frame_gt
+
+                        # if masks[seq_name][train_loader.dataset.frame_id] is None:
+                        #     masks[seq_name][train_loader.dataset.frame_id] =  2 * train_frame_gt
+                        # else:
+                        #     masks[seq_name][train_loader.dataset.frame_id] = torch.cat(
+                        #         [masks[seq_name][train_loader.dataset.frame_id],
+                        #          2 * train_frame_gt])
+
+                        eval_frame_range_min = train_loader.dataset.frame_id + 1
                         eval_frame_range_max = eval_online_adapt_step // 2 + 1
                     else:
                         # eval_frame_range_min = (meta_frame_id - eval_online_adapt_step // 2) + 1
@@ -849,33 +870,42 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     if _config['parent_model']['architecture'] == 'MaskRCNN':
                         train_losses_seq.append({k: v.cpu().item()
                                                  for k, v in train_losses.items()})
-                        model.rpn.augment_target_proposals_mode = 'EXTEND'
+                        model.rpn.augment_target_proposals_mode = _config['eval_augment_target_proposals_mode']
                         # model.rpn.augment_target_proposals_num_box_augs = 10
 
                     # run model on frame range
+
                     test_loader.sampler.indices = range(eval_frame_range_min, eval_frame_range_max)
                     _, _, probs_frame_range, boxes_frame_range = run_loader(model, test_loader, loss_func, return_probs=True)
                     probs_frame_range = probs_frame_range.cpu()
 
                     for frame_id, probs, box in zip(test_loader.sampler.indices, probs_frame_range, boxes_frame_range):
-                        if not obj_id:
-                            masks[seq_name].append(probs)
-                            boxes[seq_name].append(box.unsqueeze(dim=0))
+                        if boxes[seq_name][frame_id] is None:
+                            boxes[seq_name][frame_id] = box.unsqueeze(dim=0)
                         else:
-                            masks[seq_name][frame_id] = torch.cat([masks[seq_name][frame_id], probs])
-                            boxes[seq_name][frame_id - 1] = torch.cat([boxes[seq_name][frame_id - 1], box.unsqueeze(dim=0)])
+                            boxes[seq_name][frame_id] = torch.cat([boxes[seq_name][frame_id], box.unsqueeze(dim=0)])
 
-                        if obj_id == train_loader.dataset.num_objects - 1:
-                            background_mask = masks[seq_name][frame_id].max(dim=0, keepdim=True)[0].lt(0.5)
-                            masks[seq_name][frame_id] = masks[seq_name][frame_id].argmax(dim=0, keepdim=True).float() + 1.0
-                            masks[seq_name][frame_id][background_mask] = 0.0
+                        masks[seq_name][frame_id][obj_id, :, :] = probs
+
+                        # if masks[seq_name][frame_id] is None:
+                        #     masks[seq_name][frame_id] = probs
+                        #     boxes[seq_name][frame_id] = box.unsqueeze(dim=0)
+                        # else:
+                        #     masks[seq_name][frame_id] = torch.cat([masks[seq_name][frame_id], probs])
+                        #     boxes[seq_name][frame_id] = torch.cat([boxes[seq_name][frame_id], box.unsqueeze(dim=0)])
 
                     test_loader.sampler.indices = None
 
                     if eval_frame_range_max == len(test_loader.dataset):
                         break
 
-                eval_time += timeit.default_timer() - start_eval
+            # merge all logit maps and set object predictions by argmax
+            for frame_id in range(len(test_loader.dataset)):
+                background_mask = masks[seq_name][frame_id].max(dim=0, keepdim=True)[0].lt(0.5)
+                masks[seq_name][frame_id] = masks[seq_name][frame_id].argmax(dim=0, keepdim=True).float() + 1.0
+                masks[seq_name][frame_id][background_mask] = 0.0
+
+            eval_time += timeit.default_timer() - start_eval
 
             # TODO: refactor
             # assert test_loader.dataset.frame_id is None
@@ -917,17 +947,18 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         # shutil.rmtree(preds_save_dir)
 
         mean_J = torch.tensor(J_seq).mean().item()
-        if mean_J > shared_dict['best_mean_J']:
+        if test_loader.dataset.test_mode or mean_J > shared_dict['best_mean_J']:
             shared_dict['best_mean_J'] = mean_J
 
             if save_dir is not None:
-                save_meta_run = {'meta_optim_state_dict': meta_optim.state_dict(),
-                                #  'meta_optim_optim_state_dict': meta_optim_optim.state_dict(),
-                                 'vis_win_names': vis_win_names,
-                                 'meta_iter': meta_iter,
-                                 'meta_epoch': meta_epoch,}
-                torch.save(save_meta_run, os.path.join(
-                    save_dir, f"best_{dataset_key}_meta_iter.model"))
+                if not test_loader.dataset.test_mode:
+                    save_meta_run = {'meta_optim_state_dict': meta_optim.state_dict(),
+                                    #  'meta_optim_optim_state_dict': meta_optim_optim.state_dict(),
+                                    'vis_win_names': vis_win_names,
+                                    'meta_iter': meta_iter,
+                                    'meta_epoch': meta_epoch,}
+                    torch.save(save_meta_run, os.path.join(
+                        save_dir, f"best_{dataset_key}_meta_iter.model"))
 
                 test_loader_frame_id = test_loader.dataset.frame_id
                 test_loader.dataset.frame_id = None
@@ -953,7 +984,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         ax.imshow(mask_frame.squeeze(2), cmap='jet', vmin=0, vmax=test_loader.dataset.num_objects)
 
                         if frame_id:
-                            for box in boxes_seq[frame_id - 1]:
+                            for box in boxes_seq[frame_id]:
                                 ax.add_patch(
                                     plt.Rectangle(
                                         (box[0], box[1]),
@@ -1081,7 +1112,9 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
 
             train_loader.dataset.multi_object_id = obj_id
             # train_loader.dataset.frame_id = train_frame_id
+
             train_loader.dataset.set_random_frame_id_with_label()
+            # train_loader.dataset.set_gt_frame_id()
 
             meta_loader.dataset.multi_object_id = obj_id
             # meta_loader.dataset.frame_id = meta_frame_id
