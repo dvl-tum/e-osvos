@@ -20,8 +20,6 @@ from networks.unet import Unet
 from networks.vgg_osvos import OSVOSVgg
 from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
-from networks.deeplabv3plus_2 import DeepLabV3Plus2
-from networks.deeplabv3plus_3 import DeepLabV3Plus3
 from networks.mask_rcnn import MaskRCNN
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
@@ -61,8 +59,8 @@ torch.manual_seed(seed)
 db_root_dir = 'data/DAVIS-2016'
 # db_root_dir = 'data/DAVIS-2017'
 
-# train_dataset = 'train_seqs'
-# test_dataset = 'val_seqs'
+train_dataset = 'train_seqs'
+test_dataset = 'val_seqs'
 
 # train_dataset = 'train_split_3_train'
 # test_dataset = 'train_split_3_val'
@@ -71,8 +69,8 @@ db_root_dir = 'data/DAVIS-2016'
 # test_dataset = 'train_split_balanced_val'
 
 # PASCAL VOC
-db_root_dir = 'data/VOC2012'
-train_dataset = 'pascal_voc'
+# db_root_dir = 'data/VOC2012'
+# train_dataset = 'pascal_voc'
 
 # YoutTube VOS
 # db_root_dir = 'data/YouTube-VOS'
@@ -87,8 +85,8 @@ train_dataset = 'pascal_voc'
 # model_name = 'FPN_ResNet101'
 # model_name = 'FPN_efficientnet-b3'
 # model_name = 'DeepLabV3_ResNet50'
-# model_name = 'DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice'
-model_name = 'MaskRCNN_ResNet50_train_encoder=False'
+model_name = 'DeepLabV3Plus_ResNet50_TEST'
+# model_name = 'MaskRCNN_ResNet50'
 # loss_func = 'cross_entropy'
 # loss_func = 'class_balanced_cross_entropy'
 loss_func = 'dice'
@@ -151,40 +149,21 @@ elif 'DeepLabV3_ResNet101' in model_name:
     lr = 1e-5
 
     net = DeepLabV3('resnet101', num_classes=1)
-elif 'DeepLabV3Plus2_ResNet50' in model_name:
+elif 'DeepLabV3Plus_ResNet50' in model_name:
     num_losses = 1
     lr = 1e-6
 
-    net = DeepLabV3Plus2('resnet50', num_classes=1)
-elif 'DeepLabV3Plus2_ResNet101' in model_name:
-    num_losses = 1
-    lr = 1e-6
-
-    net = DeepLabV3Plus2('resnet101', num_classes=1, replace_batch_with_group_norms=True)
+    net = DeepLabV3Plus('resnet50', num_classes=1)
 elif 'DeepLabV3Plus_ResNet101' in model_name:
     num_losses = 1
-    lr = 1e-5
+    lr = 1e-6
 
-    net = DeepLabV3Plus(num_classes=1, backbone='resnet',
-                        output_stride=16,
-                        sync_bn=None,
-                        freeze_bn=False)
-    state_dict = net.state_dict()
-    pretrained_state_dict = torch.load(
-        'models/deeplab-resnet.pth')['state_dict']
-    pretrained_state_dict['decoder.last_conv.8.weight'] = state_dict['decoder.last_conv.8.weight']
-    pretrained_state_dict['decoder.last_conv.8.bias'] = state_dict['decoder.last_conv.8.bias']
-    net.load_state_dict(pretrained_state_dict)
-elif 'DeepLabV3Plus3_ResNet101' in model_name:
-    num_losses = 1
-    lr = 1e-5
-
-    net = DeepLabV3Plus3(num_classes=1)
+    net = DeepLabV3Plus('resnet101', num_classes=1, replace_batch_with_group_norms=True)
 elif 'MaskRCNN_ResNet50' in model_name:
     num_losses = 1
     lr = 0.0001
 
-    net = MaskRCNN('resnet50', num_classes=2, train_encoder=False)
+    net = MaskRCNN('resnet50', num_classes=2, train_encoder=True)
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 
@@ -340,15 +319,17 @@ for epoch in range(resume_epoch, nEpochs):
         inputs, gts = inputs.to(device), gts.to(device)
 
         net.train()
-        loss = net(inputs, gts)[0]
-        # outputs = net(inputs)
+        if isinstance(net, MaskRCNN):
+            loss = net(inputs, gts)[0]
+        else:
+            outputs = net(inputs)
 
-        # # Compute the losses
-        # losses = [0] * num_losses
-        # for i in range(num_losses):
-        #     losses[i] = compute_loss(loss_func, outputs[i], gts)
-        #     running_loss_tr[i] += losses[i].item()
-        # loss = (1 - epoch / nEpochs)*sum(losses[:-1]) + losses[-1]
+            # Compute the losses
+            losses = [0] * num_losses
+            for i in range(num_losses):
+                losses[i] = compute_loss(loss_func, outputs[i], gts)
+                running_loss_tr[i] += losses[i].item()
+            loss = (1 - epoch / nEpochs)*sum(losses[:-1]) + losses[-1]
 
         # Print stuff
 

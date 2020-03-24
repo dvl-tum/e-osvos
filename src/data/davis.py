@@ -16,7 +16,7 @@ class DAVIS(VOSDataset):
         The root_dir naming specifies whether it is 16 or 17.
     """
 
-    meanval = (104.00699, 116.66877, 122.67892)
+    mean_val = (104.00699, 116.66877, 122.67892)
 
     def __init__(self, *args, **kwargs):
         super(DAVIS, self).__init__(*args, **kwargs)

@@ -6,7 +6,9 @@ datasets:
     val:
         name: DAVIS-2017
         split: val_seqs
-    test: null
+    test:
+        name: DAVIS-2017
+        split: null
 data_cfg:
     multi_object: single_id
     # crop_sizes:

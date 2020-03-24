@@ -3,8 +3,7 @@ loss_func: cross_entropy
 # loss_func: cross_entropy_and_dice
 parent_model:
     # architecture: DeepLabV3
-    # architecture: DeepLabV3Plus
-    architecture: DeepLabV3Plus2
+    architecture: DeepLabV3Plus
     # encoder: resnet50
     encoder: resnet101
     replace_batch_with_group_norms: True

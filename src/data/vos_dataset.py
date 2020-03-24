@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 class VOSDataset(Dataset):
     """DAVIS dataset constructed using the PyTorch built-in functionalities"""
 
-    meanval = None
+    mean_val = None
 
     def __init__(self, seqs_key, root_dir, frame_id=None,
                  crop_size=None, transform=None, multi_object=False,
@@ -32,11 +32,15 @@ class VOSDataset(Dataset):
         self.normalize = normalize
         self.no_label = no_label
         self.seqs = None
-        self.augment_with_single_obj_seq_key = None
         self._full_resolution = full_resolution
         self.test_mode = False
         self._label_id = None
-        self._multi_object_id_to_label = None
+        self._multi_object_id_to_label = []
+        self.augment_with_single_obj_seq_key = None
+        self.augment_with_single_obj_seq_keep_orig = True
+        self.augment_with_single_obj_seq_frame_mapping = {}
+
+        self._preload_buffer = {'imgs': {}, 'labels': {}}
 
         # self.preloaded_imgs = {}
         # self.preloaded_labels = {}
@@ -55,8 +59,7 @@ class VOSDataset(Dataset):
             raise NotImplementedError
         if not self.multi_object:
             return 1
-        im = Image.open(self.labels[0])
-        label = np.atleast_3d(im)[...,0]
+        label = np.atleast_3d(Image.open(self.labels[0]))[...,0]
         # label = cv2.imread(os.path.join(self.root_dir, self.labels[0]), cv2.IMREAD_GRAYSCALE)
         # label = np.array(label, dtype=np.float32)
         # label = label / 255.0
@@ -77,9 +80,11 @@ class VOSDataset(Dataset):
         self.set_seq(rnd_seq_name)
         return rnd_seq_name
 
+    def get_random_frame_id(self):
+        return torch.randint(len(self.imgs), (1,)).item()
+
     def set_random_frame_id(self):
-        self.frame_id = torch.randint(len(self.imgs), (1,)).item()
-        return self.frame_id
+        self.frame_id = self.get_random_frame_id()
 
     def set_frame_id_with_biggest_label(self):
         num_labels = [np.count_nonzero(self.make_img_label_pair(idx)[1])
@@ -89,9 +94,11 @@ class VOSDataset(Dataset):
     def has_frame_object(self):
         assert self.frame_id is not None
         _, label = self.make_img_label_pair(self.frame_id)
-        return len(np.unique(label)) > 1
 
-    def set_random_frame_id_with_label(self):
+        return len([l for l in np.unique(label) if l != 0.0]) > 0
+
+    def get_random_frame_id_with_label(self):
+        prev_frame_id = self.frame_id
         def _set_random_frame_id_with_label():
             self.set_random_frame_id()
             if self.has_frame_object():
@@ -100,7 +107,14 @@ class VOSDataset(Dataset):
                 _set_random_frame_id_with_label()
 
         _set_random_frame_id_with_label()
-        return self.frame_id
+
+        random_frame_id_with_label = self.frame_id
+        self.frame_id = prev_frame_id
+
+        return random_frame_id_with_label
+
+    def set_random_frame_id_with_label(self):
+        self.frame_id = self.get_random_frame_id_with_label()
 
     def set_next_frame_id(self):
         if self.frame_id == 'middle':
@@ -155,8 +169,10 @@ class VOSDataset(Dataset):
 
             prev_seq_key = self.seq_key
             prev_frame_id = self.frame_id
+            prev_multi_object_id = self.multi_object_id
 
             self.set_seq(self.augment_with_single_obj_seq_key)
+            self.multi_object_id = 0
 
             def crop_center(img, crop_w, crop_h):
                 w, h = img.shape[:2]
@@ -166,7 +182,10 @@ class VOSDataset(Dataset):
 
             has_object = False
             while not has_object:
-                self.set_random_frame_id_with_label()
+                if idx in self.augment_with_single_obj_seq_frame_mapping:
+                    self.frame_id = self.augment_with_single_obj_seq_frame_mapping[idx]
+                else:
+                    self.set_random_frame_id_with_label()
 
                 aug_img, aug_label = self.make_img_label_pair(self.frame_id)
 
@@ -186,7 +205,7 @@ class VOSDataset(Dataset):
                 obj_mask = aug_label == 1.0
                 img[obj_mask] = aug_img[obj_mask]
 
-                if not self.multi_object_id:
+                if self.augment_with_single_obj_seq_keep_orig:
                     aug_label = np.copy(label)
                     aug_label[obj_mask] = 0
 
@@ -194,18 +213,21 @@ class VOSDataset(Dataset):
                     has_object = True
 
                     label = aug_label
+                    self.augment_with_single_obj_seq_frame_mapping[idx] = self.frame_id
+
                     # self.multi_object_id = 0
 
+                    # print('AUGMENT')
                     # import imageio
                     # # pred = np.transpose(img, (1, 2, 0))
-                    # imageio.imsave(f"{prev_seq_key}_{prev_frame_id}_{self.seq_key}_{self.frame_id}_img.png", (img * 255).astype(np.uint8))
+                    # imageio.imsave(f"{prev_seq_key}_{idx}_{self.seq_key}_{self.frame_id}_{self.augment_with_single_obj_seq_keep_orig}_img.png", (img * 255).astype(np.uint8))
                     # imageio.imsave(
-                    #     f"{prev_seq_key}_{prev_frame_id}_{self.seq_key}_{self.frame_id}_label.png", (label * 255).astype(np.uint8))
-                    # print('AUGMENT')
-                    # exit()
+                    #     f"{prev_seq_key}_{idx}_{self.seq_key}_{self.frame_id}_{self.augment_with_single_obj_seq_keep_orig}_label.png", (label * 255).astype(np.uint8))
+                    # # # exit()
 
             self.set_seq(prev_seq_key)
             self.frame_id = prev_frame_id
+            self.multi_object_id = prev_multi_object_id
 
         if self.flip_label:
             label = np.logical_not(label).astype(np.float32)
@@ -231,23 +253,31 @@ class VOSDataset(Dataset):
         """
         Make the image-ground-truth pair
         """
-        # if self.imgs[idx] in self.preloaded_imgs:
-        #     return self.preloaded_imgs[self.imgs[idx]], self.preloaded_labels[self.labels[idx]]
 
-        img = cv2.imread(self.imgs[idx], cv2.IMREAD_COLOR)[..., ::-1]
+        img_path = self.imgs[idx]
+        img = cv2.imread(img_path, cv2.IMREAD_COLOR)[..., ::-1]
+        # if img_path in self._preload_buffer['imgs']:
+        #     img = self._preload_buffer['imgs'][img_path]
+        # else:
+        #     img = cv2.imread(img_path, cv2.IMREAD_COLOR)[..., ::-1]
+        #     self._preload_buffer['imgs'][img_path] = img
 
         # load first frame GT as placeholder for test mode
         if self.test_mode:
             if self._label_id is not None:
-                im = Image.open(self.labels[self._label_id])
+                label = Image.open(self.labels[self._label_id])
             else:
-                im = Image.open(self.labels[0])
+                label = Image.open(self.labels[0])
         else:
-            im = Image.open(self.labels[idx])
-        label = np.atleast_3d(im)[...,0]
+            label_path = self.labels[idx]
+            label = Image.open(label_path)
+            # if label_path in self._preload_buffer['labels']:
+            #     label = self._preload_buffer['labels'][label_path]
+            # else:
+            #     label = Image.open(label_path)
+            #     self._preload_buffer['labels'][label_path] = label
 
-        # label = cv2.imread(os.path.join(
-        #     self.root_dir, self.labels[idx]), cv2.IMREAD_GRAYSCALE)
+        label = np.atleast_3d(label)[..., 0]
 
         if self.crop_size is not None:
             crop_h, crop_w = self.crop_size
@@ -275,7 +305,7 @@ class VOSDataset(Dataset):
 
         img = np.array(img, dtype=np.float32)
         if self.normalize:
-            img = np.subtract(img, np.array(self.meanval, dtype=np.float32))
+            img = np.subtract(img, np.array(self.mean_val, dtype=np.float32))
         img = img / 255.0
 
         label = np.array(label, dtype=np.float32)
@@ -312,11 +342,8 @@ class VOSDataset(Dataset):
                     #     label = np.zeros((label.shape[0], label.shape[1]), dtype=np.float32)
 
                     multi_object_id = self.multi_object_id + 1.0
-                    if self._multi_object_id_to_label is not None:
+                    if self._multi_object_id_to_label:
                         multi_object_id = self._multi_object_id_to_label[self.multi_object_id]
-
-                    if self.augment_with_single_obj_seq_key:
-                        multi_object_id = 1.0
 
                     if multi_object_id in unique_labels:
                         label = label[:, :, unique_labels.index(multi_object_id)]

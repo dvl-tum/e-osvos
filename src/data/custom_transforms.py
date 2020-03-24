@@ -20,7 +20,7 @@ class RandomScaleNRotate:
         self.rots = rots
         self.scales = scales
         self.deterministic = deterministic
-        self.deteministic_rot_sc = {}
+        self.deterministic_rot_sc = {}
 
     def _get_rot_and_sc(self):
         if type(self.rots) == tuple:
@@ -53,8 +53,9 @@ class RandomScaleNRotate:
     def __call__(self, sample):
         still_has_object = False
         while not still_has_object:
-            if self.deteministic_rot_sc:
-                rot, sc = self.deteministic_rot_sc['rot'], self.deteministic_rot_sc['sc']
+            if sample['file_name'] in self.deterministic_rot_sc:
+                rot, sc = self.deterministic_rot_sc[sample['file_name']]['rot'], \
+                    self.deterministic_rot_sc[sample['file_name']]['sc']
             else:
                 rot, sc = self._get_rot_and_sc()
 
@@ -66,15 +67,16 @@ class RandomScaleNRotate:
 
             still_has_object = len(np.unique(aug_label)) > 1
 
-            if self.deteministic_rot_sc:
+            if sample['file_name'] in self.deterministic_rot_sc:
                 assert still_has_object
 
         sample['gt'] = aug_label
         sample['image'] = self._rot_and_sc(sample['image'], rot, sc)
 
         if self.deterministic:
-            self.deteministic_rot_sc['rot'] = rot
-            self.deteministic_rot_sc['sc'] = sc
+            self.deterministic_rot_sc[sample['file_name']] = {}
+            self.deterministic_rot_sc[sample['file_name']]['rot'] = rot
+            self.deterministic_rot_sc[sample['file_name']]['sc'] = sc
 
         return sample
 
@@ -139,6 +141,7 @@ class ColorJitter:
 
         # imageio.imsave("img_after.png",
         #                (sample['image'] * 255).astype(np.uint8))
+
         return sample
 
 

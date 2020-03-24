@@ -20,7 +20,6 @@ bptt_epochs: 10
 # only for evaluation.
 # choose uneven frames to have meta matching frame in the middle of eval frame interval.
 eval_online_adapt_step: null
-eval_augment_target_proposals_mode: EXTEND   # [None, EXTEND, REPLACE]
 meta_optim_model_file: null
 meta_optim_cfg:
     num_layers: 2
@@ -59,12 +58,13 @@ datasets:
     val:
         name: DAVIS-2016
         split: val_seqs
-    test: null
+    test:
+        name: DAVIS-2016
+        split: null
 parent_model:
     # architecture: FPN
     # architecture: DeepLabV3
     # architecture: DeepLabV3Plus
-    # architecture: DeepLabV3Plus2
     architecture: MaskRCNN
     train_encoder: True
     batch_norm:
@@ -72,7 +72,7 @@ parent_model:
         learn_weight: True
         learn_bias: True
     replace_batch_with_group_norms: False
-
+    eval_augment_rpn_proposals_mode: null   # [None, EXTEND, REPLACE]
     roi_pool_output_sizes:
         box: 7
         mask: 14
@@ -84,7 +84,6 @@ parent_model:
     encoder: resnet50
     # encoder: resnet34-group-norm
     # encoder: resnet101-group-norm
-    replace_batch_with_group_norms: True
     train:
         paths: []
         # paths: ['models/MaskRCNN_ResNet50_train_encoder=False/VOC2012/pascal_voc/MaskRCNN_ResNet50_train_encoder=False_epoch-50.pth']
@@ -137,7 +136,7 @@ data_cfg:
     frame_ids:
         train: 0
         test: null
-        meta: middle
+        meta: null
     batch_sizes:
         # train applies an epoch sampler. frame_id will be repeated bach_size times.
         train: 1

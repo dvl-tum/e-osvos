@@ -20,8 +20,6 @@ from networks.unet import Unet
 from networks.vgg_osvos import OSVOSVgg
 from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
-from networks.deeplabv3plus_2 import DeepLabV3Plus2
-from networks.deeplabv3plus_3 import DeepLabV3Plus3
 from networks.mask_rcnn import MaskRCNN
 from prettytable import PrettyTable
 from pytorch_tools.data import EpochSampler
@@ -94,14 +92,16 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False):
 
             model.eval()
 
+            # targets = gts
+
             if isinstance(model, MaskRCNN):
                 outputs = model(inputs, targets)
 
                 probs = outputs[0]
                 targets = probs.ge(0.5).float()
-                model.rpn.augment_target_proposals_mode = 'REPLACE'
+                # model.rpn.augment_target_proposals_mode = 'REPLACE'
                 if targets.sum().item() == 0:
-                    model.rpn.augment_target_proposals_mode = 'EXTEND'
+                    # model.rpn.augment_target_proposals_mode = 'EXTEND'
                     targets = train_frame_gt.unsqueeze(dim=0)
 
                 metrics['loss_batches'].append(torch.tensor([0.0]))
@@ -304,18 +304,8 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
 
 def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
                       replace_batch_with_group_norms, batch_norm,
-                      roi_pool_output_sizes, **datasets):
-    # if 'VGG' in base_path:
-    #     model = OSVOSVgg(pretrained=0)
-    # elif 'DRN_D_22' in base_path:
-    #     model = DRNSeg('DRN_D_22', 1, pretrained=True)
-    # elif 'UNET_ResNet18' in base_path:
-    #     model = Unet('resnet18', classes=1, activation='softmax')
-    # elif 'FPN_ResNet34_group_norm' in base_path:
-    #     model = FPN('resnet34-group-norm', classes=1, activation='softmax', dropout=0.0)
-    # elif 'UNET_ResNet34' in base_path:
-    #     model = Unet('resnet34', classes=1, activation='softmax')
-
+                      roi_pool_output_sizes, eval_augment_rpn_proposals_mode,
+                      **datasets):
     if architecture == 'FPN':
         model = FPN(encoder, classes=1, activation=None, decoder_dropout=0.0,
                     batch_norm=batch_norm, train_encoder=train_encoder,
@@ -323,19 +313,15 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
     elif architecture == 'DeepLabV3':
         model = DeepLabV3(encoder, num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
     elif architecture == 'DeepLabV3Plus':
-        model = DeepLabV3Plus(num_classes=1, backbone='resnet', output_stride=16,
-                              sync_bn=False, freeze_bn=True, batch_norm=batch_norm, train_encoder=train_encoder)
-    elif architecture == 'DeepLabV3Plus2':
-        model = DeepLabV3Plus2(
+        model = DeepLabV3Plus(
             encoder, num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder,
             replace_batch_with_group_norms=replace_batch_with_group_norms)
-    elif architecture == 'DeepLabV3Plus3':
-        model = DeepLabV3Plus3(
-            num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
     elif architecture == 'MaskRCNN':
         model = MaskRCNN(
             encoder, num_classes=2, batch_norm=batch_norm, train_encoder=train_encoder,
-            roi_pool_output_sizes=roi_pool_output_sizes)
+            roi_pool_output_sizes=roi_pool_output_sizes,
+            eval_augment_rpn_proposals_mode=eval_augment_rpn_proposals_mode,
+            replace_batch_with_group_norms=replace_batch_with_group_norms)
     else:
         raise NotImplementedError
 
