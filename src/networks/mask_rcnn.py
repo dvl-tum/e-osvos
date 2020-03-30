@@ -248,6 +248,7 @@ class MaskRCNN(_MaskRCNN):
                                     #    rpn_post_nms_top_n_test=rpn_post_nms_top_n_test,)
                                     #    box_positive_fraction=0.25)
 
+        self.num_classes = num_classes
         self.rpn._eval_augment_proposals_mode = eval_augment_rpn_proposals_mode
         self.rpn.forward = types.MethodType(rpn_forward, self.rpn)
 

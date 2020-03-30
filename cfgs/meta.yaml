@@ -55,12 +55,15 @@ datasets:
     train:
         name: DAVIS-2016
         split: train_seqs
+        eval: True
     val:
         name: DAVIS-2016
         split: val_seqs
+        eval: True
     test:
         name: DAVIS-2016
         split: null
+        eval: True
 parent_model:
     # architecture: FPN
     # architecture: DeepLabV3
@@ -112,9 +115,9 @@ parent_model:
         paths: []
         val_split_files:
             - data/DAVIS-2017/test-dev_seqs.txt
-    # model_init_meta_optim_split:
-    #     paths: []
-    #     val_split_files:
+    model_init_meta_optim_split:
+        paths: []
+        val_split_files: []
     #         - data/DAVIS-2016/train_split_balanced_val.txt
 
 train_early_stopping_cfg:

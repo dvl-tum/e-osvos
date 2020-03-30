@@ -68,20 +68,28 @@ def epoch_iter(num_epochs: int):
         return range(1, num_epochs + 1)
 
 
-def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False):
+def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False, start_targets=None):
     device = next(model.parameters()).device
 
     metrics = {n: [] for n in ['loss_batches', 'acc_batches']}
 
+    augment_target_proposals_mode = model.rpn._eval_augment_proposals_mode
+    targets = None
+
     # if hasattr(loader.sampler, 'indices') and loader.sampler.indices is not None:
     #     assert 1 in loader.sampler.indices
-    loader_frame_id = loader.dataset.frame_id
-    # loader.dataset.frame_id = None
-    loader.dataset.set_gt_frame_id()
-    train_frame = loader.dataset[loader.dataset.frame_id]
-    train_frame_gt = train_frame['gt']
-    loader.dataset.frame_id = loader_frame_id
-    targets = train_frame_gt.unsqueeze(dim=0)
+    if augment_target_proposals_mode is not None:
+        if start_targets is None:
+            loader_frame_id = loader.dataset.frame_id
+            # loader.dataset.frame_id = None
+            loader.dataset.set_gt_frame_id()
+            train_frame = loader.dataset[loader.dataset.frame_id]
+            train_frame_gt = train_frame['gt']
+            loader.dataset.frame_id = loader_frame_id
+            start_targets = train_frame_gt.unsqueeze(dim=0)
+
+        targets = start_targets.clone()
+
 
     probs_all = []
     boxes_all =[]
@@ -98,11 +106,14 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False):
                 outputs = model(inputs, targets)
 
                 probs = outputs[0]
-                targets = probs.ge(0.5).float()
-                # model.rpn.augment_target_proposals_mode = 'REPLACE'
-                if targets.sum().item() == 0:
-                    # model.rpn.augment_target_proposals_mode = 'EXTEND'
-                    targets = train_frame_gt.unsqueeze(dim=0)
+
+                if augment_target_proposals_mode is not None:
+                    targets = probs.ge(0.5).float()
+
+                    model.rpn._eval_augment_proposals_mode = augment_target_proposals_mode
+                    if targets.sum().item() == 0:
+                        model.rpn._eval_augment_proposals_mode = 'EXTEND'
+                        targets = start_targets
 
                 metrics['loss_batches'].append(torch.tensor([0.0]))
 

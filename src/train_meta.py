@@ -86,7 +86,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
     for dataset_name, dataset in datasets.items():
-        if dataset['split'] is not None:
+        if dataset['eval'] and dataset['split'] is not None:
 
             flip_labels = [False]
             # if _config['random_flip_label']:
@@ -334,7 +334,7 @@ def device_for_process(rank: int, _config: dict):
         gpu_rank = (rank // _config['num_meta_processes_per_gpu'])
         if _config['gpu_per_dataset_eval']:
             datasets = {k: v for k, v in _config['datasets'].items()
-                        if ['split'] is not None}
+                        if v['eval'] and v['split'] is not None}
             gpu_rank += len(datasets)
         else:
             gpu_rank += 1
@@ -494,13 +494,9 @@ def meta_run(rank: int,
                 # prev_bptt_iter_loss = bptt_iter_loss.detach()
 
                 # visualization
-                if meta_optim.lr_per_tensor:
-                    lr = meta_optim.state["log_lr"].exp()
-                else:
-                    lr = torch.tensor([l.exp().mean()
-                                       for l in meta_optim.state["log_lr"]])
-
-                vis_data = [train_loss.item(), bptt_loss.item(), lr.cpu().detach().numpy()]
+                vis_data = [train_loss.item(),
+                            bptt_loss.item(),
+                            meta_optim.state_lr.cpu().detach().numpy()]
                 vis_data_seqs[seq_name][-1].append(vis_data)
 
                 stop_train = stop_train or early_stopping(
@@ -564,7 +560,8 @@ def meta_run(rank: int,
             if not meta_loss_is_nan:
                 for name, param in meta_optim.named_parameters():
 
-                    if 'model_init_meta_optim_split' in parent_states:
+                    if parent_states['model_init_meta_optim_split']['splits']:
+                        assert len(parent_states['model_init_meta_optim_split']['splits']) == 1
                         if seq_name in parent_states['model_init_meta_optim_split']['splits'][0]:
                             if 'model_init' in name:
                                 shared_meta_optim_grads[name] += param.grad.cpu()
@@ -628,9 +625,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         def early_stopping_func(loss_hist):
             return early_stopping(loss_hist, **_config['train_early_stopping_cfg'])
 
-        if _config['eval_online_adapt_step'] is not None:
-            assert _config['meta_optim_cfg']['matching_input'], (
-                'Online adaptation must have meta_optim_cfg.matching_input=True. ')
+        # if _config['eval_online_adapt_step'] is not None:
+        #     assert _config['meta_optim_cfg']['matching_input'], (
+        #         'Online adaptation must have meta_optim_cfg.matching_input=True. ')
 
         # save predictions in human readable format and with boxes
         if save_dir is not None:
@@ -725,9 +722,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 for i, meta_frame_id in enumerate(meta_frame_iter):
                     # range [min, max[
                     if i == 0:
-
                         train_frame = train_loader.dataset[0]
                         train_frame_gt = train_frame['gt']
+                        train_frame_input = train_frame['image']
 
                         for frame_id in range(len(test_loader.dataset)):
                             if not obj_id:
@@ -745,6 +742,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     else:
                         # eval_frame_range_min = (meta_frame_id - eval_online_adapt_step // 2) + 1
                         eval_frame_range_min = eval_frame_range_max
+
+                        propagate_frame_gt = masks[seq_name][eval_frame_range_min - 1].ge(0.5).float()
+                        train_loader.dataset.frame_id = eval_frame_range_min - 1
 
                     eval_frame_range_max += eval_online_adapt_step
                     if eval_frame_range_max + (eval_online_adapt_step // 2 + 1) > len(test_loader.dataset):
@@ -778,6 +778,15 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                         for _, sample_batched in enumerate(train_loader):
                             inputs, gts = sample_batched['image'], sample_batched['gt']
+
+                            if not i == 0:
+                                # gts = propagate_frame_gt.unsqueeze(dim=0)
+
+                                gts = torch.cat([propagate_frame_gt.unsqueeze(dim=0),
+                                                 train_frame_gt.unsqueeze(dim=0)])
+                                inputs = torch.cat([inputs,
+                                                    train_frame_input.unsqueeze(dim=0)])
+
                             inputs, gts = inputs.to(device), gts.to(device)
 
                             model.train_without_dropout()
@@ -807,11 +816,17 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                     if _config['parent_model']['architecture'] == 'MaskRCNN':
                         train_losses_seq.append({k: v.cpu().item()
-                                                 for k, v in train_losses.items()})
+                                                for k, v in train_losses.items()})
 
                     # run model on frame range
                     test_loader.sampler.indices = range(eval_frame_range_min, eval_frame_range_max)
-                    _, _, probs_frame_range, boxes_frame_range = run_loader(model, test_loader, loss_func, return_probs=True)
+
+                    if i == 0:
+                        targets = train_frame_gt.unsqueeze(dim=0)
+                    else:
+                        targets = propagate_frame_gt.unsqueeze(dim=0)
+
+                    _, _, probs_frame_range, boxes_frame_range = run_loader(model, test_loader, loss_func, return_probs=True, start_targets=targets)
                     probs_frame_range = probs_frame_range.cpu()
 
                     for frame_id, probs, box in zip(test_loader.sampler.indices, probs_frame_range, boxes_frame_range):
@@ -1002,18 +1017,16 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
 
             meta_loader.dataset.multi_object_id = obj_id
 
-            # frame_id_not_set = True
+            # epsilon_frame = 10
             # meta_frame_ids = []
-            # while frame_id_not_set:
-            #     frame_id = train_loader.dataset.get_random_frame_id_with_label()
-            #     if frame_id > len(test_loader.dataset) // 2:
+            # while len(meta_frame_ids) < data_cfg['batch_sizes']['meta']:
+            #     frame_id = meta_loader.dataset.get_random_frame_id_with_label()
+            #     if train_loader.dataset.frame_id - epsilon_frame < frame_id < train_loader.dataset.frame_id + epsilon_frame:
             #         meta_frame_ids.append(frame_id)
-
-            #     if len(meta_frame_ids) == data_cfg['batch_sizes']['meta']:
-            #         frame_id_not_set = False
 
             meta_frame_ids = [meta_loader.dataset.get_random_frame_id_with_label()
                               for _ in range(data_cfg['batch_sizes']['meta'])]
+
             meta_loader.sampler.indices = meta_frame_ids
 
             if num_objects == 1 and single_obj_seq_mode == 'AUGMENT':
@@ -1134,7 +1147,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         if resume_meta_run_epoch_mode == 'LAST':
             resume_model_name = f"last_meta_iter.model"
         elif 'BEST' in resume_meta_run_epoch_mode:
-            resume_model_name = f"best_{resume_meta_run_epoch_mode.split('_')[1].lower()}_iter.model"
+            resume_model_name = f"best_{resume_meta_run_epoch_mode.split('_')[1].lower()}_meta_iter.model"
         else:
             raise NotImplementedError
         saved_meta_run = torch.load(os.path.join(save_dir, resume_model_name))
@@ -1156,7 +1169,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
     if eval_datasets:
         eval_processes = [{'dataset_key': k, 'flip_label': False}
                           for k, v in datasets.items()
-                          if v['split'] is not None]
+                          if v['eval'] and v['split'] is not None]
 
         # if _config['random_flip_label']:
         #     eval_processes.extend([{'dataset_key': k, 'flip_label': True}
@@ -1167,6 +1180,8 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
             num_meta_processes -= len(eval_processes)
         else:
             num_meta_processes -= 1
+
+        assert num_meta_processes >= 0
 
     if num_meta_processes:
         num_meta_processes *= num_meta_processes_per_gpu
@@ -1263,6 +1278,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         p['shared_dict'] = process_manager.dict()
         p['shared_dict']['meta_iter'] = None
         p['shared_dict']['best_mean_J'] = 0.0
+        p['shared_dict']['eval_done'] = False
         rank = rank if gpu_per_dataset_eval else 0
         process_args = [rank, p['dataset_key'], p['flip_label'], meta_optim.state_dict(), shared_variables,
                         _config, p['shared_dict'], save_dir, {n: v.win for n, v in vis_dict.items()},]
@@ -1304,7 +1320,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         # VIS EVAL
         #
         for p in eval_processes:
-            if p['shared_dict']['meta_iter'] is not None:
+            if p['shared_dict']['meta_iter'] is not None and not p['shared_dict']['eval_done']:
                 # copy to avoid overwriting by evaluation subprocess
                 shared_dict = copy.deepcopy(p['shared_dict'])
 
@@ -1327,9 +1343,10 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                 vis_dict[f"{p['dataset_key']}_flip_label_{p['flip_label']}_eval_seq_vis"].plot(
                     eval_seq_vis, shared_dict['meta_iter'])
 
-                # resume evaluation if not in eval only mode
-                if num_meta_processes:
-                    p['shared_dict']['meta_iter'] = None
+                # evalutate only once if in eval mode
+                if not num_meta_processes:
+                    p['shared_dict']['eval_done'] = True
+                p['shared_dict']['meta_iter'] = None
 
         if num_meta_processes and all([p['shared_dict']['sub_iter_done'] for p in meta_processes]):
             shared_variables['meta_iter'] += 1
@@ -1394,37 +1411,29 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                     meta_metrics, shared_variables['meta_iter'])
 
                 # VIS LR
-                if meta_optim.lr_per_tensor:
-                    if _config['num_epochs']['train'] > 1:
-                        lrs_hist = []
-                        for p in meta_processes:
-                            lrs_hist.extend(chain.from_iterable(list(p['shared_dict']['vis_data_seqs'].values())))
+                if _config['num_epochs']['train'] > 1:
+                    lrs_hist = []
+                    for p in meta_processes:
+                        lrs_hist.extend(chain.from_iterable(list(p['shared_dict']['vis_data_seqs'].values())))
 
-                        # [train_loss.item(), bptt_loss.item(), lr.mean().item(), lr.std().item(),]
-                        # lrs_hist = torch.Tensor(lrs_hist)
+                    # [train_loss.item(), bptt_loss.item(), lr.mean().item(), lr.std().item(),]
+                    # lrs_hist = torch.Tensor(lrs_hist)
 
-                        vis_dict['lrs_hist_vis'].reset()
-                        for epoch in range(_config['num_epochs']['train']):
+                    vis_dict['lrs_hist_vis'].reset()
+                    for epoch in range(_config['num_epochs']['train']):
 
-                            lrs_hist_epoch = [torch.tensor([s[epoch][2] for s in lrs_hist]).mean(),
-                                              torch.tensor([s[epoch][2] for s in lrs_hist]).std()]
+                        lrs_hist_epoch = [torch.tensor([s[epoch][2] for s in lrs_hist]).mean(),
+                                            torch.tensor([s[epoch][2] for s in lrs_hist]).std()]
 
-                            for layer in range(lrs_hist[0][epoch][2].shape[0]):
-                                lrs_hist_epoch.append(torch.tensor(
-                                    [s[epoch][2][layer] for s in lrs_hist]).mean())
+                        for layer in range(lrs_hist[0][epoch][2].shape[0]):
+                            lrs_hist_epoch.append(torch.tensor(
+                                [s[epoch][2][layer] for s in lrs_hist]).mean())
 
-                            vis_dict['lrs_hist_vis'].plot(lrs_hist_epoch, epoch + 1)
+                        vis_dict['lrs_hist_vis'].plot(lrs_hist_epoch, epoch + 1)
 
-                    # log_init_lr = meta_optim.log_init_lr[:, 0]
-                    log_init_lr = meta_optim.log_init_lr[:, 0].exp()
-                    # log_init_lr = meta_optim.log_init_lr.exp().repeat(1, 2).flatten()
-                else:
-                    # log_init_lr = torch.Tensor([l.mean() for l in meta_optim.log_init_lr])
-                    log_init_lr = torch.Tensor([l.exp().mean() for l in meta_optim.log_init_lr])
-
-                meta_init_lr = [log_init_lr.mean(),
-                                log_init_lr.std()]
-                meta_init_lr += log_init_lr.detach().numpy().tolist()
+                meta_init_lr = [meta_optim.init_lr.mean(),
+                                meta_optim.init_lr.std()]
+                meta_init_lr += meta_optim.init_lr.detach().numpy().tolist()
                 vis_dict['init_lr_vis'].plot(
                     meta_init_lr, shared_variables['meta_iter'])
 
