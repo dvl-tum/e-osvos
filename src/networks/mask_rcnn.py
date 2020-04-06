@@ -302,6 +302,13 @@ class MaskRCNN(_MaskRCNN):
         if replace_batch_with_group_norms:
             self.replace_batch_with_group_norms()
 
+        self.last_param_group_names = ['roi_heads.box_predictor.cls_score.weight',
+                                       'roi_heads.box_predictor.cls_score.bias',
+                                       'roi_heads.box_predictor.bbox_pred.weight',
+                                       'roi_heads.box_predictor.bbox_pred.bias',
+                                       'roi_heads.mask_predictor.mask_fcn_logits.weight',
+                                       'roi_heads.mask_predictor.mask_fcn_logits.bias']
+
     def replace_batch_with_group_norms(self):
         for module in self.modules():
             bn_keys = [k for k, m in module._modules.items()

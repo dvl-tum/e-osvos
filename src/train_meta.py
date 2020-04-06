@@ -418,7 +418,7 @@ def meta_run(rank: int,
             prev_bptt_iter_loss = torch.zeros(1).to(meta_device)
             train_loss_hist = []
             train_losses_hist = []
-            vis_data_seqs[seq_name].append([])
+            vis_data_seqs_sample = []
 
             meta_optim.reset()
             meta_optim.zero_grad()
@@ -497,7 +497,7 @@ def meta_run(rank: int,
                 vis_data = [train_loss.item(),
                             bptt_loss.item(),
                             meta_optim.state_lr.cpu().detach().numpy()]
-                vis_data_seqs[seq_name][-1].append(vis_data)
+                vis_data_seqs_sample.append(vis_data)
 
                 stop_train = stop_train or early_stopping(
                     train_loss_hist, **_config['train_early_stopping_cfg'])
@@ -540,24 +540,26 @@ def meta_run(rank: int,
 
                 # print('TRAIN EPOCH ', (timeit.default_timer() - start_train_epoch) / 60)
 
-            # loss_batches, _ = run_loader(model, meta_loader, loss_func)
-            # seqs_metrics['meta_loss'][seq_name].append(loss_batches.mean())
-            seqs_metrics['meta_loss'][seq_name].append(meta_loss.item())
-            seqs_metrics['meta_losses'][seq_name].append({k: v.cpu().item()
-                                                          for k, v in meta_losses.items()})
-
-            # loss_batches, _, J, F = eval_loader(model, test_loader, loss_func)
-            # next_meta_frame_ids[seq_name] = loss_batches.argmax().item()
-
-            # seqs_metrics['loss'][seq_name] = loss_batches.mean()
-            # seqs_metrics['J'][seq_name] = J
-            # seqs_metrics['F'][seq_name] = F
-            # seqs_metrics['train_loss'][seq_name].append(train_loss_hist[-1])
-            seqs_metrics['train_loss'][seq_name].append(train_loss_hist[0])
-            if _config['parent_model']['architecture'] == 'MaskRCNN':
-                seqs_metrics['train_losses'][seq_name].append(train_losses_hist[0])
-
             if not meta_loss_is_nan:
+                # loss_batches, _ = run_loader(model, meta_loader, loss_func)
+                # seqs_metrics['meta_loss'][seq_name].append(loss_batches.mean())
+                seqs_metrics['meta_loss'][seq_name].append(meta_loss.item())
+                seqs_metrics['meta_losses'][seq_name].append({k: v.cpu().item()
+                                                            for k, v in meta_losses.items()})
+
+                vis_data_seqs[seq_name].append(vis_data_seqs_sample)
+
+                # loss_batches, _, J, F = eval_loader(model, test_loader, loss_func)
+                # next_meta_frame_ids[seq_name] = loss_batches.argmax().item()
+
+                # seqs_metrics['loss'][seq_name] = loss_batches.mean()
+                # seqs_metrics['J'][seq_name] = J
+                # seqs_metrics['F'][seq_name] = F
+                # seqs_metrics['train_loss'][seq_name].append(train_loss_hist[-1])
+                seqs_metrics['train_loss'][seq_name].append(train_loss_hist[0])
+                if _config['parent_model']['architecture'] == 'MaskRCNN':
+                    seqs_metrics['train_losses'][seq_name].append(train_losses_hist[0])
+
                 for name, param in meta_optim.named_parameters():
 
                     if parent_states['model_init_meta_optim_split']['splits']:
@@ -891,6 +893,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     save_dir, f"last_{dataset_key}_meta_iter.model"))
 
         mean_J = torch.tensor(J_seq).mean().item()
+
         if test_loader.dataset.test_mode or mean_J > shared_dict['best_mean_J']:
             shared_dict['best_mean_J'] = mean_J
 

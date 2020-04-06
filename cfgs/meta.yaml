@@ -32,6 +32,7 @@ meta_optim_cfg:
     # optimizer that computes paramter update step witout learning rate
     optim_func: SGD
     learn_model_init: False
+    learn_model_init_last_layer_template: False
     layer_norm: True
     train_input: False
     grad_input: False
