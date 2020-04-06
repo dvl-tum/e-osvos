@@ -36,9 +36,11 @@ class VOSDataset(Dataset):
         self.test_mode = False
         self._label_id = None
         self._multi_object_id_to_label = []
-        self.augment_with_single_obj_seq_key = None
+        self.augment_with_single_obj_seq_dataset = None
         self.augment_with_single_obj_seq_keep_orig = True
-        self.augment_with_single_obj_seq_frame_mapping = {}
+        # self.augment_with_single_obj_seq_frame_mapping = {}
+        self.random_frame_id_epsilon = None
+        self.random_frame_id_anchor_frame =None
 
         self._preload_buffer = {'imgs': {}, 'labels': {}}
 
@@ -81,7 +83,12 @@ class VOSDataset(Dataset):
         return rnd_seq_name
 
     def get_random_frame_id(self):
-        return torch.randint(len(self.imgs), (1,)).item()
+        if self.random_frame_id_epsilon is not None:
+            return torch.randint(max(0, self.random_frame_id_anchor_frame - self.random_frame_id_epsilon),
+                                 min(self.random_frame_id_anchor_frame + self.random_frame_id_epsilon, len(self.imgs)),
+                                 (1,)).item()
+        else:
+            return torch.randint(len(self.imgs), (1,)).item()
 
     def set_random_frame_id(self):
         self.frame_id = self.get_random_frame_id()
@@ -101,6 +108,10 @@ class VOSDataset(Dataset):
         prev_frame_id = self.frame_id
         def _set_random_frame_id_with_label():
             self.set_random_frame_id()
+
+            if self.augment_with_single_obj_seq_dataset is not None:
+                self.augment_with_single_obj_seq_dataset.set_random_frame_id()
+
             if self.has_frame_object():
                 return
             else:
@@ -163,71 +174,6 @@ class VOSDataset(Dataset):
                 idx = self.frame_id
 
         img, label = self.make_img_label_pair(idx)
-
-        if self.augment_with_single_obj_seq_key is not None:
-            assert self.num_objects == 1, f'{self.seq_key} is not a single object sequence.'
-
-            prev_seq_key = self.seq_key
-            prev_frame_id = self.frame_id
-            prev_multi_object_id = self.multi_object_id
-
-            self.set_seq(self.augment_with_single_obj_seq_key)
-            self.multi_object_id = 0
-
-            def crop_center(img, crop_w, crop_h):
-                w, h = img.shape[:2]
-                start_w = w // 2 - (crop_w // 2)
-                start_h = h // 2 - (crop_h // 2)
-                return img[start_w:start_w + crop_w, start_h:start_h + crop_h]
-
-            has_object = False
-            while not has_object:
-                if idx in self.augment_with_single_obj_seq_frame_mapping:
-                    self.frame_id = self.augment_with_single_obj_seq_frame_mapping[idx]
-                else:
-                    self.set_random_frame_id_with_label()
-
-                aug_img, aug_label = self.make_img_label_pair(self.frame_id)
-
-                w, h, _ = img.shape
-                w_a, h_a, _ = aug_img.shape
-
-                pad_w = max(0, w - w_a)
-                pad_h = max(0, h - h_a)
-                aug_img = np.pad(aug_img,
-                    [(0, pad_w), (0, pad_h), (0, 0)], mode='constant')
-                aug_label = np.pad(aug_label,
-                    [(0, pad_w), (0, pad_h)], mode='constant')
-
-                aug_img = crop_center(aug_img, w, h)
-                aug_label = crop_center(aug_label, w, h)
-
-                obj_mask = aug_label == 1.0
-                img[obj_mask] = aug_img[obj_mask]
-
-                if self.augment_with_single_obj_seq_keep_orig:
-                    aug_label = np.copy(label)
-                    aug_label[obj_mask] = 0
-
-                if len(np.unique(aug_label)) > 1:
-                    has_object = True
-
-                    label = aug_label
-                    self.augment_with_single_obj_seq_frame_mapping[idx] = self.frame_id
-
-                    # self.multi_object_id = 0
-
-                    # print('AUGMENT')
-                    # import imageio
-                    # # pred = np.transpose(img, (1, 2, 0))
-                    # imageio.imsave(f"{prev_seq_key}_{idx}_{self.seq_key}_{self.frame_id}_{self.augment_with_single_obj_seq_keep_orig}_img.png", (img * 255).astype(np.uint8))
-                    # imageio.imsave(
-                    #     f"{prev_seq_key}_{idx}_{self.seq_key}_{self.frame_id}_{self.augment_with_single_obj_seq_keep_orig}_label.png", (label * 255).astype(np.uint8))
-                    # # # exit()
-
-            self.set_seq(prev_seq_key)
-            self.frame_id = prev_frame_id
-            self.multi_object_id = prev_multi_object_id
 
         if self.flip_label:
             label = np.logical_not(label).astype(np.float32)
@@ -356,5 +302,93 @@ class VOSDataset(Dataset):
 
         # self.preloaded_imgs[self.imgs[idx]] = img
         # self.preloaded_labels[self.labels[idx]] = label
+
+        if self.augment_with_single_obj_seq_dataset is not None:
+            assert self.num_objects == 1, f'{self.seq_key} is not a single object sequence.'
+
+            def _crop_center(img, crop_w, crop_h):
+                w, h = img.shape[:2]
+                start_w = w // 2 - (crop_w // 2)
+                start_h = h // 2 - (crop_h // 2)
+                return img[start_w:start_w + crop_w, start_h:start_h + crop_h]
+
+            # has_object = False
+            # while not has_object:
+            aug_img, aug_label = self.augment_with_single_obj_seq_dataset.make_img_label_pair(self.augment_with_single_obj_seq_dataset.frame_id)
+
+            w, h, _ = img.shape
+            w_a, h_a, _ = aug_img.shape
+
+            pad_w = max(0, w - w_a)
+            pad_h = max(0, h - h_a)
+            aug_img = np.pad(aug_img,
+                [(0, pad_w), (0, pad_h), (0, 0)], mode='constant')
+            aug_label = np.pad(aug_label,
+                [(0, pad_w), (0, pad_h)], mode='constant')
+
+            aug_img = _crop_center(aug_img, w, h)
+            aug_label = _crop_center(aug_label, w, h)
+
+            aug_obj_mask = aug_label == 1.0
+            obj_mask = label == 1.0
+
+            ###
+            if np.any(obj_mask) and np.any(aug_obj_mask):
+                aug_obj_mask_x_min = np.min(np.where(aug_obj_mask)[0])
+                aug_obj_mask_x_max = np.max(np.where(aug_obj_mask)[0]) + 1
+                aug_obj_mask_y_min = np.min(np.where(aug_obj_mask)[1])
+                aug_obj_mask_y_max = np.max(np.where(aug_obj_mask)[1]) + 1
+
+                obj_mask_x_min = np.min(np.where(obj_mask)[0])
+                obj_mask_x_max = np.max(np.where(obj_mask)[0]) + 1
+                obj_mask_y_min = np.min(np.where(obj_mask)[1])
+                obj_mask_y_max = np.max(np.where(obj_mask)[1]) + 1
+
+                aug_obj_box = aug_img[aug_obj_mask_x_min:aug_obj_mask_x_max,
+                                    aug_obj_mask_y_min:aug_obj_mask_y_max]
+                aug_obj_mask_box = aug_obj_mask[aug_obj_mask_x_min:aug_obj_mask_x_max,
+                                                aug_obj_mask_y_min:aug_obj_mask_y_max].copy()
+
+                random_obj_mask_x = obj_mask_x_min.item()# + np.random.randint(0, obj_mask_x_max.item() - obj_mask_x_max.item())
+                random_obj_mask_y = obj_mask_y_min.item()# + np.random.randint(0, obj_mask_y_max.item() - obj_mask_y_max.item())
+
+                aug_obj_box = aug_obj_box[0: min(img.shape[0] - random_obj_mask_x, aug_obj_box.shape[0]),
+                                        0: min(img.shape[1] - random_obj_mask_y, aug_obj_box.shape[1])]
+                aug_obj_mask_box = aug_obj_mask_box[0: min(img.shape[0] - random_obj_mask_x, aug_obj_mask_box.shape[0]),
+                                                    0: min(img.shape[1] - random_obj_mask_y, aug_obj_mask_box.shape[1])]
+
+                aug_img[random_obj_mask_x: random_obj_mask_x + aug_obj_box.shape[0],
+                        random_obj_mask_y: random_obj_mask_y + aug_obj_box.shape[1]] = aug_obj_box
+                aug_obj_mask[...] = False
+                aug_obj_mask[random_obj_mask_x: random_obj_mask_x + aug_obj_mask_box.shape[0],
+                            random_obj_mask_y: random_obj_mask_y + aug_obj_mask_box.shape[1]] = aug_obj_mask_box
+
+                aug_label = aug_obj_mask.astype(np.float32)
+            ###
+
+            img[aug_obj_mask] = aug_img[aug_obj_mask]
+
+            if self.augment_with_single_obj_seq_keep_orig:
+                aug_label = np.copy(label)
+                aug_label[aug_obj_mask] = 0
+
+            # if len(np.unique(aug_label)) > 1:
+            #     has_object = True
+
+            label = aug_label
+                # self.augment_with_single_obj_seq_frame_mapping[idx] = aug_frame_id
+
+                # self.multi_object_id = 0
+
+            # if len(np.unique(aug_label)) > 1:
+            #     # print(f"{self.seq_key}_{idx}_{self.augment_with_single_obj_seq_dataset.seq_key}_{self.augment_with_single_obj_seq_dataset.frame_id}_{self.augment_with_single_obj_seq_keep_orig}")
+
+            #     print('AUGMENT')
+            #     import imageio
+            #     # pred = np.transpose(img, (1, 2, 0))
+            #     imageio.imsave(f"{self.seq_key}_{idx}_{self.augment_with_single_obj_seq_dataset.seq_key}_{self.augment_with_single_obj_seq_dataset.frame_id}_{self.augment_with_single_obj_seq_keep_orig}_img.png", (img * 255).astype(np.uint8))
+            #     imageio.imsave(
+            #         f"{self.seq_key}_{idx}_{self.augment_with_single_obj_seq_dataset.seq_key}_{self.augment_with_single_obj_seq_dataset.frame_id}_{self.augment_with_single_obj_seq_keep_orig}_label.png", (label * 255).astype(np.uint8))
+            #     # # exit()
 
         return img, label

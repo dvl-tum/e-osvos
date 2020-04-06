@@ -109,7 +109,7 @@ def rpn_forward(self, images, features, targets=None):
     proposals = proposals.view(num_images, -1, 4)
     boxes, scores = self.filter_proposals(proposals, objectness, images.image_sizes, num_anchors_per_level)
 
-    if not self.training and self._eval_augment_proposals_mode is not None:
+    if not self.training and targets is not None and self._eval_augment_proposals_mode is not None:
         # boxes = []
         random_share = 0.1
         num_box_augs = self.post_nms_top_n
@@ -280,7 +280,7 @@ class MaskRCNN(_MaskRCNN):
             # self.backbone.fpn.requires_grad_(True)
             # self.backbone.requires_grad_(True)
 
-            self.rpn.requires_grad_(True)
+            self.rpn.requires_grad_(False)
 
             self.roi_heads.box_head.requires_grad_(True)
             self.roi_heads.box_predictor.requires_grad_(True)
@@ -288,7 +288,10 @@ class MaskRCNN(_MaskRCNN):
             self.roi_heads.mask_predictor.requires_grad_(True)
         else:
             self.backbone.requires_grad_(True)
-            # self.rpn.requires_grad_(False)
+            self.backbone.body.conv1.requires_grad_(False)
+            self.backbone.body.layer1.requires_grad_(False)
+
+            self.rpn.requires_grad_(False)
 
         #     self.backbone.fpn.requires_grad_(True)
         #     self.rpn.requires_grad_(True)
@@ -329,7 +332,9 @@ class MaskRCNN(_MaskRCNN):
             # self.backbone.body.layer4.train()
             # self.backbone.fpn.train()
             # self.rpn.eval()
-        # else:
+        else:
+            self.backbone.body.layer1.eval()
+            self.backbone.body.conv1.eval()
         #     # self.backbone.eval()
         #     self.rpn.eval()
         #     # self.backbone.fpn.train()

@@ -68,6 +68,12 @@ class RandomScaleNRotate:
             still_has_object = len(np.unique(aug_label)) > 1
 
             if sample['file_name'] in self.deterministic_rot_sc:
+
+                if not still_has_object:
+                    import imageio
+                    imageio.imsave("aug_img.png", (self._rot_and_sc(sample['image'], rot, sc) * 255).astype(np.uint8))
+                    imageio.imsave("aug_label.png", (aug_label * 255).astype(np.uint8))
+
                 assert still_has_object
 
         sample['gt'] = aug_label

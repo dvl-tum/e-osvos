@@ -352,7 +352,7 @@ def meta_run(rank: int,
              shared_meta_optim_state_dict: dict,
              global_rng_state: torch.ByteTensor, _config: dict, dataset: str,
              shared_dict: dict, shared_variables: dict,
-             shared_meta_optim_grads: dict):
+             shared_meta_optim_grads: dict, save_dir: str):
 
     device, meta_device = device_for_process(rank, _config)
 
@@ -880,6 +880,16 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
         # shutil.rmtree(preds_save_dir)
 
+        if save_dir is not None:
+            if not test_loader.dataset.test_mode:
+                save_meta_run = {'meta_optim_state_dict': meta_optim.state_dict(),
+                                #  'meta_optim_optim_state_dict': meta_optim_optim.state_dict(),
+                                'vis_win_names': vis_win_names,
+                                'meta_iter': meta_iter,
+                                'meta_epoch': meta_epoch,}
+                torch.save(save_meta_run, os.path.join(
+                    save_dir, f"last_{dataset_key}_meta_iter.model"))
+
         mean_J = torch.tensor(J_seq).mean().item()
         if test_loader.dataset.test_mode or mean_J > shared_dict['best_mean_J']:
             shared_dict['best_mean_J'] = mean_J
@@ -953,7 +963,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: bool,
                               random_flip_label: bool, random_no_label: bool,
                               data_cfg: dict, single_obj_seq_mode: str,
-                              random_box_coord_perm: bool):
+                              random_box_coord_perm: bool, random_frame_epsilon: int):
     train_loader_tmp, test_loader_tmp, meta_loader_tmp = data_loaders(
         datasets['train'], **data_cfg)
     test_dataset = test_loader_tmp.dataset
@@ -981,7 +991,14 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
             if single_obj_seq_mode == 'IGNORE':
                 continue
             elif single_obj_seq_mode == 'AUGMENT':
+                assert data_cfg['batch_sizes']['meta'] == 1
                 seq_obj_ids = [0, 0]
+
+                single_obj_seqs_ids = list(range(len(single_obj_seqs)))
+                random_single_obj_seqs_id = random.choice(single_obj_seqs_ids)
+                random_other_single_obj_seq = single_obj_seqs.pop(
+                    random_single_obj_seqs_id)
+
             elif single_obj_seq_mode == 'KEEP':
                 seq_obj_ids = [0]
             else:
@@ -993,7 +1010,6 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
             seq_obj_ids = seq_obj_ids[:2]
 
         for i, obj_id in enumerate(seq_obj_ids):
-
             train_loader = copy.deepcopy(train_loader_tmp)
             meta_loader = copy.deepcopy(meta_loader_tmp)
 
@@ -1004,79 +1020,73 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
             meta_loader.dataset.set_seq(seq_name)
 
             train_loader.dataset.multi_object_id = obj_id
+            meta_loader.dataset.multi_object_id = obj_id
 
-            # frame_id_not_set = True
-            # while frame_id_not_set:
-            #     frame_id = train_loader.dataset.get_random_frame_id_with_label()
-            #     if frame_id < len(test_loader.dataset) // 2:
-            #         train_loader.dataset.frame_id = frame_id
-            #         frame_id_not_set = False
+            if num_objects == 1 and single_obj_seq_mode == 'AUGMENT':
+                train_loader_dataset = copy.deepcopy(train_loader_tmp).dataset
+                meta_loader_dataset = copy.deepcopy(meta_loader_tmp).dataset
+
+                train_loader_dataset.set_seq(random_other_single_obj_seq)
+                meta_loader_dataset.set_seq(random_other_single_obj_seq)
+
+                train_loader_dataset.multi_object_id = 0
+                meta_loader_dataset.multi_object_id = 0
+
+                train_loader.dataset.augment_with_single_obj_seq_dataset = train_loader_dataset
+                meta_loader.dataset.augment_with_single_obj_seq_dataset = meta_loader_dataset
+
+                if i == 1:
+                    train_loader.dataset.augment_with_single_obj_seq_keep_orig = False
+                    meta_loader.dataset.augment_with_single_obj_seq_keep_orig = False
 
             train_loader.dataset.set_random_frame_id_with_label()
             # train_loader.dataset.set_gt_frame_id()
 
-            meta_loader.dataset.multi_object_id = obj_id
+            if random_frame_epsilon is not None:
+                meta_loader.dataset.random_frame_id_epsilon = random_frame_epsilon
+                meta_loader.dataset.random_frame_id_anchor_frame = train_loader.dataset.frame_id
 
-            # epsilon_frame = 10
-            # meta_frame_ids = []
-            # while len(meta_frame_ids) < data_cfg['batch_sizes']['meta']:
-            #     frame_id = meta_loader.dataset.get_random_frame_id_with_label()
-            #     if train_loader.dataset.frame_id - epsilon_frame < frame_id < train_loader.dataset.frame_id + epsilon_frame:
-            #         meta_frame_ids.append(frame_id)
+                if not train_loader.dataset.augment_with_single_obj_seq_keep_orig:
+                # if num_objects == 1 and single_obj_seq_mode == 'AUGMENT' and i == 1:
+                    meta_loader.dataset.random_frame_id_epsilon = None
+                    meta_loader.dataset.random_frame_id_anchor_frame = None
+
+                    meta_loader.dataset.augment_with_single_obj_seq_dataset.random_frame_id_epsilon = random_frame_epsilon
+                    meta_loader.dataset.augment_with_single_obj_seq_dataset.random_frame_id_anchor_frame = train_loader.dataset.augment_with_single_obj_seq_dataset.frame_id
 
             meta_frame_ids = [meta_loader.dataset.get_random_frame_id_with_label()
                               for _ in range(data_cfg['batch_sizes']['meta'])]
 
             meta_loader.sampler.indices = meta_frame_ids
 
-            if num_objects == 1 and single_obj_seq_mode == 'AUGMENT':
-                if i == 0:
-                    single_obj_seqs_ids = list(range(len(single_obj_seqs)))
-                    # if seq_name in single_obj_seqs:
-                    #     single_obj_seqs_ids.pop(single_obj_seqs.index(seq_name))
-
-                    random_single_obj_seqs_id = random.choice(single_obj_seqs_ids)
-                    random_other_single_obj_seq = single_obj_seqs.pop(
-                        random_single_obj_seqs_id)
-
-                    train_loader.dataset.augment_with_single_obj_seq_key = random_other_single_obj_seq
-                    meta_loader.dataset.augment_with_single_obj_seq_key = random_other_single_obj_seq
-
-                if i == 0:
-                    augment_with_single_obj_seq_keep_orig = True
-
-                elif i ==1:
-                    augment_with_single_obj_seq_keep_orig = False
-
-                    train_loader.dataset.augment_with_single_obj_seq_key = random_other_single_obj_seq
-                    meta_loader.dataset.augment_with_single_obj_seq_key = random_other_single_obj_seq
-                else:
-                    raise NotImplementedError
-
-                train_loader.dataset.augment_with_single_obj_seq_keep_orig = augment_with_single_obj_seq_keep_orig
-                meta_loader.dataset.augment_with_single_obj_seq_keep_orig = augment_with_single_obj_seq_keep_orig
-
             if random_frame_transform_per_task:
+                scales = (.5, 1.0)
                 color_transform = custom_transforms.ColorJitter(brightness=.2,
                                                                 contrast=.2,
                                                                 hue=.1,
                                                                 saturation=.2,
                                                                 deterministic=True)
-                # flip_transform = custom_transforms.RandomHorizontalFlip(deterministic=True)
+                flip_transform = custom_transforms.RandomHorizontalFlip(deterministic=True)
+                scale_rotate_transform = custom_transforms.RandomScaleNRotate(
+                    rots=(-30, 30), scales=scales, deterministic=True)
 
                 random_transform = [color_transform,
-                                    custom_transforms.RandomHorizontalFlip(deterministic=True),
-                                    custom_transforms.RandomScaleNRotate(rots=(-30, 30),
-                                                                         scales=(.5, 1.5),
-                                                                         deterministic=True),
+                                    flip_transform,
+                                    scale_rotate_transform,
+                                    # custom_transforms.RandomHorizontalFlip(deterministic=True),
+                                    # custom_transforms.RandomScaleNRotate(rots=(-30, 30),
+                                    #                                      scales=scales,
+                                    #                                      deterministic=True),
                                     custom_transforms.ToTensor(),]
                 train_loader.dataset.transform = transforms.Compose(random_transform)
 
                 random_transform = [color_transform,
-                                    custom_transforms.RandomHorizontalFlip(deterministic=True),
-                                    custom_transforms.RandomScaleNRotate(rots=(-30, 30),
-                                                                         scales=(.5, 1.5),
-                                                                         deterministic=True),
+                                    flip_transform,
+                                    scale_rotate_transform,
+                                    # custom_transforms.RandomHorizontalFlip(deterministic=True),
+                                    # custom_transforms.RandomScaleNRotate(rots=(-30, 30),
+                                    #                                      scales=scales,
+                                    #                                      deterministic=True),
                                     custom_transforms.ToTensor(),]
                 meta_loader.dataset.transform = transforms.Compose(random_transform)
 
@@ -1188,7 +1198,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
         meta_tasks = generate_meta_train_tasks()  # pylint: disable=E1120
         num_meta_tasks = len(meta_tasks)
-        if meta_batch_size == 'full_batch' or meta_batch_size > num_meta_tasks:
+        if meta_batch_size == 'FULL_BATCH' or meta_batch_size > num_meta_tasks:
             meta_batch_size = num_meta_tasks
             _log.warning(f"Meta batch size is full batch: meta_batch_size={meta_batch_size}.")
         if data_cfg['multi_object']:
@@ -1230,7 +1240,12 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         #                          for k, v in meta_optim_state_dict.items()}
 
         # meta_optim_state_dict['log_init_lr'] = meta_optim_state_dict['log_init_lr'].expand_as(meta_optim.log_init_lr)
-        # # meta_optim_state_dict['log_init_lr'] = meta_optim.log_init_lr
+
+        # previous_meta_optim_state_dict['log_init_lr'] = meta_optim.log_init_lr
+
+        # rpn_keys = [k for k in previous_meta_optim_state_dict.keys() if 'model_init_rpn' in k]
+        # for k in rpn_keys: del previous_meta_optim_state_dict[k]
+
         meta_optim.load_state_dict(previous_meta_optim_state_dict)
 
     if resume_meta_run_epoch_mode is not None:
@@ -1306,7 +1321,8 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
             process_args = [rank, model.state_dict(), meta_optim.state_dict(),
                             global_rng_state, _config, datasets['train'],
-                            p['shared_dict'], shared_variables, shared_meta_optim_grads]
+                            p['shared_dict'], shared_variables, shared_meta_optim_grads,
+                            save_dir]
 
             p['process'] = mp.Process(target=meta_run, args=process_args)
             p['process'].start()
@@ -1366,20 +1382,20 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                         if seq_name not in meta_epoch_metrics[metric]:
                             meta_epoch_metrics[metric][seq_name] = []
 
-                        if metric == 'meta_loss' and torch.isnan(torch.tensor(seq_values)).any():
-                            print(metric, seq_name, shared_variables['meta_iter'])
-                            # print('meta_optim.log_init_lr', meta_optim.log_init_lr)
+                        # if metric == 'meta_loss' and torch.isnan(torch.tensor(seq_values)).any():
+                        #     print(metric, seq_name, shared_variables['meta_iter'])
+                        #     # print('meta_optim.log_init_lr', meta_optim.log_init_lr)
 
-                            print([(t['seq_name'],
-                                    t['train_loader'].dataset.multi_object_id,
-                                    t['meta_loader'].dataset.multi_object_id,
-                                    t['train_loader'].dataset.frame_id,
-                                    t['meta_loader'].sampler.indices,
-                                    t['train_loader'].dataset.augment_with_single_obj_seq_key,
-                                    t['meta_loader'].dataset.augment_with_single_obj_seq_key)
-                                   for t in shared_dict['sub_meta_mini_batch']])
-                            # print(list(chain.from_iterable(list(p['shared_dict']['vis_data_seqs'].values())[0:2])))
-                            # exit()
+                        #     print([(t['seq_name'],
+                        #             t['train_loader'].dataset.multi_object_id,
+                        #             t['meta_loader'].dataset.multi_object_id,
+                        #             t['train_loader'].dataset.frame_id,
+                        #             t['meta_loader'].sampler.indices,
+                        #             t['train_loader'].dataset.augment_with_single_obj_seq_dataset.seq_key,
+                        #             t['meta_loader'].dataset.augment_with_single_obj_seq_dataset.seq_key)
+                        #            for t in shared_dict['sub_meta_mini_batch']])
+                        #     # print(list(chain.from_iterable(list(p['shared_dict']['vis_data_seqs'].values())[0:2])))
+                        #     # exit()
 
                         meta_epoch_metrics[metric][seq_name].extend(seq_values)
                         meta_iter_metrics[metric].extend(seq_values)
@@ -1484,11 +1500,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
             for grad in shared_meta_optim_grads.values():
                 grad.zero_()
 
-            if meta_optim.lr_per_tensor:
-                meta_optim.log_init_lr.data.clamp_(-33, 33)
-            else:
-                meta_optim.log_init_lr = [l.data.clamp_(-33, 33)
-                                          for l in meta_optim.log_init_lr]
+            meta_optim.clamp_init_lr()
 
             # global_rng_state = process['shared_dict']['global_rng_state']
             # reset iter_done and continue with next iter in meta_run subprocess

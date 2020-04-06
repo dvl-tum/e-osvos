@@ -90,7 +90,6 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False, 
 
         targets = start_targets.clone()
 
-
     probs_all = []
     boxes_all =[]
     with torch.no_grad():

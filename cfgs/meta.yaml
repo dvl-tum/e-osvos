@@ -11,6 +11,7 @@ resume_meta_run_epoch_mode: null        # [None, BEST_VAL, LAST]
 # increases seed random seed after each meta run. supposed to enrich the training and improve generalization.
 increase_seed_per_meta_run: True
 random_frame_transform_per_task: False
+random_frame_epsilon: null
 # if meta_optim_cfg.lr_per_tensor=False meta learning is done for a single epoch and num_epochs is only evaluated
 num_epochs:
     train: 5
@@ -38,6 +39,7 @@ meta_optim_cfg:
     matching_input: False
     second_order_gradients: False
     learn_scheduler: True
+    use_log_init_lr: False
 meta_optim_optim_cfg:
     model_init_lr: 0.0000001
     log_init_lr_lr: 0.0001
@@ -118,7 +120,7 @@ parent_model:
     model_init_meta_optim_split:
         paths: []
         val_split_files: []
-    #         - data/DAVIS-2016/train_split_balanced_val.txt
+            # - data/DAVIS-2016/train_split_balanced_val.txt
 
 train_early_stopping_cfg:
     patience: null
