@@ -41,6 +41,7 @@ meta_optim_cfg:
     second_order_gradients: False
     learn_scheduler: True
     use_log_init_lr: False
+    max_lr: null
 meta_optim_optim_cfg:
     model_init_lr: 0.0000001
     log_init_lr_lr: 0.0001
