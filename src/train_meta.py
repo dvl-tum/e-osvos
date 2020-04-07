@@ -1244,6 +1244,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
         # meta_optim_state_dict['log_init_lr'] = meta_optim_state_dict['log_init_lr'].expand_as(meta_optim.log_init_lr)
 
+        # meta_optim.log_init_lr[:previous_meta_optim_state_dict['log_init_lr'].shape[0]].data = previous_meta_optim_state_dict['log_init_lr'].data
         # previous_meta_optim_state_dict['log_init_lr'] = meta_optim.log_init_lr
 
         # rpn_keys = [k for k in previous_meta_optim_state_dict.keys() if 'model_init_rpn' in k]
