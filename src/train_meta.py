@@ -1175,6 +1175,71 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                 vis_dict[n].removed = True
 
     #
+    # Meta model
+    #
+    model, parent_states = init_parent_model(**_config['parent_model'])
+
+    # if _config['meta_optim_cfg']['learn_model_init']:
+    #     # must not learn model init if we work with splits on training
+    if 'train' in parent_states and parent_states['train']['states']:
+        if len(parent_states['train']['states']) > 1:
+            raise NotImplementedError
+        model.load_state_dict(parent_states['train']['states'][0])
+
+    meta_optim = MetaOptimizer(model)  # pylint: disable=E1120
+    meta_optim.init_zero_grad()
+
+    if meta_optim_model_file is not None:
+        previous_meta_optim_state_dict = torch.load(meta_optim_model_file)['meta_optim_state_dict']
+        # meta_optim_state_dict = meta_optim.state_dict()
+
+        # for layer in range(previous_meta_optim_state_dict['log_init_lr'].shape[0]):
+        #     meta_optim_state_dict['log_init_lr'][layer] = previous_meta_optim_state_dict['log_init_lr'][layer]
+        #     meta_optim_state_dict['param_group_lstm_hx_init'][:, layer, :] = previous_meta_optim_state_dict['param_group_lstm_hx_init'][:, layer, :]
+        #     meta_optim_state_dict['param_group_lstm_cx_init'][:, layer, :] = previous_meta_optim_state_dict['param_group_lstm_cx_init'][:, layer, :]
+
+        # meta_optim_state_dict = {k: previous_meta_optim_state_dict[k]
+        #                          if k in previous_meta_optim_state_dict and k not in ['log_init_lr', 'param_group_lstm_hx_init', 'param_group_lstm_cx_init']
+        #                          else v
+        #                          for k, v in meta_optim_state_dict.items()}
+
+        # meta_optim_state_dict['log_init_lr'] = meta_optim_state_dict['log_init_lr'].expand_as(meta_optim.log_init_lr)
+
+        # meta_optim.log_init_lr[:previous_meta_optim_state_dict['log_init_lr'].shape[0]].data = previous_meta_optim_state_dict['log_init_lr'].data
+        # previous_meta_optim_state_dict['log_init_lr'].data = previous_meta_optim_state_dict['log_init_lr'][-meta_optim.log_init_lr.shape[0]:].data
+
+        # rpn_keys = [k for k in previous_meta_optim_state_dict.keys() if 'layer1' in k]
+        # for k in rpn_keys: del previous_meta_optim_state_dict[k]
+
+        # del previous_meta_optim_state_dict['model_init_backbone-body-conv1-weight']
+
+        meta_optim.load_state_dict(previous_meta_optim_state_dict)
+
+    if resume_meta_run_epoch_mode is not None:
+        meta_optim.load_state_dict(saved_meta_run['meta_optim_state_dict'])
+
+    _log.info(f"Meta optim model parameters: {sum([p.numel() for p in meta_optim.parameters()])}")
+
+    meta_optim_params = []
+    for n, p in meta_optim.named_parameters():
+        weight_decay = 0.0
+        if 'model_init' in n:
+            lr = meta_optim_optim_cfg['model_init_lr']
+            weight_decay = meta_optim_optim_cfg['model_init_weight_decay']
+        elif 'log_init_lr' in n:
+            lr = meta_optim_optim_cfg['log_init_lr_lr']
+        elif 'param_group_lstm_hx_init' in n or 'param_group_lstm_cx_init' in n:
+            lr = meta_optim_optim_cfg['param_group_lstm_init_lr']
+        else:
+            lr = meta_optim_optim_cfg['lr']
+        meta_optim_params.append({'params': [p], 'lr': lr, 'weight_decay': weight_decay})
+
+    meta_optim_optim = RAdam(meta_optim_params,
+    # meta_optim_optim = torch.optim.SGD(meta_optim_params,
+    # meta_optim_optim = torch.optim.Adam(meta_optim_params,
+                                        lr=meta_optim_optim_cfg['lr'])
+
+    #
     # processes
     #
     num_meta_processes = torch.cuda.device_count()
@@ -1212,69 +1277,6 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
     process_manager = mp.Manager()
     meta_processes = [dict() for _ in range(num_meta_processes)]
-
-    #
-    # Meta model
-    #
-    model, parent_states = init_parent_model(**_config['parent_model'])
-
-    # if _config['meta_optim_cfg']['learn_model_init']:
-    #     # must not learn model init if we work with splits on training
-    if 'train' in parent_states and parent_states['train']['states']:
-        if len(parent_states['train']['states']) > 1:
-            raise NotImplementedError
-        model.load_state_dict(parent_states['train']['states'][0])
-
-    meta_optim = MetaOptimizer(model)  # pylint: disable=E1120
-    meta_optim.init_zero_grad()
-
-    if meta_optim_model_file is not None:
-        previous_meta_optim_state_dict = torch.load(meta_optim_model_file)['meta_optim_state_dict']
-        # meta_optim_state_dict = meta_optim.state_dict()
-
-        # for layer in range(previous_meta_optim_state_dict['log_init_lr'].shape[0]):
-        #     meta_optim_state_dict['log_init_lr'][layer] = previous_meta_optim_state_dict['log_init_lr'][layer]
-        #     meta_optim_state_dict['param_group_lstm_hx_init'][:, layer, :] = previous_meta_optim_state_dict['param_group_lstm_hx_init'][:, layer, :]
-        #     meta_optim_state_dict['param_group_lstm_cx_init'][:, layer, :] = previous_meta_optim_state_dict['param_group_lstm_cx_init'][:, layer, :]
-
-        # meta_optim_state_dict = {k: previous_meta_optim_state_dict[k]
-        #                          if k in previous_meta_optim_state_dict and k not in ['log_init_lr', 'param_group_lstm_hx_init', 'param_group_lstm_cx_init']
-        #                          else v
-        #                          for k, v in meta_optim_state_dict.items()}
-
-        # meta_optim_state_dict['log_init_lr'] = meta_optim_state_dict['log_init_lr'].expand_as(meta_optim.log_init_lr)
-
-        # meta_optim.log_init_lr[:previous_meta_optim_state_dict['log_init_lr'].shape[0]].data = previous_meta_optim_state_dict['log_init_lr'].data
-        # previous_meta_optim_state_dict['log_init_lr'] = meta_optim.log_init_lr
-
-        # rpn_keys = [k for k in previous_meta_optim_state_dict.keys() if 'model_init_rpn' in k]
-        # for k in rpn_keys: del previous_meta_optim_state_dict[k]
-
-        meta_optim.load_state_dict(previous_meta_optim_state_dict)
-
-    if resume_meta_run_epoch_mode is not None:
-        meta_optim.load_state_dict(saved_meta_run['meta_optim_state_dict'])
-
-    _log.info(f"Meta optim model parameters: {sum([p.numel() for p in meta_optim.parameters()])}")
-
-    meta_optim_params = []
-    for n, p in meta_optim.named_parameters():
-        weight_decay = 0.0
-        if 'model_init' in n:
-            lr = meta_optim_optim_cfg['model_init_lr']
-            weight_decay = meta_optim_optim_cfg['model_init_weight_decay']
-        elif 'log_init_lr' in n:
-            lr = meta_optim_optim_cfg['log_init_lr_lr']
-        elif 'param_group_lstm_hx_init' in n or 'param_group_lstm_cx_init' in n:
-            lr = meta_optim_optim_cfg['param_group_lstm_init_lr']
-        else:
-            lr = meta_optim_optim_cfg['lr']
-        meta_optim_params.append({'params': [p], 'lr': lr, 'weight_decay': weight_decay})
-
-    meta_optim_optim = RAdam(meta_optim_params,
-    # meta_optim_optim = torch.optim.SGD(meta_optim_params,
-    # meta_optim_optim = torch.optim.Adam(meta_optim_params,
-                                        lr=meta_optim_optim_cfg['lr'])
 
     global_rng_state = torch.get_rng_state()
 

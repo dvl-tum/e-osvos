@@ -1,4 +1,4 @@
-single_obj_seq_mode: AUGMENT
+single_obj_seq_mode: KEEP
 data_cfg:
     multi_object: single_id
     # crop_sizes:
@@ -7,11 +7,11 @@ data_cfg:
 datasets:
     train:
         name: YouTube-VOS
-        split: train_seqs
+        split: train_dev_train_seqs
         eval: False
     val:
         name: YouTube-VOS
-        split: train_dev_seqs
+        split: train_dev_val_seqs
         eval: True
     test:
         name: YouTube-VOS
@@ -20,10 +20,10 @@ datasets:
         name: DAVIS-2016
         split: val_seqs
         eval: True
-    val_davis17:
-        name: DAVIS-2017
-        split: val_seqs
-        eval: True
+    # val_davis17:
+    #     name: DAVIS-2017
+    #     split: val_seqs
+    #     eval: True
 parent_model:
     train:
         paths: []

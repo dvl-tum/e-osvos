@@ -280,7 +280,7 @@ class MaskRCNN(_MaskRCNN):
             # self.backbone.fpn.requires_grad_(True)
             # self.backbone.requires_grad_(True)
 
-            self.rpn.requires_grad_(False)
+            self.rpn.requires_grad_(True)
 
             self.roi_heads.box_head.requires_grad_(True)
             self.roi_heads.box_predictor.requires_grad_(True)
@@ -291,7 +291,7 @@ class MaskRCNN(_MaskRCNN):
             self.backbone.body.conv1.requires_grad_(False)
             self.backbone.body.layer1.requires_grad_(False)
 
-            self.rpn.requires_grad_(False)
+            # self.rpn.requires_grad_(False)
 
         #     self.backbone.fpn.requires_grad_(True)
         #     self.rpn.requires_grad_(True)
