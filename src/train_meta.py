@@ -99,11 +99,15 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
                     legend.extend(['MEAN_TRAIN_LOSS_cls_score',
                                    'MEAN_TRAIN_LOSS_bbox_pred',
                                    'MEAN_TRAIN_LOSS_mask_fcn_logits'])
-                legend.extend(['J & F MEAN', 'J MEAN', 'J RECALL MEAN', 'F MEAN', 'F RECALL MEAN', 'INIT J MEAN (SINGLE OBJ SEQS)'])
+                legend.extend(['J & F MEAN', 'J MEAN', 'J RECALL MEAN', 'F MEAN', 'F RECALL MEAN', 'INIT J MEAN'])
+                # for seq_name in loader.dataset.seqs_names:
+                #     loader.dataset.set_seq(seq_name)
+                #     if loader.dataset.num_objects == 1:
+                #         legend.append(f"INIT J_{seq_name}_1")
+
                 for seq_name in loader.dataset.seqs_names:
                     loader.dataset.set_seq(seq_name)
-                    if loader.dataset.num_objects == 1:
-                        legend.append(f"INIT J_{seq_name}_1")
+                    legend.extend([f"INIT J_{seq_name}_{i + 1}" for i in range(loader.dataset.num_objects)])
 
                 for seq_name in loader.dataset.seqs_names:
                     loader.dataset.set_seq(seq_name)
@@ -370,6 +374,15 @@ def meta_run(rank: int,
 
     num_epochs = _config['num_epochs']['train']
 
+    vis_debug = False
+    if vis_debug:
+        debug_save_dir = os.path.join(save_dir, 'train_debug')
+
+        if not os.path.exists(debug_save_dir):
+            os.makedirs(debug_save_dir)
+
+        sub_mini_batch_size = len(shared_dict['sub_meta_mini_batch'])
+
     while True:
         # main process sets iter_done=False after shared_meta_optim is updated
         while shared_dict['sub_iter_done']:
@@ -394,11 +407,14 @@ def meta_run(rank: int,
                         for m in seqs_metrics}
         vis_data_seqs = {s['seq_name']: [] for s in meta_mini_batch}
 
-        for sample in meta_mini_batch:
+        for i_sample, sample in enumerate(meta_mini_batch):
             # start_meta_iter = timeit.default_timer()
             seq_name = sample['seq_name']
             train_loader = sample['train_loader']
             meta_loader = sample['meta_loader']
+
+            if _config['meta_optim_cfg']['learn_model_init_last_layer_template']:
+                model.num_classes = train_loader.dataset.num_objects + 1
 
             # print((
             #     sample['seq_name'],
@@ -449,6 +465,7 @@ def meta_run(rank: int,
                         train_loss, train_losses = model(
                             train_inputs, train_gts, sample['box_coord_perm'],
                             train_loader.dataset.flip_label)
+
                         train_losses_hist.append({k: v.cpu().item()
                                                   for k, v in train_losses.items()})
                     else:
@@ -456,6 +473,25 @@ def meta_run(rank: int,
                         train_loss = compute_loss(_config['loss_func'],
                                                   train_outputs[-1],
                                                   train_gts)
+
+                    if vis_debug:
+                        if epoch == 1:
+                            import imageio
+                            train_input = np.transpose(
+                                train_inputs[0].cpu().numpy(), (1, 2, 0))
+                            train_gt = np.transpose(
+                                train_gts[0].cpu().numpy(), (1, 2, 0))
+
+                            imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_train_input.jpg"), (train_input * 255).astype(np.uint8))
+                            imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_train_gt.png"), (
+                                train_gt / train_loader.dataset.num_objects * 255).astype(np.uint8))
+
+                        model.eval()
+                        train_output = np.transpose(model(train_inputs)[0].ge(0.5).float()[0].cpu().numpy(), (1, 2, 0)).astype(np.uint8)
+                        model.train_without_dropout()
+
+                        imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_train_output_epoch_{epoch}.png"), (train_output * 255).astype(np.uint8))
+
 
                     # print(f"EPOCH {epoch} - TRAIN INPUTS SUM {train_inputs.sum()} - TRAIN INPUTS SUM {train_gts.sum()}")
                     # print(f"EPOCH {epoch} - TRAIN LOSS {train_loss.item()}")
@@ -520,6 +556,22 @@ def meta_run(rank: int,
                                                      meta_outputs[-1],
                                                      meta_gts)
 
+                        if vis_debug:
+                            if epoch == num_epochs:
+                                meta_input = np.transpose(
+                                    meta_inputs[0].cpu().numpy(), (1, 2, 0))
+                                meta_gt = np.transpose(
+                                    meta_gts[0].cpu().numpy(), (1, 2, 0))
+
+                                imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_input.jpg"), (meta_input * 255).astype(np.uint8))
+                                imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_gt.png"), (meta_gt * 255).astype(np.uint8))
+
+                                model.eval()
+                                meta_output = np.transpose(model(meta_inputs)[0].ge(0.5).float()[0].cpu().numpy(), (1, 2, 0)).astype(np.uint8)
+                                model.train_without_dropout()
+
+                                imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_output.png"), (meta_output * 255).astype(np.uint8))
+
                         bptt_loss += meta_loss
 
                     meta_loss_is_nan = torch.isnan(bptt_loss).any()
@@ -576,6 +628,9 @@ def meta_run(rank: int,
             # print('META ITER ', (timeit.default_timer() - start_meta_iter) / 60)
             # exit()
 
+        if vis_debug:
+            exit()
+
         shared_dict['seqs_metrics'] = seqs_metrics
         shared_dict['vis_data_seqs'] = vis_data_seqs
         shared_dict['global_rng_state'] = global_rng_state
@@ -592,6 +647,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
     torch.backends.cudnn.fastest = False
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
+
+    data_cfg = copy.deepcopy(_config['data_cfg'])
+    # data_cfg['num_workers'] = 4
 
     while True:
         meta_optim_state_dict = copy.deepcopy(shared_meta_optim_state_dict)
@@ -613,8 +671,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         model.to(device)
         meta_optim.to(device)
 
+
         train_loader, test_loader, meta_loader = data_loaders(  # pylint: disable=E1120
-            datasets[dataset_key], **_config['data_cfg'])
+            datasets[dataset_key], **data_cfg)
         # remove random cropping
         train_loader.dataset.crop_size = None
         test_loader.dataset.crop_size = None
@@ -683,23 +742,27 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             # initial metrics
             # if multi object is treated as multiple single objects, init J without
             # fine-tuning returns no reasonable results
-            if train_loader.dataset.num_objects == 1:
-                test_loader.dataset.multi_object_id = 0
+            # if train_loader.dataset.num_objects == 1:
+            # test_loader.dataset.multi_object_id = 0
 
-                meta_optim.load_state_dict(meta_optim_state_dict)
-                meta_optim.reset()
-                meta_optim.eval()
+            meta_optim.load_state_dict(meta_optim_state_dict)
+            meta_optim.reset()
+            meta_optim.eval()
 
-                if test_loader.dataset.test_mode:
-                    J = [0.0]
-                else:
-                    _, _, J, _,  = eval_loader(model, test_loader, loss_func)
-                init_J_seq.extend(J)
+            if test_loader.dataset.test_mode:
+                J = [0.0]
+            else:
+                _, _, J, _,  = eval_loader(model, test_loader, loss_func)
+            init_J_seq.extend(J)
 
             # masks[seq_name] = [None] * len(test_loader.dataset)
             boxes[seq_name] = [None] * len(test_loader.dataset)
             masks[seq_name] = []
             # boxes[seq_name] = []
+
+            if _config['meta_optim_cfg']['learn_model_init_last_layer_template']:
+                model.num_classes = train_loader.dataset.num_objects + 1
+                model.roi_heads.detections_per_img = 100
 
             for obj_id in range(train_loader.dataset.num_objects):
                 train_loader.dataset.multi_object_id = obj_id
@@ -830,19 +893,29 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                     _, _, probs_frame_range, boxes_frame_range = run_loader(model, test_loader, loss_func, return_probs=True, start_targets=targets)
                     probs_frame_range = probs_frame_range.cpu()
+                    boxes_frame_range = boxes_frame_range.cpu()
 
                     for frame_id, probs, box in zip(test_loader.sampler.indices, probs_frame_range, boxes_frame_range):
-                        if boxes[seq_name][frame_id] is None:
-                            boxes[seq_name][frame_id] = box.unsqueeze(dim=0)
-                        else:
-                            boxes[seq_name][frame_id] = torch.cat([boxes[seq_name][frame_id], box.unsqueeze(dim=0)])
 
-                        masks[seq_name][frame_id][obj_id, :, :] = probs
+
+                        if test_loader.dataset.multi_object == 'all':
+                            masks[seq_name][frame_id] = probs
+                            boxes[seq_name][frame_id] = box
+                        else:
+                            if boxes[seq_name][frame_id] is None:
+                                boxes[seq_name][frame_id] = box.unsqueeze(dim=0)
+                            else:
+                                boxes[seq_name][frame_id] = torch.cat([boxes[seq_name][frame_id], box.unsqueeze(dim=0)])
+
+                            masks[seq_name][frame_id][obj_id, :, :] = probs
 
                     test_loader.sampler.indices = None
 
                     if eval_frame_range_max == len(test_loader.dataset):
                         break
+
+                if test_loader.dataset.multi_object == 'all':
+                    break
 
             # merge all logit maps and set object predictions by argmax
             for frame_id in range(len(test_loader.dataset)):
@@ -1269,8 +1342,8 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         if meta_batch_size == 'FULL_BATCH' or meta_batch_size > num_meta_tasks:
             meta_batch_size = num_meta_tasks
             _log.warning(f"Meta batch size is full batch: meta_batch_size={meta_batch_size}.")
-        if data_cfg['multi_object']:
-            assert not meta_batch_size % 2, (f'meta_batch_size {meta_batch_size} is not a multiple of 2 for multi object training.')
+        # if data_cfg['multi_object']:
+        #     assert not meta_batch_size % 2, (f'meta_batch_size {meta_batch_size} is not a multiple of 2 for multi object training.')
         assert not meta_batch_size % num_meta_processes, ('meta_batch_size is not a multiple of num_meta_processes.')
     else:
         _log.warning(f"EVAL modus.")

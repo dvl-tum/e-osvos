@@ -121,8 +121,8 @@ parent_model:
             - data/DAVIS-2017/test-dev_seqs.txt
     model_init_meta_optim_split:
         paths: []
-        val_split_files: # []
-            - data/DAVIS-2016/train_split_balanced_val.txt
+        val_split_files: []
+            # - data/DAVIS-2016/train_split_balanced_val.txt
 
 train_early_stopping_cfg:
     patience: null

@@ -16,10 +16,11 @@ datasets:
     test:
         name: YouTube-VOS
         split: null
+        eval: False
     val_davis16:
         name: DAVIS-2016
         split: val_seqs
-        eval: True
+        eval: False
     # val_davis17:
     #     name: DAVIS-2017
     #     split: val_seqs

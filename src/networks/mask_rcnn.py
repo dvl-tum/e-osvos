@@ -115,6 +115,7 @@ def rpn_forward(self, images, features, targets=None):
         num_box_augs = self.post_nms_top_n
         if self._eval_augment_proposals_mode == 'EXTEND':
             num_box_augs = self.post_nms_top_n // 2
+
         for i, target in enumerate(targets):
             img = images.tensors[i]
             img_height, img_width = img.shape[-2:]
@@ -393,7 +394,7 @@ class MaskRCNN(_MaskRCNN):
                 # get bounding box coordinates for each mask
                 num_objs = len(obj_ids)
 
-                if num_objs != 1:
+                if num_objs == 0:
                     pred = np.transpose(inputs[0].cpu().numpy(), (1, 2, 0))
                     import os, imageio
                     pred_path = os.path.join(f"img.png")
@@ -405,7 +406,7 @@ class MaskRCNN(_MaskRCNN):
                     # pred_path = os.path.join(f"mask.png")
                     # imageio.imsave(pred_path, 20 * pred)
 
-                assert num_objs == 1, f"num_objs: {num_objs}"
+                    assert num_objs == 1, f"num_objs: {num_objs}"
 
                 boxes = []
                 for i in range(num_objs):
@@ -420,8 +421,9 @@ class MaskRCNN(_MaskRCNN):
                 boxes = torch.as_tensor(boxes, dtype=torch.float32)
                 # there is only one class
 
-                labels = torch.ones((num_objs,), dtype=torch.int64)
-                # masks = torch.as_tensor(masks, dtype=torch.uint8)
+                # labels = torch.ones((num_objs,), dtype=torch.int64)
+                labels = obj_ids.type(torch.int64)
+
                 masks = masks.type(torch.uint8)
 
                 image_id = torch.tensor([0])
@@ -502,7 +504,6 @@ class MaskRCNN(_MaskRCNN):
         #     outputs = outputs[:,:, : -crop[3]]
 
         if self.training:
-
             losses = {loss_name: loss for loss_name, loss in outputs_raw.items()
                       if loss.requires_grad}
             loss = sum([loss for loss in losses.values()])
@@ -510,9 +511,43 @@ class MaskRCNN(_MaskRCNN):
         else:
             boxes = torch.zeros(inputs.size(0), 4)
             outputs = torch.zeros_like(inputs)[:, :1]
-            for i, output in enumerate(outputs_raw):
-                if output['masks'].shape[0] >= 1:
-                    outputs[i] = output['masks'][0]
-                    boxes[i] = output['boxes'][0]
 
-            return outputs, boxes
+            assert len(outputs_raw) == 1
+
+            # print(outputs_raw[0])
+            # print(outputs_raw[0]['masks'].shape)
+            # print(outputs_raw[0]['boxes'].shape)
+
+            # for i, output in enumerate(outputs_raw):
+            #     assert len(torch.unique(output['labels'])) == num_objs
+
+            #     if output['masks'].shape[0] >= 1:
+            #         outputs[i] = output['masks'][0]
+            #         boxes[i] = output['boxes'][0]
+
+            # return outputs, boxes
+
+            # print(torch.cat([o['masks'] for o in outputs_raw['masks'], dim=0).shape)
+
+            output_masks = []
+            output_boxes = []
+            for output_raw in outputs_raw:
+                output_mask = []
+                output_box = []
+                for i in range(1, self.num_classes):
+                    if len((output_raw['labels'] == i).nonzero()):
+                        first_index = (output_raw['labels'] == i).nonzero()[0]
+                        output_mask.append(output_raw['masks'][first_index][0])
+                        output_box.append(output_raw['boxes'][first_index])
+                    else:
+                        output_mask.append(
+                            torch.zeros_like(inputs)[0, 0].unsqueeze(dim=0).to(device))
+                        output_box.append(torch.zeros(1, 4).to(device))
+                output_masks.append(torch.cat(output_mask, dim=0).unsqueeze(dim=0))
+                output_boxes.append(
+                    torch.cat(output_box, dim=0).unsqueeze(dim=0))
+
+            # print(torch.cat(output_masks, dim=0).shape)
+            # print(torch.cat([o['masks'].unsqueeze(dim=0).squeeze(dim=2) for o in outputs_raw]).shape)
+
+            return torch.cat(output_masks, dim=0), torch.cat(output_boxes, dim=0)

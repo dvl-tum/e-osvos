@@ -102,7 +102,7 @@ class VOSDataset(Dataset):
         assert self.frame_id is not None
         _, label = self.make_img_label_pair(self.frame_id)
 
-        return len([l for l in np.unique(label) if l != 0.0]) > 0
+        return len([l for l in np.unique(label) if l != 0.0]) == self.num_objects
 
     def get_random_frame_id_with_label(self):
         prev_frame_id = self.frame_id
@@ -274,13 +274,13 @@ class VOSDataset(Dataset):
                              if l != 0.0]
 
             if unique_labels:
-                # all objects stacked in third axis
-                label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)
-                                        for l in unique_labels], axis=2)
-
                 # single object from stack
                 # if only one object on the frame this object is selected
                 if self.multi_object == 'single_id':
+                    # all objects stacked in third axis
+                    label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)
+                                            for l in unique_labels], axis=2)
+
                     # if a frame does not include all objects and in particular not
                     # the object with self.multi_object_id
                     assert self.multi_object_id < self.num_objects, f"{self.seq_key} {self.multi_object_id} {self.num_objects}"

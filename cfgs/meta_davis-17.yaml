@@ -1,4 +1,3 @@
-single_obj_seq_mode: AUGMENT
 datasets:
     train:
         name: DAVIS-2017

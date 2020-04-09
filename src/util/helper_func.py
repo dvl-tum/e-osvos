@@ -106,8 +106,15 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False, 
 
                 probs = outputs[0]
 
+                background_mask = probs.max(dim=1, keepdim=True)[0].lt(0.5)
+                preds = probs.argmax(dim=1, keepdim=True).float() + 1.0
+                preds[background_mask] = 0.0
+
                 if augment_target_proposals_mode is not None:
-                    targets = probs.ge(0.5).float()
+                    # targets = probs.ge(0.5).float()
+                    background_mask = probs.max(dim=1, keepdim=True)[0].lt(0.5)
+                    targets = probs.argmax(dim=1, keepdim=True).float() + 1.0
+                    targets[background_mask] = 0.0
 
                     model.rpn._eval_augment_proposals_mode = augment_target_proposals_mode
                     if targets.sum().item() == 0:
@@ -124,7 +131,8 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False, 
                 loss = compute_loss(loss_func, outputs[-1], gts, {'batch_average': False})
                 metrics['loss_batches'].append(loss)
 
-            preds = probs.ge(0.5).float()
+                preds = probs.ge(0.5).float()
+
             probs_all.append(probs)
             # print(preds.eq(gts.bool()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()).shape)
             metrics['acc_batches'].append(preds.bool().eq(gts.bool()).view(preds.size(0), -1).sum(dim=1).float().div(preds[0].numel()))
@@ -141,6 +149,7 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False, 
                     imageio.imsave(pred_path, pred)
 
     metrics = {n: torch.cat(m).cpu() for n, m in metrics.items()}
+
     if return_probs:
         return metrics['loss_batches'], metrics['acc_batches'], torch.cat(probs_all), torch.cat(boxes_all)
     return metrics['loss_batches'], metrics['acc_batches']
