@@ -20,7 +20,7 @@ datasets:
     val_davis16:
         name: DAVIS-2016
         split: val_seqs
-        eval: False
+        eval: True
     # val_davis17:
     #     name: DAVIS-2017
     #     split: val_seqs

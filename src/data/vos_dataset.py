@@ -41,7 +41,7 @@ class VOSDataset(Dataset):
         # self.augment_with_single_obj_seq_frame_mapping = {}
         self.random_frame_id_epsilon = None
         self.random_frame_id_anchor_frame =None
-
+        self._num_objects = None
         self._preload_buffer = {'imgs': {}, 'labels': {}}
 
         # self.preloaded_imgs = {}
@@ -61,15 +61,35 @@ class VOSDataset(Dataset):
             raise NotImplementedError
         if not self.multi_object:
             return 1
-        label = np.atleast_3d(Image.open(self.labels[0]))[...,0]
-        # label = cv2.imread(os.path.join(self.root_dir, self.labels[0]), cv2.IMREAD_GRAYSCALE)
-        # label = np.array(label, dtype=np.float32)
-        # label = label / 255.0
 
-        unique_labels = [l for l in np.unique(label)
-                        #  if l != 0.0 and l != 1.0]
-                         if l != 0.0]
-        return len(unique_labels)
+        if self._num_objects is None:
+            label = np.atleast_3d(Image.open(self.labels[0]))[...,0]
+            # label = cv2.imread(os.path.join(self.root_dir, self.labels[0]), cv2.IMREAD_GRAYSCALE)
+            # label = np.array(label, dtype=np.float32)
+            # label = label / 255.0
+
+            unique_labels = [l for l in np.unique(label)
+                            #  if l != 0.0 and l != 1.0]
+                            if l != 0.0]
+            self._num_objects = len(unique_labels)
+
+        return self._num_objects
+
+    @property
+    def num_object_groups(self):
+        if self.multi_object == 'all':
+            return 1
+        return self.num_objects
+
+    @property
+    def object_ids_in_group(self):
+        return list(range(self.num_objects))
+
+    @property
+    def num_objects_in_group(self):
+        if self.multi_object == 'all':
+            return self.num_objects
+        return 1
 
     @property
     def seqs_names(self):
@@ -102,7 +122,7 @@ class VOSDataset(Dataset):
         assert self.frame_id is not None
         _, label = self.make_img_label_pair(self.frame_id)
 
-        return len([l for l in np.unique(label) if l != 0.0]) == self.num_objects
+        return len([l for l in np.unique(label) if l != 0.0]) == self.num_objects_in_group
 
     def get_random_frame_id_with_label(self):
         prev_frame_id = self.frame_id
@@ -155,6 +175,7 @@ class VOSDataset(Dataset):
         self.imgs = self.seqs[seq_name]['imgs']
         self.labels = self.seqs[seq_name]['labels']
         self.seq_key = seq_name
+        self._num_objects = None
 
     def set_gt_frame_id(self):
         self.frame_id = 0
@@ -272,6 +293,26 @@ class VOSDataset(Dataset):
             unique_labels = [l for l in np.unique(label)
                             #  if l != 0.0 and l != 1.0]
                              if l != 0.0]
+
+            if self.multi_object == 'all':
+                for i in range(self.num_objects):
+                    if i not in self.object_ids_in_group:
+
+                        if self._multi_object_id_to_label:
+                            group_mask = label == self._multi_object_id_to_label[i]
+                        else:
+                            group_mask = label == i + 1
+
+                        label[group_mask] = 0.0
+
+                if self._multi_object_id_to_label:
+                    group_masks = [label == self._multi_object_id_to_label[i]
+                                   for i in self.object_ids_in_group]
+                else:
+                    group_masks = [label == i + 1 for i in self.object_ids_in_group]
+
+                for i, m in enumerate(group_masks):
+                    label[m] = i + 1
 
             if unique_labels:
                 # single object from stack

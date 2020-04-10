@@ -128,18 +128,59 @@ class YouTube(VOSDataset):
         self._multi_object_id_to_label = [
             int(k) for k in sorted(self._meta_data['videos'][self.seq_key]['objects'].keys())]
 
-    def set_gt_frame_id(self):
+    def get_gt_frame_id(self, multi_object_id):
         objects_info = self._meta_data['videos'][self.seq_key]['objects']
         objects_info = [v for k, v in sorted(objects_info.items())]
 
         if 'test' in self.seqs_key:
-            first_gt_image_name = objects_info[self.multi_object_id][0]
+            first_gt_image_name = objects_info[multi_object_id][0]
         else:
-            first_gt_image_name = objects_info[self.multi_object_id]["frames"][0]
+            first_gt_image_name = objects_info[multi_object_id]["frames"][0]
 
-        self.frame_id = [path.find(first_gt_image_name) != -1 for path in self.imgs].index(True)
-        self._label_id = [path.find(
-            first_gt_image_name) != -1 for path in self.labels].index(True)
+        frame_id = [path.find(first_gt_image_name) != -1 for path in self.imgs].index(True)
+        _label_id = [path.find(first_gt_image_name) != -1 for path in self.labels].index(True)
+
+        return frame_id, _label_id
+
+    def get_gt_object_frames(self):
+        return [self.get_gt_frame_id(i) for i in range(self.num_objects)]
+
+    def get_gt_object_steps(self):
+        frame_ids = self.get_gt_object_frames()
+        steps = []
+        for i in range(len(frame_ids) - 1):
+            steps.append(frame_ids[i + 1][0] - frame_ids[i][0])
+        return steps
+
+    def has_later_objects(self):
+        return [f for f, l in self.get_gt_object_frames()].count(0) != self.num_objects
+
+    @property
+    def num_object_groups(self):
+        return len(torch.unique(torch.tensor([f for f, l in self.get_gt_object_frames()])))
+
+    @property
+    def num_objects_in_group(self):
+        return torch.unique(torch.tensor([f for f, l in self.get_gt_object_frames()]), return_counts=True)[1][self.multi_object_id].item()
+
+    @property
+    def object_ids_in_group(self):
+        obj_frames = self.get_gt_object_frames()
+
+        frame_id = torch.unique(torch.tensor([f for f, l in obj_frames]))[
+            self.multi_object_id].item()
+        return [i for i, (f, _) in enumerate(obj_frames) if f == frame_id]
+
+    def set_gt_frame_id(self):
+        if self.multi_object == 'all':
+            obj_frames = self.get_gt_object_frames()
+            frame_id = torch.unique(torch.tensor([f for f, l in obj_frames]))[
+                self.multi_object_id].item()
+            obj_frame = obj_frames[[f for f, l in obj_frames].index(frame_id)]
+            self.frame_id, self._label_id = obj_frame
+            # self.frame_id, self._label_id = self.get_gt_frame_id(self.multi_object_id)
+        else:
+            self.frame_id, self._label_id = self.get_gt_frame_id(self.multi_object_id)
 
         # print(self.seq_key, self.multi_object_id, self.frame_id, self._label_id)
 

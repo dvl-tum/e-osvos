@@ -107,7 +107,8 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
 
                 for seq_name in loader.dataset.seqs_names:
                     loader.dataset.set_seq(seq_name)
-                    legend.extend([f"INIT J_{seq_name}_{i + 1}" for i in range(loader.dataset.num_objects)])
+                    if loader.dataset.num_object_groups == 1:
+                        legend.extend([f"INIT J_{seq_name}_{i + 1}" for i in range(loader.dataset.num_objects)])
 
                 for seq_name in loader.dataset.seqs_names:
                     loader.dataset.set_seq(seq_name)
@@ -671,7 +672,6 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         model.to(device)
         meta_optim.to(device)
 
-
         train_loader, test_loader, meta_loader = data_loaders(  # pylint: disable=E1120
             datasets[dataset_key], **data_cfg)
         # remove random cropping
@@ -742,18 +742,20 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             # initial metrics
             # if multi object is treated as multiple single objects, init J without
             # fine-tuning returns no reasonable results
+
             # if train_loader.dataset.num_objects == 1:
-            # test_loader.dataset.multi_object_id = 0
+            if train_loader.dataset.num_object_groups == 1:
+                test_loader.dataset.multi_object_id = 0
 
-            meta_optim.load_state_dict(meta_optim_state_dict)
-            meta_optim.reset()
-            meta_optim.eval()
+                meta_optim.load_state_dict(meta_optim_state_dict)
+                meta_optim.reset()
+                meta_optim.eval()
 
-            if test_loader.dataset.test_mode:
-                J = [0.0]
-            else:
-                _, _, J, _,  = eval_loader(model, test_loader, loss_func)
-            init_J_seq.extend(J)
+                if test_loader.dataset.test_mode:
+                    J = [0.0]
+                else:
+                    _, _, J, _,  = eval_loader(model, test_loader, loss_func)
+                init_J_seq.extend(J)
 
             # masks[seq_name] = [None] * len(test_loader.dataset)
             boxes[seq_name] = [None] * len(test_loader.dataset)
@@ -761,15 +763,23 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             # boxes[seq_name] = []
 
             if _config['meta_optim_cfg']['learn_model_init_last_layer_template']:
-                model.num_classes = train_loader.dataset.num_objects + 1
+                # model.num_classes = train_loader.dataset.num_objects + 1
                 model.roi_heads.detections_per_img = 100
 
-            for obj_id in range(train_loader.dataset.num_objects):
+            # print('num_object_groups', train_loader.dataset.num_object_groups)
+
+            for obj_id in range(train_loader.dataset.num_object_groups):
                 train_loader.dataset.multi_object_id = obj_id
                 meta_loader.dataset.multi_object_id = obj_id
                 test_loader.dataset.multi_object_id = obj_id
 
                 train_loader.dataset.set_gt_frame_id()
+                num_objects_in_group = train_loader.dataset.num_objects_in_group
+
+                if _config['meta_optim_cfg']['learn_model_init_last_layer_template']:
+                    model.num_classes = num_objects_in_group + 1
+
+                # print('num_objects_in_group', num_objects_in_group)
 
                 # evaluation with online adaptation
                 if _config['eval_online_adapt_step'] is None:
@@ -785,6 +795,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 # meta_frame_id might be a str, e.g., 'middle'
                 start_eval = timeit.default_timer()
                 for i, meta_frame_id in enumerate(meta_frame_iter):
+                    # print(i, train_loader.dataset.frame_id + 1)
                     # range [min, max[
                     if i == 0:
                         train_frame = train_loader.dataset[0]
@@ -793,11 +804,11 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                         for frame_id in range(len(test_loader.dataset)):
                             if not obj_id:
-                                masks[seq_name].append(torch.zeros_like(train_frame_gt))
+                                masks[seq_name].append(torch.zeros(num_objects_in_group, train_frame_gt.shape[1], train_frame_gt.shape[2]))
                             else:
                                 masks[seq_name][frame_id] = torch.cat([
                                     masks[seq_name][frame_id],
-                                    torch.zeros_like(train_frame_gt)])
+                                    torch.zeros(num_objects_in_group, train_frame_gt.shape[1], train_frame_gt.shape[2])])
 
                         masks[seq_name][train_loader.dataset.frame_id][obj_id,
                                                                        :, :] = 2 * train_frame_gt
@@ -897,25 +908,21 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                     for frame_id, probs, box in zip(test_loader.sampler.indices, probs_frame_range, boxes_frame_range):
 
-
-                        if test_loader.dataset.multi_object == 'all':
-                            masks[seq_name][frame_id] = probs
+                        # if test_loader.dataset.multi_object == 'all':
+                        #     masks[seq_name][frame_id] = probs
+                        #     boxes[seq_name][frame_id] = box
+                        # else:
+                        if boxes[seq_name][frame_id] is None:
                             boxes[seq_name][frame_id] = box
                         else:
-                            if boxes[seq_name][frame_id] is None:
-                                boxes[seq_name][frame_id] = box.unsqueeze(dim=0)
-                            else:
-                                boxes[seq_name][frame_id] = torch.cat([boxes[seq_name][frame_id], box.unsqueeze(dim=0)])
+                            boxes[seq_name][frame_id] = torch.cat([boxes[seq_name][frame_id], box])
 
-                            masks[seq_name][frame_id][obj_id, :, :] = probs
+                        masks[seq_name][frame_id][-num_objects_in_group:, :, :] = probs
 
                     test_loader.sampler.indices = None
 
                     if eval_frame_range_max == len(test_loader.dataset):
                         break
-
-                if test_loader.dataset.multi_object == 'all':
-                    break
 
             # merge all logit maps and set object predictions by argmax
             for frame_id in range(len(test_loader.dataset)):
@@ -1082,8 +1089,8 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
         else:
             # pick 2 random obj ids such that each batch contains 2 obj per sequence
             seq_obj_ids = [obj_id.item() for obj_id
-                           in torch.randperm(test_dataset.num_objects)]
-            seq_obj_ids = seq_obj_ids[:2]
+                           in torch.randperm(test_dataset.num_object_groups)]
+            # seq_obj_ids = seq_obj_ids[:2]
 
         for i, obj_id in enumerate(seq_obj_ids):
             train_loader = copy.deepcopy(train_loader_tmp)
@@ -1567,6 +1574,9 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
             # STEP
             #
             # normalize over batch and clip grads
+
+            start_time = timeit.default_timer()
+
             for name, param in meta_optim.named_parameters():
                 param.grad = shared_meta_optim_grads[name] / meta_batch_size
 
@@ -1589,7 +1599,6 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
             for p, sub_meta_mini_batch in zip(meta_processes, sub_meta_mini_batches):
                 p['shared_dict']['sub_meta_mini_batch'] = sub_meta_mini_batch
                 p['shared_dict']['sub_iter_done'] = False
-            start_time = timeit.default_timer()
 
             # for p in meta_processes:
             #     for seq_name, vis_data in p['shared_dict']['vis_data_seqs'].items():
