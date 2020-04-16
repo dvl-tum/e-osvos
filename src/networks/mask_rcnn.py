@@ -110,6 +110,7 @@ def rpn_forward(self, images, features, targets=None):
     boxes, scores = self.filter_proposals(proposals, objectness, images.image_sizes, num_anchors_per_level)
 
     if not self.training and targets is not None and self._eval_augment_proposals_mode is not None:
+    # if targets is not None and self._eval_augment_proposals_mode is not None:
         # boxes = []
         random_share = 0.1
         num_box_augs = self.post_nms_top_n
@@ -224,8 +225,8 @@ class MaskRCNN(_MaskRCNN):
 
         # rpn_pre_nms_top_n_train = 200
         # rpn_pre_nms_top_n_test = 100
-        # rpn_post_nms_top_n_train = 200
-        # rpn_post_nms_top_n_test = 2000
+        rpn_post_nms_top_n_train = 1000
+        # rpn_post_nms_top_n_test = 1000
 
         # large to include all proposals
         # box_batch_size_per_image = 10000
@@ -237,15 +238,15 @@ class MaskRCNN(_MaskRCNN):
 
         super(MaskRCNN, self).__init__(backbone_model,
                                        num_classes,
-                                       box_detections_per_img=1,
+                                    #    box_detections_per_img=50,
                                        box_roi_pool=box_roi_pool,
                                        mask_roi_pool=mask_roi_pool,
-                                       mask_head=mask_head)
+                                       mask_head=mask_head,)
                                     #    bbox_reg_weights=bbox_reg_weights)
-                                    #    box_batch_size_per_image=box_batch_size_per_image,)
+                                    #    box_batch_size_per_image=128,
                                     #    rpn_pre_nms_top_n_train=rpn_pre_nms_top_n_train,
                                     #    rpn_pre_nms_top_n_test=rpn_pre_nms_top_n_test,
-                                    #    rpn_post_nms_top_n_train=rpn_post_nms_top_n_train,
+                                    #    rpn_post_nms_top_n_train=rpn_post_nms_top_n_train)
                                     #    rpn_post_nms_top_n_test=rpn_post_nms_top_n_test,)
                                     #    box_positive_fraction=0.25)
 
@@ -274,6 +275,9 @@ class MaskRCNN(_MaskRCNN):
                     m.weight.requires_grad = batch_norm['learn_weight']
                     m.bias.requires_grad = batch_norm['learn_bias']
 
+        if replace_batch_with_group_norms:
+            self.replace_batch_with_group_norms()
+
         self._train_encoder = train_encoder
         if not train_encoder:
             self.requires_grad_(False)
@@ -299,9 +303,6 @@ class MaskRCNN(_MaskRCNN):
 
         # self._second_order_derivates_module_names = ['rpn', 'roi_heads']
         self._second_order_derivates_module_names = ['roi_heads']
-
-        if replace_batch_with_group_norms:
-            self.replace_batch_with_group_norms()
 
         self.last_param_group_names = ['roi_heads.box_predictor.cls_score.weight',
                                        'roi_heads.box_predictor.cls_score.bias',
@@ -534,6 +535,7 @@ class MaskRCNN(_MaskRCNN):
             for output_raw in outputs_raw:
                 output_mask = []
                 output_box = []
+
                 for i in range(1, self.num_classes):
                     if len((output_raw['labels'] == i).nonzero()):
                         first_index = (output_raw['labels'] == i).nonzero()[0]

@@ -19,6 +19,8 @@ import sacred
 import torch
 import torch.multiprocessing as mp
 import torchvision
+from torch.utils.data import Dataset
+
 from data import custom_transforms
 from meta_optim.meta_optim import MetaOptimizer
 from meta_optim.utils import dict_to_html
@@ -41,7 +43,7 @@ torch_ingredient.add_config('cfgs/torch.yaml')
 
 ex = sacred.Experiment('osvos-meta', ingredients=[torch_ingredient])
 ex.add_config('cfgs/meta.yaml')
-ex.add_named_config('DAVIS-17', 'cfgs/meta_davis-17.yaml')
+ex.add_named_config('DAVIS-2017', 'cfgs/meta_davis-2017.yaml')
 ex.add_named_config('YouTube-VOS', 'cfgs/meta_youtube-vos.yaml')
 ex.add_named_config('cross-entropy', 'cfgs/meta_cross-entropy.yaml')
 
@@ -85,6 +87,10 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
     vis_dict['meta_metrics_vis'] = LineVis(
         opts, env=run_name, resume=resume, **torch_cfg['vis'])
 
+    data_cfg = copy.deepcopy(_config['data_cfg'])
+    # data_cfg['num_workers'] = 4
+    # data_cfg['multi_object'] = 'all'
+
     for dataset_name, dataset in datasets.items():
         if dataset['eval'] and dataset['split'] is not None:
 
@@ -93,7 +99,8 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
             #     flip_labels = [False, True]
 
             for flip_label in flip_labels:
-                loader, *_ = data_loaders(dataset)  # pylint: disable=E1120
+                loader, *_ = data_loaders(dataset, **
+                                          data_cfg)  # pylint: disable=E1120
                 legend = ['TIME PER FRAME', 'MEAN_TRAIN_LOSS']
                 if _config['parent_model']['architecture'] == 'MaskRCNN':
                     legend.extend(['MEAN_TRAIN_LOSS_cls_score',
@@ -352,12 +359,12 @@ def device_for_process(rank: int, _config: dict):
     return device, meta_device
 
 
-def meta_run(rank: int,
-             init_model_state_dict: dict,
+def meta_run(rank: int, init_model_state_dict: dict,
              shared_meta_optim_state_dict: dict,
              global_rng_state: torch.ByteTensor, _config: dict, dataset: str,
              shared_dict: dict, shared_variables: dict,
-             shared_meta_optim_grads: dict, save_dir: str):
+             shared_meta_optim_grads: dict, save_dir: str,
+             num_meta_processes: int):
 
     device, meta_device = device_for_process(rank, _config)
 
@@ -382,260 +389,308 @@ def meta_run(rank: int,
         if not os.path.exists(debug_save_dir):
             os.makedirs(debug_save_dir)
 
-        sub_mini_batch_size = len(shared_dict['sub_meta_mini_batch'])
+        sub_mini_batch_size = _config['meta_batch_size'] // num_meta_processes
+
+    sub_meta_batch_size = _config['meta_batch_size'] // num_meta_processes
+
+    meta_task_set = MetaTaskset(_config['datasets'],
+                                _config['random_frame_transform_per_task'],
+                                _config['random_flip_label'],
+                                _config['random_no_label'],
+                                _config['data_cfg'],
+                                _config['single_obj_seq_mode'],
+                                _config['random_box_coord_perm'],
+                                _config['random_frame_epsilon'])
+
+    def collate_fn(batch):
+        return batch
+
+    meta_task_loader = DataLoader(
+        meta_task_set,
+        shuffle=True,
+        batch_size=sub_meta_batch_size,
+        num_workers=0,
+        collate_fn=collate_fn)
 
     while True:
-        # main process sets iter_done=False after shared_meta_optim is updated
-        while shared_dict['sub_iter_done']:
-            time.sleep(0.25)
-        else:
-            meta_mini_batch = shared_dict['sub_meta_mini_batch']
+
+        # meta_tasks = generate_meta_train_tasks(_config['datasets'],
+        #                                        _config['random_frame_transform_per_task'],
+        #                                        _config['random_flip_label'],
+        #                                        _config['random_no_label'],
+        #                                        _config['data_cfg'],
+        #                                        _config['single_obj_seq_mode'],
+        #                                        _config['random_box_coord_perm'],
+        #                                        _config['random_frame_epsilon'],
+        #                                        sub_meta_batch_size)
+
+        for meta_mini_batch in meta_task_loader:
+            # meta_mini_batch = meta_tasks # list(grouper(sub_meta_batch_size, meta_tasks))
+
+            # num_sub_meta_batches_for_epoch = len(meta_tasks) // (sub_meta_batch_size * num_meta_processes)
+
+            # print('len(meta_tasks)', len(meta_tasks))
+            # print('sub_meta_batch_size', sub_meta_batch_size)
+            # print('num_sub_meta_batches_for_epoch', num_sub_meta_batches_for_epoch)
+
+            # for i, meta_mini_batch in enumerate(sub_meta_mini_batches):
+                # print(f"rank {rank} meta_mini_batch {i}")
+
+            # main process sets iter_done=False after shared_meta_optim is updated
+            while shared_dict['sub_iter_done']:
+                time.sleep(0.25)
+            # else:
+            #     meta_mini_batch = shared_dict['sub_meta_mini_batch']
+
             # filter None values from grouper
             meta_mini_batch = [s for s in meta_mini_batch if s is not None]
 
-        # model.load_state_dict(model_state_dict)
-        meta_optim.load_state_dict(shared_meta_optim_state_dict)
-        meta_optim.zero_grad()
-
-        model.to(device)
-        meta_optim.to(meta_device)
-
-        # TODO: refactor and combine seqs_metrics and vis_data_seqs
-        seqs_metrics = ['train_loss', 'train_losses', 'meta_loss',
-                        'meta_losses', 'loss', 'J', 'F']
-        seqs_metrics = {m: {s['seq_name']: []
-                            for s in meta_mini_batch}
-                        for m in seqs_metrics}
-        vis_data_seqs = {s['seq_name']: [] for s in meta_mini_batch}
-
-        for i_sample, sample in enumerate(meta_mini_batch):
-            # start_meta_iter = timeit.default_timer()
-            seq_name = sample['seq_name']
-            train_loader = sample['train_loader']
-            meta_loader = sample['meta_loader']
-
-            if _config['meta_optim_cfg']['learn_model_init_last_layer_template']:
-                model.num_classes = train_loader.dataset.num_objects + 1
-
-            # print((
-            #     sample['seq_name'],
-            #     sample['train_loader'].dataset.seq_key,
-            #     sample['train_loader'].dataset.multi_object_id,
-            #     sample['meta_loader'].dataset.multi_object_id,
-            #     sample['train_loader'].dataset.frame_id,
-            #     sample['meta_loader'].sampler.indices,
-            #     sample['train_loader'].dataset.augment_with_single_obj_seq_key,
-            #     sample['meta_loader'].dataset.augment_with_single_obj_seq_key))
-
-            # print(train_loader.dataset.imgs[train_loader.dataset.frame_id])
-            # print(meta_loader.dataset.imgs[meta_loader.sampler.indices[0]])
-
-            bptt_loss = torch.zeros(1).to(meta_device)
-            stop_train = False
-            prev_bptt_iter_loss = torch.zeros(1).to(meta_device)
-            train_loss_hist = []
-            train_losses_hist = []
-            vis_data_seqs_sample = []
-
-            meta_optim.reset()
+            # model.load_state_dict(model_state_dict)
+            meta_optim.load_state_dict(shared_meta_optim_state_dict)
             meta_optim.zero_grad()
 
-            # meta run sets its own random state for the first frame data augmentation
-            # we use the global rng_state for global randomizations
-            # torch.set_rng_state(global_rng_state)
-            # global_rng_state = torch.get_rng_state()
+            model.to(device)
+            meta_optim.to(meta_device)
 
-            if _config['meta_optim_cfg']['matching_input']:
-                match_embed(model, train_loader, meta_loader)
+            # TODO: refactor and combine seqs_metrics and vis_data_seqs
+            seqs_metrics = ['train_loss', 'train_losses', 'meta_loss',
+                            'meta_losses', 'loss', 'J', 'F']
+            seqs_metrics = {m: {s['seq_name']: []
+                                for s in meta_mini_batch}
+                            for m in seqs_metrics}
+            vis_data_seqs = {s['seq_name']: [] for s in meta_mini_batch}
 
-            for epoch in epoch_iter(num_epochs):
-                # start_train_epoch = timeit.default_timer()
-                if _config['increase_seed_per_meta_run']:
-                    set_random_seeds(_config['seed'] + rank + epoch + shared_variables['meta_iter'])
-                else:
-                    set_random_seeds(_config['seed'] + rank + epoch)
+            for i_sample, sample in enumerate(meta_mini_batch):
+                # start_meta_iter = timeit.default_timer()
+                seq_name = sample['seq_name']
+                train_loader = sample['train_loader']
+                meta_loader = sample['meta_loader']
 
-                model.train_without_dropout()
+                if _config['meta_optim_cfg']['learn_model_init_last_layer_template']:
+                    model.num_classes = train_loader.dataset.num_objects_in_group + 1
 
-                # only single iteration
-                for train_batch in train_loader:
-                    train_inputs, train_gts = train_batch['image'], train_batch['gt']
-                    train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
+                # print((
+                #     sample['seq_name'],
+                #     sample['train_loader'].dataset.seq_key,
+                #     sample['train_loader'].dataset.multi_object_id,
+                #     sample['meta_loader'].dataset.multi_object_id,
+                #     sample['train_loader'].dataset.frame_id,
+                #     sample['meta_loader'].sampler.indices,
+                #     sample['train_loader'].dataset.augment_with_single_obj_seq_key,
+                #     sample['meta_loader'].dataset.augment_with_single_obj_seq_key))
 
-                    if _config['parent_model']['architecture'] == 'MaskRCNN':
-                        train_loss, train_losses = model(
-                            train_inputs, train_gts, sample['box_coord_perm'],
-                            train_loader.dataset.flip_label)
+                # print(train_loader.dataset.imgs[train_loader.dataset.frame_id])
+                # print(meta_loader.dataset.imgs[meta_loader.sampler.indices[0]])
 
-                        train_losses_hist.append({k: v.cpu().item()
-                                                  for k, v in train_losses.items()})
+                bptt_loss = torch.zeros(1).to(meta_device)
+                stop_train = False
+                prev_bptt_iter_loss = torch.zeros(1).to(meta_device)
+                train_loss_hist = []
+                train_losses_hist = []
+                vis_data_seqs_sample = []
+
+                meta_optim.reset()
+                meta_optim.zero_grad()
+
+                # meta run sets its own random state for the first frame data augmentation
+                # we use the global rng_state for global randomizations
+                # torch.set_rng_state(global_rng_state)
+                # global_rng_state = torch.get_rng_state()
+
+                if _config['meta_optim_cfg']['matching_input']:
+                    match_embed(model, train_loader, meta_loader)
+
+                for epoch in epoch_iter(num_epochs):
+                    # start_train_epoch = timeit.default_timer()
+                    if _config['increase_seed_per_meta_run']:
+                        set_random_seeds(_config['seed'] + rank + epoch + shared_variables['meta_iter'])
                     else:
-                        train_outputs = model(train_inputs)
-                        train_loss = compute_loss(_config['loss_func'],
-                                                  train_outputs[-1],
-                                                  train_gts)
+                        set_random_seeds(_config['seed'] + rank + epoch)
 
-                    if vis_debug:
-                        if epoch == 1:
-                            import imageio
-                            train_input = np.transpose(
-                                train_inputs[0].cpu().numpy(), (1, 2, 0))
-                            train_gt = np.transpose(
-                                train_gts[0].cpu().numpy(), (1, 2, 0))
+                    model.train_without_dropout()
 
-                            imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_train_input.jpg"), (train_input * 255).astype(np.uint8))
-                            imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_train_gt.png"), (
-                                train_gt / train_loader.dataset.num_objects * 255).astype(np.uint8))
-
-                        model.eval()
-                        train_output = np.transpose(model(train_inputs)[0].ge(0.5).float()[0].cpu().numpy(), (1, 2, 0)).astype(np.uint8)
-                        model.train_without_dropout()
-
-                        imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_train_output_epoch_{epoch}.png"), (train_output * 255).astype(np.uint8))
-
-
-                    # print(f"EPOCH {epoch} - TRAIN INPUTS SUM {train_inputs.sum()} - TRAIN INPUTS SUM {train_gts.sum()}")
-                    # print(f"EPOCH {epoch} - TRAIN LOSS {train_loss.item()}")
-
-                    train_loss_hist.append(train_loss.item())
-
-                meta_optim.set_train_loss(train_loss)
-                if _config['meta_optim_cfg']['gt_input']:
-                    meta_optim.train_frame_id = train_loader.dataset.frame_id
-                    meta_optim.meta_frame_id = meta_loader.dataset.frame_id
-                    meta_optim.seq_id = meta_loader.dataset.get_seq_id()
-                meta_optim.step(train_loss)
-
-                # bptt_iter_loss = 0.0
-                # for meta_batch in meta_loader:
-                #     meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
-                #     meta_inputs, meta_gts = meta_inputs.to(
-                #         meta_device), meta_gts.to(meta_device)
-
-                #     if _config['parent_model']['architecture'] == 'MaskRCNN':
-                #         meta_loss, meta_losses = model(
-                #             meta_inputs, meta_gts, sample['box_coord_perm'],
-                #             meta_loader.dataset.flip_label)
-                #     else:
-                #         meta_outputs = model(meta_inputs)
-                #         meta_loss = compute_loss(_config['loss_func'],
-                #                                  meta_outputs[-1],
-                #                                  meta_gts)
-
-                #     # print(f"EPOCH {epoch} - META INPUTS SUM {meta_inputs.sum()} - META INPUTS SUM {meta_gts.sum()}")
-                #     # print(f"EPOCH {epoch} - META LOSS {meta_loss.item()}")
-
-                #     bptt_iter_loss += meta_loss
-
-                # bptt_loss += bptt_iter_loss - prev_bptt_iter_loss
-                # prev_bptt_iter_loss = bptt_iter_loss.detach()
-
-                # visualization
-                vis_data = [train_loss.item(),
-                            bptt_loss.item(),
-                            meta_optim.state_lr.cpu().detach().numpy()]
-                vis_data_seqs_sample.append(vis_data)
-
-                stop_train = stop_train or early_stopping(
-                    train_loss_hist, **_config['train_early_stopping_cfg'])
-
-                # update params of meta optim
-                if not epoch % _config['bptt_epochs'] or stop_train or epoch == num_epochs:
-
-                    for meta_batch in meta_loader:
-                        meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
-                        meta_inputs, meta_gts = meta_inputs.to(
-                            meta_device), meta_gts.to(meta_device)
+                    # only single iteration
+                    for train_batch in train_loader:
+                        train_inputs, train_gts = train_batch['image'], train_batch['gt']
+                        train_inputs, train_gts = train_inputs.to(device), train_gts.to(device)
 
                         if _config['parent_model']['architecture'] == 'MaskRCNN':
-                            meta_loss, meta_losses = model(
-                                meta_inputs, meta_gts, sample['box_coord_perm'],
-                                meta_loader.dataset.flip_label)
+                            train_loss, train_losses = model(
+                                train_inputs, train_gts, sample['box_coord_perm'],
+                                train_loader.dataset.flip_label)
+
+                            train_losses_hist.append({k: v.cpu().item()
+                                                    for k, v in train_losses.items()})
                         else:
-                            meta_outputs = model(meta_inputs)
-                            meta_loss = compute_loss(_config['loss_func'],
-                                                     meta_outputs[-1],
-                                                     meta_gts)
+                            train_outputs = model(train_inputs)
+                            train_loss = compute_loss(_config['loss_func'],
+                                                    train_outputs[-1],
+                                                    train_gts)
 
                         if vis_debug:
-                            if epoch == num_epochs:
-                                meta_input = np.transpose(
-                                    meta_inputs[0].cpu().numpy(), (1, 2, 0))
-                                meta_gt = np.transpose(
-                                    meta_gts[0].cpu().numpy(), (1, 2, 0))
+                            if epoch == 1:
+                                import imageio
+                                train_input = np.transpose(
+                                    train_inputs[0].cpu().numpy(), (1, 2, 0))
+                                train_gt = np.transpose(
+                                    train_gts[0].cpu().numpy(), (1, 2, 0))
 
-                                imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_input.jpg"), (meta_input * 255).astype(np.uint8))
-                                imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_gt.png"), (meta_gt * 255).astype(np.uint8))
+                                imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_train_input.jpg"), (train_input * 255).astype(np.uint8))
+                                imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_train_gt.png"), (
+                                    train_gt / train_loader.dataset.num_objects * 255).astype(np.uint8))
 
-                                model.eval()
-                                meta_output = np.transpose(model(meta_inputs)[0].ge(0.5).float()[0].cpu().numpy(), (1, 2, 0)).astype(np.uint8)
-                                model.train_without_dropout()
+                            # model.eval()
+                            # train_output = np.transpose(model(train_inputs)[0].ge(0.5).float()[0].cpu().numpy(), (1, 2, 0)).astype(np.uint8)
+                            # model.train_without_dropout()
 
-                                imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_output.png"), (meta_output * 255).astype(np.uint8))
+                            # imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_train_output_epoch_{epoch}.png"), (train_output * 255).astype(np.uint8))
 
-                        bptt_loss += meta_loss
 
-                    meta_loss_is_nan = torch.isnan(bptt_loss).any()
-                    if meta_loss_is_nan:
-                        stop_train = True
+                        # print(f"EPOCH {epoch} - TRAIN INPUTS SUM {train_inputs.sum()} - TRAIN INPUTS SUM {train_gts.sum()}")
+                        # print(f"EPOCH {epoch} - TRAIN LOSS {train_loss.item()}")
 
-                    # meta_optim.zero_grad()
-                    bptt_loss.backward()
+                        train_loss_hist.append(train_loss.item())
 
-                    meta_optim.reset(keep_state=True)
+                    meta_optim.set_train_loss(train_loss)
+                    if _config['meta_optim_cfg']['gt_input']:
+                        meta_optim.train_frame_id = train_loader.dataset.frame_id
+                        meta_optim.meta_frame_id = meta_loader.dataset.frame_id
+                        meta_optim.seq_id = meta_loader.dataset.get_seq_id()
+                    meta_optim.step(train_loss)
 
-                    prev_bptt_iter_loss.zero_().detach_()
-                    bptt_loss.zero_().detach_()
+                    # bptt_iter_loss = 0.0
+                    # for meta_batch in meta_loader:
+                    #     meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
+                    #     meta_inputs, meta_gts = meta_inputs.to(
+                    #         meta_device), meta_gts.to(meta_device)
 
-                if stop_train:
-                    meta_optim.reset()
-                    break
+                    #     if _config['parent_model']['architecture'] == 'MaskRCNN':
+                    #         meta_loss, meta_losses = model(
+                    #             meta_inputs, meta_gts, sample['box_coord_perm'],
+                    #             meta_loader.dataset.flip_label)
+                    #     else:
+                    #         meta_outputs = model(meta_inputs)
+                    #         meta_loss = compute_loss(_config['loss_func'],
+                    #                                  meta_outputs[-1],
+                    #                                  meta_gts)
 
-                # print('TRAIN EPOCH ', (timeit.default_timer() - start_train_epoch) / 60)
+                    #     # print(f"EPOCH {epoch} - META INPUTS SUM {meta_inputs.sum()} - META INPUTS SUM {meta_gts.sum()}")
+                    #     # print(f"EPOCH {epoch} - META LOSS {meta_loss.item()}")
 
-            if not meta_loss_is_nan:
-                # loss_batches, _ = run_loader(model, meta_loader, loss_func)
-                # seqs_metrics['meta_loss'][seq_name].append(loss_batches.mean())
-                seqs_metrics['meta_loss'][seq_name].append(meta_loss.item())
-                seqs_metrics['meta_losses'][seq_name].append({k: v.cpu().item()
-                                                            for k, v in meta_losses.items()})
+                    #     bptt_iter_loss += meta_loss
 
-                vis_data_seqs[seq_name].append(vis_data_seqs_sample)
+                    # bptt_loss += bptt_iter_loss - prev_bptt_iter_loss
+                    # prev_bptt_iter_loss = bptt_iter_loss.detach()
 
-                # loss_batches, _, J, F = eval_loader(model, test_loader, loss_func)
-                # next_meta_frame_ids[seq_name] = loss_batches.argmax().item()
+                    # visualization
+                    vis_data = [train_loss.item(),
+                                bptt_loss.item(),
+                                meta_optim.state_lr.cpu().detach().numpy()]
+                    vis_data_seqs_sample.append(vis_data)
 
-                # seqs_metrics['loss'][seq_name] = loss_batches.mean()
-                # seqs_metrics['J'][seq_name] = J
-                # seqs_metrics['F'][seq_name] = F
-                # seqs_metrics['train_loss'][seq_name].append(train_loss_hist[-1])
-                seqs_metrics['train_loss'][seq_name].append(train_loss_hist[0])
-                if _config['parent_model']['architecture'] == 'MaskRCNN':
-                    seqs_metrics['train_losses'][seq_name].append(train_losses_hist[0])
+                    stop_train = stop_train or early_stopping(
+                        train_loss_hist, **_config['train_early_stopping_cfg'])
 
-                for name, param in meta_optim.named_parameters():
+                    # update params of meta optim
+                    if not epoch % _config['bptt_epochs'] or stop_train or epoch == num_epochs:
 
-                    if parent_states['model_init_meta_optim_split']['splits']:
-                        assert len(parent_states['model_init_meta_optim_split']['splits']) == 1
-                        if seq_name in parent_states['model_init_meta_optim_split']['splits'][0]:
-                            if 'model_init' in name:
-                                shared_meta_optim_grads[name] += param.grad.cpu()
+                        for meta_batch in meta_loader:
+                            meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
+                            meta_inputs, meta_gts = meta_inputs.to(
+                                meta_device), meta_gts.to(meta_device)
+
+                            if _config['parent_model']['architecture'] == 'MaskRCNN':
+                                meta_loss, meta_losses = model(
+                                    meta_inputs, meta_gts, sample['box_coord_perm'],
+                                    meta_loader.dataset.flip_label)
+                            else:
+                                meta_outputs = model(meta_inputs)
+                                meta_loss = compute_loss(_config['loss_func'],
+                                                        meta_outputs[-1],
+                                                        meta_gts)
+
+                            if vis_debug:
+                                if epoch == num_epochs:
+                                    meta_input = np.transpose(
+                                        meta_inputs[0].cpu().numpy(), (1, 2, 0))
+                                    meta_gt = np.transpose(
+                                        meta_gts[0].cpu().numpy(), (1, 2, 0))
+
+                                    imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_input.jpg"), (meta_input * 255).astype(np.uint8))
+                                    imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_gt.png"), (meta_gt * 255).astype(np.uint8))
+
+                                    # model.eval()
+                                    # meta_output = np.transpose(model(meta_inputs)[0].ge(0.5).float()[0].cpu().numpy(), (1, 2, 0)).astype(np.uint8)
+                                    # model.train_without_dropout()
+
+                                    # imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_output.png"), (meta_output * 255).astype(np.uint8))
+
+                            bptt_loss += meta_loss
+
+                        meta_loss_is_nan = torch.isnan(bptt_loss).any()
+                        if meta_loss_is_nan:
+                            stop_train = True
+
+                        # meta_optim.zero_grad()
+                        bptt_loss.backward()
+
+                        meta_optim.reset(keep_state=True)
+
+                        prev_bptt_iter_loss.zero_().detach_()
+                        bptt_loss.zero_().detach_()
+
+                    if stop_train:
+                        meta_optim.reset()
+                        break
+
+                    # print('TRAIN EPOCH ', (timeit.default_timer() - start_train_epoch) / 60)
+
+                if not meta_loss_is_nan:
+                    # loss_batches, _ = run_loader(model, meta_loader, loss_func)
+                    # seqs_metrics['meta_loss'][seq_name].append(loss_batches.mean())
+                    seqs_metrics['meta_loss'][seq_name].append(meta_loss.item())
+                    seqs_metrics['meta_losses'][seq_name].append({k: v.cpu().item()
+                                                                for k, v in meta_losses.items()})
+
+                    vis_data_seqs[seq_name].append(vis_data_seqs_sample)
+
+                    # loss_batches, _, J, F = eval_loader(model, test_loader, loss_func)
+                    # next_meta_frame_ids[seq_name] = loss_batches.argmax().item()
+
+                    # seqs_metrics['loss'][seq_name] = loss_batches.mean()
+                    # seqs_metrics['J'][seq_name] = J
+                    # seqs_metrics['F'][seq_name] = F
+                    # seqs_metrics['train_loss'][seq_name].append(train_loss_hist[-1])
+                    seqs_metrics['train_loss'][seq_name].append(train_loss_hist[0])
+                    if _config['parent_model']['architecture'] == 'MaskRCNN':
+                        seqs_metrics['train_losses'][seq_name].append(train_losses_hist[0])
+
+                    for name, param in meta_optim.named_parameters():
+
+                        if parent_states['model_init_meta_optim_split']['splits']:
+                            assert len(parent_states['model_init_meta_optim_split']['splits']) == 1
+                            if seq_name in parent_states['model_init_meta_optim_split']['splits'][0]:
+                                if 'model_init' in name:
+                                    shared_meta_optim_grads[name] += param.grad.cpu()
+                            else:
+                                if 'model_init' not in name:
+                                    shared_meta_optim_grads[name] += param.grad.cpu()
                         else:
-                            if 'model_init' not in name:
-                                shared_meta_optim_grads[name] += param.grad.cpu()
-                    else:
-                        shared_meta_optim_grads[name] += param.grad.cpu()
+                            shared_meta_optim_grads[name] += param.grad.cpu()
 
-            # print('META ITER ', (timeit.default_timer() - start_meta_iter) / 60)
-            # exit()
+                # print('META ITER ', (timeit.default_timer() - start_meta_iter) / 60)
+                # exit()
 
-        if vis_debug:
-            exit()
+            if vis_debug:
+                exit()
 
-        shared_dict['seqs_metrics'] = seqs_metrics
-        shared_dict['vis_data_seqs'] = vis_data_seqs
-        shared_dict['global_rng_state'] = global_rng_state
-        shared_dict['sub_iter_done'] = True
+            shared_dict['seqs_metrics'] = seqs_metrics
+            shared_dict['vis_data_seqs'] = vis_data_seqs
+            shared_dict['global_rng_state'] = global_rng_state
+            shared_dict['sub_iter_done'] = True
+
+        # if i % num_sub_meta_batches_for_epoch == 0:
+        #     shared_dict['meta_epoch_done'] = True
 
 
 def evaluate(rank: int, dataset_key: str, flip_label: bool,
@@ -651,6 +706,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
     data_cfg = copy.deepcopy(_config['data_cfg'])
     # data_cfg['num_workers'] = 4
+    # data_cfg['multi_object'] = 'all'
 
     while True:
         meta_optim_state_dict = copy.deepcopy(shared_meta_optim_state_dict)
@@ -685,10 +741,6 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
         def early_stopping_func(loss_hist):
             return early_stopping(loss_hist, **_config['train_early_stopping_cfg'])
-
-        # if _config['eval_online_adapt_step'] is not None:
-        #     assert _config['meta_optim_cfg']['matching_input'], (
-        #         'Online adaptation must have meta_optim_cfg.matching_input=True. ')
 
         # save predictions in human readable format and with boxes
         if save_dir is not None:
@@ -744,6 +796,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             # fine-tuning returns no reasonable results
 
             # if train_loader.dataset.num_objects == 1:
+
             if train_loader.dataset.num_object_groups == 1:
                 test_loader.dataset.multi_object_id = 0
 
@@ -762,9 +815,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             masks[seq_name] = []
             # boxes[seq_name] = []
 
-            if _config['meta_optim_cfg']['learn_model_init_last_layer_template']:
+            # if _config['meta_optim_cfg']['learn_model_init_last_layer_template']:
                 # model.num_classes = train_loader.dataset.num_objects + 1
-                model.roi_heads.detections_per_img = 100
+                # model.roi_heads.detections_per_img = 100
 
             # print('num_object_groups', train_loader.dataset.num_object_groups)
 
@@ -782,12 +835,12 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 # print('num_objects_in_group', num_objects_in_group)
 
                 # evaluation with online adaptation
-                if _config['eval_online_adapt_step'] is None:
+                if _config['eval_online_adapt']['step'] is None:
                     # one iteration with original meta frame and evaluation of entire sequence
                     eval_online_adapt_step = len(test_loader.dataset)
                     meta_frame_iter = [meta_loader.dataset.frame_id]
                 else:
-                    eval_online_adapt_step = _config['eval_online_adapt_step']
+                    eval_online_adapt_step = _config['eval_online_adapt']['step']
                     meta_frame_iter = range(eval_online_adapt_step,
                                             len(test_loader.dataset),
                                             eval_online_adapt_step)
@@ -819,19 +872,21 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         # eval_frame_range_min = (meta_frame_id - eval_online_adapt_step // 2) + 1
                         eval_frame_range_min = eval_frame_range_max
 
-                        propagate_frame_gt = masks[seq_name][eval_frame_range_min - 1].ge(0.5).float()
+                        propagate_frame_gt = masks[seq_name][eval_frame_range_min - 1][obj_id: obj_id + 1].ge(0.5).float()
                         train_loader.dataset.frame_id = eval_frame_range_min - 1
 
                     eval_frame_range_max += eval_online_adapt_step
                     if eval_frame_range_max + (eval_online_adapt_step // 2 + 1) > len(test_loader.dataset):
                         eval_frame_range_max = len(test_loader.dataset)
 
-                    num_frames += eval_frame_range_max - eval_frame_range_min
+                    if obj_id == 0:
+                        num_frames += eval_frame_range_max - eval_frame_range_min
 
                     # load_state_dict(model, seq_name, parent_states[dataset_key])
-                    meta_optim.load_state_dict(meta_optim_state_dict)
-                    meta_optim.reset()
-                    meta_optim.eval()
+                    if i == 0 or _config['eval_online_adapt']['reset_model']:
+                        meta_optim.load_state_dict(meta_optim_state_dict)
+                        meta_optim.reset()
+                        meta_optim.eval()
 
                     if _config['meta_optim_cfg']['matching_input']:
                         meta_loader_frame_id = meta_loader.dataset.frame_id
@@ -849,7 +904,12 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     #     loss_func=loss_func)
 
                     train_loss_hist = []
-                    for epoch in epoch_iter(_config['num_epochs']['eval']):
+                    if i == 0:
+                        num_epochs = _config['num_epochs']['eval']
+                    else:
+                        num_epochs = _config['eval_online_adapt']['num_epochs']
+
+                    for epoch in epoch_iter(num_epochs):
                         set_random_seeds(_config['seed'] + epoch)
 
                         for _, sample_batched in enumerate(train_loader):
@@ -858,10 +918,14 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                             if not i == 0:
                                 # gts = propagate_frame_gt.unsqueeze(dim=0)
 
-                                gts = torch.cat([propagate_frame_gt.unsqueeze(dim=0),
-                                                 train_frame_gt.unsqueeze(dim=0)])
-                                inputs = torch.cat([inputs,
-                                                    train_frame_input.unsqueeze(dim=0)])
+                                if propagate_frame_gt.sum().item() == 0:
+                                    gts = train_frame_gt.unsqueeze(dim=0)
+                                    inputs = train_frame_input.unsqueeze(dim=0)
+                                else:
+                                    gts = torch.cat([propagate_frame_gt.unsqueeze(dim=0),
+                                                    train_frame_gt.unsqueeze(dim=0)])
+                                    inputs = torch.cat([inputs,
+                                                        train_frame_input.unsqueeze(dim=0)])
 
                             inputs, gts = inputs.to(device), gts.to(device)
 
@@ -1042,11 +1106,175 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         shared_dict['meta_iter'] = meta_iter
 
 
+class MetaTaskset(Dataset):
+    """Face Landmarks dataset."""
+
+    def __init__(self, datasets: dict, random_frame_transform_per_task: bool,
+                 random_flip_label: bool, random_no_label: bool,
+                 data_cfg: dict, single_obj_seq_mode: str,
+                 random_box_coord_perm: bool, random_frame_epsilon: int):
+        """
+        """
+        self.train_loader_tmp, self.test_loader_tmp, self.meta_loader_tmp = data_loaders(
+        datasets['train'], **data_cfg)
+        self.test_dataset = self.test_loader_tmp.dataset
+        self.seqs_names = self.test_dataset.seqs_names
+        self.random_frame_transform_per_task = random_frame_transform_per_task
+        self.random_flip_label = random_flip_label
+        self.random_no_label = random_no_label
+        self.data_cfg = data_cfg
+        self.single_obj_seq_mode = single_obj_seq_mode
+        self.random_box_coord_perm = random_box_coord_perm
+        self.random_frame_epsilon = random_frame_epsilon
+
+        # if single_obj_seq_mode == 'AUGMENT':
+
+        self.object_groups = []
+
+        self.single_obj_seqs = []
+        for seq_name in self.seqs_names:
+            self.test_dataset.set_seq(seq_name)
+
+            if self.test_dataset.num_objects == 1:
+                if self.single_obj_seq_mode == 'IGNORE':
+                    continue
+
+                self.single_obj_seqs.append(seq_name)
+
+            for i in range(self.test_dataset.num_object_groups):
+                self.object_groups.append((seq_name, i))
+
+            # assert not len(single_obj_seqs) % 2
+
+    def __len__(self):
+        return len(self.object_groups)
+
+    def __getitem__(self, idx):
+        seq_name, obj_id = self.object_groups[idx]
+
+        self.test_dataset.set_seq(seq_name)
+
+        num_objects = self.test_dataset.num_objects
+
+        train_loader = copy.deepcopy(self.train_loader_tmp)
+        meta_loader = copy.deepcopy(self.meta_loader_tmp)
+
+        train_loader.dataset.set_seq(seq_name)
+        meta_loader.dataset.set_seq(seq_name)
+
+        train_loader.dataset.multi_object_id = obj_id
+        meta_loader.dataset.multi_object_id = obj_id
+
+        if num_objects == 1 and self.single_obj_seq_mode == 'AUGMENT':
+            assert self.data_cfg['batch_sizes']['meta'] == 1
+
+            single_obj_seqs_ids = list(range(len(self.single_obj_seqs)))
+            random_other_single_obj_seq = self.single_obj_seqs[random.choice(single_obj_seqs_ids)]
+
+            train_loader_dataset = copy.deepcopy(self.train_loader_tmp).dataset
+            meta_loader_dataset = copy.deepcopy(self.meta_loader_tmp).dataset
+
+            train_loader_dataset.set_seq(random_other_single_obj_seq)
+            meta_loader_dataset.set_seq(random_other_single_obj_seq)
+
+            train_loader_dataset.multi_object_id = 0
+            meta_loader_dataset.multi_object_id = 0
+
+            train_loader.dataset.augment_with_single_obj_seq_dataset = train_loader_dataset
+            meta_loader.dataset.augment_with_single_obj_seq_dataset = meta_loader_dataset
+
+            augment_with_single_obj_seq_keep_orig = no_label = bool(random.getrandbits(1))
+            train_loader.dataset.augment_with_single_obj_seq_keep_orig = augment_with_single_obj_seq_keep_orig
+            meta_loader.dataset.augment_with_single_obj_seq_keep_orig = augment_with_single_obj_seq_keep_orig
+
+        train_loader.dataset.set_random_frame_id_with_label()
+        # train_loader.dataset.set_gt_frame_id()
+
+        if self.random_frame_epsilon is not None:
+            meta_loader.dataset.random_frame_id_epsilon = self.random_frame_epsilon
+            meta_loader.dataset.random_frame_id_anchor_frame = train_loader.dataset.frame_id
+
+            if num_objects == 1 and self.single_obj_seq_mode == 'AUGMENT' and not train_loader.dataset.augment_with_single_obj_seq_keep_orig:
+                meta_loader.dataset.random_frame_id_epsilon = None
+                meta_loader.dataset.random_frame_id_anchor_frame = None
+
+                meta_loader.dataset.augment_with_single_obj_seq_dataset.random_frame_id_epsilon = random_frame_epsilon
+                meta_loader.dataset.augment_with_single_obj_seq_dataset.random_frame_id_anchor_frame = train_loader.dataset.augment_with_single_obj_seq_dataset.frame_id
+
+        meta_frame_ids = [meta_loader.dataset.get_random_frame_id_with_label()
+                            for _ in range(self.data_cfg['batch_sizes']['meta'])]
+
+        meta_loader.sampler.indices = meta_frame_ids
+
+        if self.random_frame_transform_per_task:
+            scales = (.5, 1.0)
+            color_transform = custom_transforms.ColorJitter(brightness=.2,
+                                                            contrast=.2,
+                                                            hue=.1,
+                                                            saturation=.2,
+                                                            deterministic=True)
+            flip_transform = custom_transforms.RandomHorizontalFlip(deterministic=True)
+            scale_rotate_transform = custom_transforms.RandomScaleNRotate(
+                rots=(-30, 30), scales=scales, deterministic=True)
+
+            random_transform = [color_transform,
+                                flip_transform,
+                                scale_rotate_transform,
+                                # custom_transforms.RandomHorizontalFlip(deterministic=True),
+                                # custom_transforms.RandomScaleNRotate(rots=(-30, 30),
+                                #                                      scales=scales,
+                                #                                      deterministic=True),
+                                custom_transforms.ToTensor(),]
+
+            if self.data_cfg['multi_object'] == 'all':
+                random_transform.pop(2)
+
+            train_loader.dataset.transform = transforms.Compose(random_transform)
+
+            random_transform = [color_transform,
+                                flip_transform,
+                                scale_rotate_transform,
+                                # custom_transforms.RandomHorizontalFlip(deterministic=True),
+                                # custom_transforms.RandomScaleNRotate(rots=(-30, 30),
+                                #                                      scales=scales,
+                                #                                      deterministic=True),
+                                custom_transforms.ToTensor(),]
+
+            if self.data_cfg['multi_object'] == 'all':
+                random_transform.pop(2)
+
+            meta_loader.dataset.transform = transforms.Compose(random_transform)
+
+            if self.data_cfg['random_train_transform']:
+                raise NotImplementedError
+                # train_loader.dataset.transform = random_transform
+
+        if self.random_flip_label:
+            flip_label = bool(random.getrandbits(1))
+            train_loader.dataset.flip_label = flip_label
+            meta_loader.dataset.flip_label = flip_label
+
+        if self.random_no_label:
+            no_label = bool(random.getrandbits(1))
+            train_loader.dataset.no_label = no_label
+            meta_loader.dataset.no_label = no_label
+
+        box_coord_perm = None
+        if self.random_box_coord_perm:
+            box_coord_perm = torch.randperm(4)
+
+        return {'seq_name': seq_name,
+                'box_coord_perm': box_coord_perm,
+                'train_loader': train_loader,
+                'meta_loader': meta_loader}
+
+
 @ex.capture
 def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: bool,
                               random_flip_label: bool, random_no_label: bool,
                               data_cfg: dict, single_obj_seq_mode: str,
-                              random_box_coord_perm: bool, random_frame_epsilon: int):
+                              random_box_coord_perm: bool, random_frame_epsilon: int,
+                              sub_meta_batch_size=None):
     train_loader_tmp, test_loader_tmp, meta_loader_tmp = data_loaders(
         datasets['train'], **data_cfg)
     test_dataset = test_loader_tmp.dataset
@@ -1161,6 +1389,10 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
                                     #                                      scales=scales,
                                     #                                      deterministic=True),
                                     custom_transforms.ToTensor(),]
+
+                if data_cfg['multi_object'] == 'all':
+                    random_transform.pop(2)
+
                 train_loader.dataset.transform = transforms.Compose(random_transform)
 
                 random_transform = [color_transform,
@@ -1171,6 +1403,10 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
                                     #                                      scales=scales,
                                     #                                      deterministic=True),
                                     custom_transforms.ToTensor(),]
+
+                if data_cfg['multi_object'] == 'all':
+                    random_transform.pop(2)
+
                 meta_loader.dataset.transform = transforms.Compose(random_transform)
 
                 if data_cfg['random_train_transform']:
@@ -1195,6 +1431,10 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
                                'box_coord_perm': box_coord_perm,
                                'train_loader': train_loader,
                                'meta_loader': meta_loader})
+
+            if sub_meta_batch_size is not None and sub_meta_batch_size == len(meta_tasks):
+                yield meta_tasks
+                meta_tasks = []
 
     # print([(t['seq_name'],
     #         t['train_loader'].dataset.seq_key,
@@ -1278,10 +1518,10 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         #     meta_optim_state_dict['param_group_lstm_hx_init'][:, layer, :] = previous_meta_optim_state_dict['param_group_lstm_hx_init'][:, layer, :]
         #     meta_optim_state_dict['param_group_lstm_cx_init'][:, layer, :] = previous_meta_optim_state_dict['param_group_lstm_cx_init'][:, layer, :]
 
-        # meta_optim_state_dict = {k: previous_meta_optim_state_dict[k]
-        #                          if k in previous_meta_optim_state_dict and k not in ['log_init_lr', 'param_group_lstm_hx_init', 'param_group_lstm_cx_init']
-        #                          else v
-        #                          for k, v in meta_optim_state_dict.items()}
+        # previous_meta_optim_state_dict = {k: previous_meta_optim_state_dict[k]
+        #                                   if k in previous_meta_optim_state_dict # and k not in ['log_init_lr', 'param_group_lstm_hx_init', 'param_group_lstm_cx_init']
+        #                                   else v
+        #                                   for k, v in meta_optim_state_dict.items()}
 
         # meta_optim_state_dict['log_init_lr'] = meta_optim_state_dict['log_init_lr'].expand_as(meta_optim.log_init_lr)
 
@@ -1292,6 +1532,8 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         # for k in rpn_keys: del previous_meta_optim_state_dict[k]
 
         # del previous_meta_optim_state_dict['model_init_backbone-body-conv1-weight']
+
+        # previous_meta_optim_state_dict['log_init_lr'].data = meta_optim.log_init_lr.data
 
         meta_optim.load_state_dict(previous_meta_optim_state_dict)
 
@@ -1344,11 +1586,11 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
     if num_meta_processes:
         num_meta_processes *= num_meta_processes_per_gpu
 
-        meta_tasks = generate_meta_train_tasks()  # pylint: disable=E1120
-        num_meta_tasks = len(meta_tasks)
-        if meta_batch_size == 'FULL_BATCH' or meta_batch_size > num_meta_tasks:
-            meta_batch_size = num_meta_tasks
-            _log.warning(f"Meta batch size is full batch: meta_batch_size={meta_batch_size}.")
+        # meta_tasks = generate_meta_train_tasks()  # pylint: disable=E1120
+        # num_meta_tasks = len(meta_tasks)
+        # if meta_batch_size == 'FULL_BATCH' or meta_batch_size > num_meta_tasks:
+        #     meta_batch_size = num_meta_tasks
+        #     _log.warning(f"Meta batch size is full batch: meta_batch_size={meta_batch_size}.")
         # if data_cfg['multi_object']:
         #     assert not meta_batch_size % 2, (f'meta_batch_size {meta_batch_size} is not a multiple of 2 for multi object training.')
         assert not meta_batch_size % num_meta_processes, ('meta_batch_size is not a multiple of num_meta_processes.')
@@ -1387,15 +1629,17 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         p['process'].start()
 
     if num_meta_processes:
-        meta_mini_batches = list(grouper(meta_batch_size, meta_tasks))
-        meta_mini_batch = meta_mini_batches.pop(0)
+        # meta_mini_batches = list(grouper(meta_batch_size, meta_tasks))
+        # meta_mini_batch = meta_mini_batches.pop(0)
 
-        sub_meta_batch_size = meta_batch_size // num_meta_processes
-        sub_meta_mini_batches = grouper(sub_meta_batch_size, meta_mini_batch)
+        # sub_meta_batch_size = meta_batch_size // num_meta_processes
+        # sub_meta_mini_batches = grouper(sub_meta_batch_size, meta_mini_batch)
 
-        for rank, (p, sub_meta_mini_batch) in enumerate(zip(meta_processes, sub_meta_mini_batches)):
+        # for rank, (p, sub_meta_mini_batch) in enumerate(zip(meta_processes, sub_meta_mini_batches)):
+        for rank, p in enumerate(meta_processes):
             p['shared_dict'] = process_manager.dict()
-            p['shared_dict']['sub_iter_done'] = None
+            p['shared_dict']['sub_iter_done'] = False
+            p['shared_dict']['meta_epoch_done'] = False
 
             # print('main process',
             #       sub_meta_mini_batch[0]['seq_name'],
@@ -1403,12 +1647,12 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
             #       sub_meta_mini_batch[0]['meta_frame_id'],
             #       sub_meta_mini_batch[0]['train_transform'].transforms[1].rot)
 
-            p['shared_dict']['sub_meta_mini_batch'] = sub_meta_mini_batch
+            # p['shared_dict']['sub_meta_mini_batch'] = sub_meta_mini_batch
 
             process_args = [rank, model.state_dict(), meta_optim.state_dict(),
                             global_rng_state, _config, datasets['train'],
                             p['shared_dict'], shared_variables, shared_meta_optim_grads,
-                            save_dir]
+                            save_dir, num_meta_processes]
 
             p['process'] = mp.Process(target=meta_run, args=process_args)
             p['process'].start()
@@ -1540,7 +1784,8 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                     meta_init_lr, shared_variables['meta_iter'])
 
             # EPOCH
-            if not meta_mini_batches:
+            if all([p['shared_dict']['meta_epoch_done'] for p in meta_processes]):
+            # if not meta_mini_batches:
                 shared_variables['meta_epoch'] += 1
 
                 # VIS LOSS
@@ -1567,8 +1812,12 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                 meta_epoch_metrics = {'train_loss': {}, 'train_losses': {}, 'meta_loss': {},
                                       'meta_losses': {}, 'loss': {}, 'J': {}, 'F': {}}
 
-                meta_tasks = generate_meta_train_tasks()  # pylint: disable=E1120
-                meta_mini_batches = list(grouper(meta_batch_size, meta_tasks))
+                # meta_tasks = generate_meta_train_tasks()  # pylint: disable=E1120
+                # meta_mini_batches = list(grouper(meta_batch_size, meta_tasks))
+
+                for p in meta_processes:
+                    # p['shared_dict']['sub_meta_mini_batch'] = sub_meta_mini_batch
+                    p['shared_dict']['meta_epoch_done'] = False
 
             #
             # STEP
@@ -1593,11 +1842,13 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
             # global_rng_state = process['shared_dict']['global_rng_state']
             # reset iter_done and continue with next iter in meta_run subprocess
-            meta_mini_batch = meta_mini_batches.pop(0)
-            sub_meta_mini_batches = grouper(sub_meta_batch_size, meta_mini_batch)
 
-            for p, sub_meta_mini_batch in zip(meta_processes, sub_meta_mini_batches):
-                p['shared_dict']['sub_meta_mini_batch'] = sub_meta_mini_batch
+            # meta_mini_batch = meta_mini_batches.pop(0)
+            # sub_meta_mini_batches = grouper(sub_meta_batch_size, meta_mini_batch)
+
+            # for p, sub_meta_mini_batch in zip(meta_processes, sub_meta_mini_batches):
+            for p in meta_processes:
+                # p['shared_dict']['sub_meta_mini_batch'] = sub_meta_mini_batch
                 p['shared_dict']['sub_iter_done'] = False
 
             # for p in meta_processes:

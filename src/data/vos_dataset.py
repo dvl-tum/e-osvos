@@ -44,8 +44,7 @@ class VOSDataset(Dataset):
         self._num_objects = None
         self._preload_buffer = {'imgs': {}, 'labels': {}}
 
-        # self.preloaded_imgs = {}
-        # self.preloaded_labels = {}
+        self.preloaded_buffer = {}
 
     @property
     def num_seqs(self):
@@ -105,7 +104,7 @@ class VOSDataset(Dataset):
     def get_random_frame_id(self):
         if self.random_frame_id_epsilon is not None:
             return torch.randint(max(0, self.random_frame_id_anchor_frame - self.random_frame_id_epsilon),
-                                 min(self.random_frame_id_anchor_frame + self.random_frame_id_epsilon, len(self.imgs)),
+                                 min(self.random_frame_id_anchor_frame + self.random_frame_id_epsilon + 1, len(self.imgs)),
                                  (1,)).item()
         else:
             return torch.randint(len(self.imgs), (1,)).item()
@@ -177,6 +176,9 @@ class VOSDataset(Dataset):
         self.seq_key = seq_name
         self._num_objects = None
 
+        if seq_name not in self.preloaded_buffer:
+            self.preloaded_buffer[seq_name] = {}
+
     def set_gt_frame_id(self):
         self.frame_id = 0
 
@@ -221,128 +223,156 @@ class VOSDataset(Dataset):
         Make the image-ground-truth pair
         """
 
-        img_path = self.imgs[idx]
-        img = cv2.imread(img_path, cv2.IMREAD_COLOR)[..., ::-1]
-        # if img_path in self._preload_buffer['imgs']:
-        #     img = self._preload_buffer['imgs'][img_path]
-        # else:
-        #     img = cv2.imread(img_path, cv2.IMREAD_COLOR)[..., ::-1]
-        #     self._preload_buffer['imgs'][img_path] = img
-
-        # load first frame GT as placeholder for test mode
-        if self.test_mode:
-            if self._label_id is not None:
-                label = Image.open(self.labels[self._label_id])
-            else:
-                label = Image.open(self.labels[0])
+        if self.seq_key in self.preloaded_buffer and idx in self.preloaded_buffer[self.seq_key] and self.multi_object_id in self.preloaded_buffer[self.seq_key][idx]:
+            img, label = self.preloaded_buffer[self.seq_key][idx][self.multi_object_id]
         else:
-            label_path = self.labels[idx]
-            label = Image.open(label_path)
-            # if label_path in self._preload_buffer['labels']:
-            #     label = self._preload_buffer['labels'][label_path]
+            img_path = self.imgs[idx]
+            img = cv2.imread(img_path, cv2.IMREAD_COLOR)[..., ::-1]
+            # if img_path in self._preload_buffer['imgs']:
+            #     img = self._preload_buffer['imgs'][img_path]
             # else:
-            #     label = Image.open(label_path)
-            #     self._preload_buffer['labels'][label_path] = label
+            #     img = cv2.imread(img_path, cv2.IMREAD_COLOR)[..., ::-1]
+            #     self._preload_buffer['imgs'][img_path] = img
 
-        label = np.atleast_3d(label)[..., 0]
-
-        if self.crop_size is not None:
-            crop_h, crop_w = self.crop_size
-            img_h, img_w = label.shape
-
-            if crop_h != img_h or crop_w != img_w:
-                pad_h = max(crop_h - img_h, 0)
-                pad_w = max(crop_w - img_w, 0)
-                if pad_h > 0 or pad_w > 0:
-                    img_pad = cv2.copyMakeBorder(img, 0, pad_h, 0,
-                                                pad_w, cv2.BORDER_CONSTANT,
-                                                value=(0.0, 0.0, 0.0))
-                    label_pad = cv2.copyMakeBorder(label, 0, pad_h, 0,
-                                                pad_w, cv2.BORDER_CONSTANT,
-                                                value=(0,))
+            # load first frame GT as placeholder for test mode
+            if self.test_mode:
+                if self._label_id is not None:
+                    label = Image.open(self.labels[self._label_id])
                 else:
-                    img_pad, label_pad = img, label
+                    label = Image.open(self.labels[0])
+            else:
+                label_path = self.labels[idx]
+                label = Image.open(label_path)
+                # if label_path in self._preload_buffer['labels']:
+                #     label = self._preload_buffer['labels'][label_path]
+                # else:
+                #     label = Image.open(label_path)
+                #     self._preload_buffer['labels'][label_path] = label
 
-                img_h, img_w = label_pad.shape
-                h_off = random.randint(0, img_h - crop_h)
-                w_off = random.randint(0, img_w - crop_w)
+            label = np.atleast_3d(label)[..., 0]
 
-                img = img_pad[h_off: h_off + crop_h, w_off: w_off + crop_w]
-                label = label_pad[h_off: h_off + crop_h, w_off: w_off + crop_w]
+            if self.crop_size is not None:
+                crop_h, crop_w = self.crop_size
+                img_h, img_w = label.shape
 
-        img = np.array(img, dtype=np.float32)
-        if self.normalize:
-            img = np.subtract(img, np.array(self.mean_val, dtype=np.float32))
-        img = img / 255.0
+                if (label != 0).any():
+                    pos = np.where(label != 0)
+                    xmin = np.min(pos[1])
+                    xmax = np.max(pos[1]) + 1
+                    ymin = np.min(pos[0])
+                    ymax = np.max(pos[0]) + 1
 
-        label = np.array(label, dtype=np.float32)
-        # print(self.labels[idx], np.unique(label, return_counts=True))
-        label = label
+                    crop_w = max(crop_w, xmax - xmin)
+                    crop_h = max(crop_h, ymax - ymin)
 
-        assert len(
-            img.shape) == 3, f"Image broken ({img.shape}): {self.imgs[idx]}"
-        assert len(
-            label.shape) == 2, f"Label broken ({label.shape}): {self.labels[idx]}"
-
-        # multi object
-        if self.multi_object and self.num_objects > 1:
-            # multi_object_id = max(self.num_objects - 1, self.multi_object_id)
-            if self.multi_object not in ['all', 'single_id']:
-                raise NotImplementedError
-
-            unique_labels = [l for l in np.unique(label)
-                            #  if l != 0.0 and l != 1.0]
-                             if l != 0.0]
-
-            if self.multi_object == 'all':
-                for i in range(self.num_objects):
-                    if i not in self.object_ids_in_group:
-
-                        if self._multi_object_id_to_label:
-                            group_mask = label == self._multi_object_id_to_label[i]
-                        else:
-                            group_mask = label == i + 1
-
-                        label[group_mask] = 0.0
-
-                if self._multi_object_id_to_label:
-                    group_masks = [label == self._multi_object_id_to_label[i]
-                                   for i in self.object_ids_in_group]
-                else:
-                    group_masks = [label == i + 1 for i in self.object_ids_in_group]
-
-                for i, m in enumerate(group_masks):
-                    label[m] = i + 1
-
-            if unique_labels:
-                # single object from stack
-                # if only one object on the frame this object is selected
-                if self.multi_object == 'single_id':
-                    # all objects stacked in third axis
-                    label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)
-                                            for l in unique_labels], axis=2)
-
-                    # if a frame does not include all objects and in particular not
-                    # the object with self.multi_object_id
-                    assert self.multi_object_id < self.num_objects, f"{self.seq_key} {self.multi_object_id} {self.num_objects}"
-                    # if self.num_objects > len(unique_labels) and self.multi_object_id > len(unique_labels):
-                    #     label = np.zeros((label.shape[0], label.shape[1]), dtype=np.float32)
-
-                    multi_object_id = self.multi_object_id + 1.0
-                    if self._multi_object_id_to_label:
-                        multi_object_id = self._multi_object_id_to_label[self.multi_object_id]
-
-                    if multi_object_id in unique_labels:
-                        label = label[:, :, unique_labels.index(multi_object_id)]
+                if crop_h != img_h or crop_w != img_w:
+                    pad_h = max(crop_h - img_h, 0)
+                    pad_w = max(crop_w - img_w, 0)
+                    if pad_h > 0 or pad_w > 0:
+                        img_pad = cv2.copyMakeBorder(img, 0, pad_h, 0,
+                                                    pad_w, cv2.BORDER_CONSTANT,
+                                                    value=(0.0, 0.0, 0.0))
+                        label_pad = cv2.copyMakeBorder(label, 0, pad_h, 0,
+                                                    pad_w, cv2.BORDER_CONSTANT,
+                                                    value=(0,))
                     else:
-                        label = np.zeros(
-                            (label.shape[0], label.shape[1]), dtype=np.float32)
-        else:
-            label = np.where(label != 0.0, 1.0, 0.0).astype(np.float32)
-        # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)
+                        img_pad, label_pad = img, label
 
-        # self.preloaded_imgs[self.imgs[idx]] = img
-        # self.preloaded_labels[self.labels[idx]] = label
+                    img_h, img_w = label_pad.shape
+
+                    num_unique_labels = len(np.unique(label))
+                    crop_with_all_labels = False
+                    while not crop_with_all_labels:
+                        h_off = random.randint(0, img_h - crop_h)
+                        w_off = random.randint(0, img_w - crop_w)
+
+                        img = img_pad[h_off: h_off + crop_h, w_off: w_off + crop_w]
+                        label = label_pad[h_off: h_off + crop_h, w_off: w_off + crop_w]
+
+                        crop_with_all_labels = len(
+                            np.unique(label)) == num_unique_labels
+
+            img = np.array(img, dtype=np.float32)
+            if self.normalize:
+                img = np.subtract(img, np.array(self.mean_val, dtype=np.float32))
+            img = img / 255.0
+
+            label = np.array(label, dtype=np.float32)
+            # print(self.labels[idx], np.unique(label, return_counts=True))
+            label = label
+
+            assert len(
+                img.shape) == 3, f"Image broken ({img.shape}): {self.imgs[idx]}"
+            assert len(
+                label.shape) == 2, f"Label broken ({label.shape}): {self.labels[idx]}"
+
+            # multi object
+            if self.multi_object and self.num_objects > 1:
+                # multi_object_id = max(self.num_objects - 1, self.multi_object_id)
+                if self.multi_object not in ['all', 'single_id']:
+                    raise NotImplementedError
+
+                unique_labels = [l for l in np.unique(label)
+                                #  if l != 0.0 and l != 1.0]
+                                if l != 0.0]
+
+                if self.multi_object == 'all':
+                    for i in range(self.num_objects):
+                        if i not in self.object_ids_in_group:
+
+                            if self._multi_object_id_to_label:
+                                group_mask = label == self._multi_object_id_to_label[i]
+                            else:
+                                group_mask = label == i + 1
+
+                            label[group_mask] = 0.0
+
+                    if self._multi_object_id_to_label:
+                        group_masks = [label == self._multi_object_id_to_label[i]
+                                    for i in self.object_ids_in_group]
+                    else:
+                        group_masks = [label == i + 1 for i in self.object_ids_in_group]
+
+                    for i, m in enumerate(group_masks):
+                        label[m] = i + 1
+
+                if unique_labels:
+                    # single object from stack
+                    # if only one object on the frame this object is selected
+                    if self.multi_object == 'single_id':
+                        # all objects stacked in third axis
+                        label = np.concatenate([np.expand_dims((label == l).astype(np.float32), axis=2)
+                                                for l in unique_labels], axis=2)
+
+                        # if a frame does not include all objects and in particular not
+                        # the object with self.multi_object_id
+                        assert self.multi_object_id < self.num_objects, f"{self.seq_key} {self.multi_object_id} {self.num_objects}"
+                        # if self.num_objects > len(unique_labels) and self.multi_object_id > len(unique_labels):
+                        #     label = np.zeros((label.shape[0], label.shape[1]), dtype=np.float32)
+
+                        multi_object_id = self.multi_object_id + 1.0
+                        if self._multi_object_id_to_label:
+                            multi_object_id = self._multi_object_id_to_label[self.multi_object_id]
+
+                        if multi_object_id in unique_labels:
+                            label = label[:, :, unique_labels.index(multi_object_id)]
+                        else:
+                            label = np.zeros(
+                                (label.shape[0], label.shape[1]), dtype=np.float32)
+            else:
+                label = np.where(label != 0.0, 1.0, 0.0).astype(np.float32)
+            # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)
+
+            # self.preloaded_imgs[self.imgs[idx]] = img
+            # self.preloaded_labels[self.labels[idx]] = label
+
+            # self.preloaded_buffer[self.seq_key] = {}
+
+            # if idx not in self.preloaded_buffer[self.seq_key]:
+            #     self.preloaded_buffer[self.seq_key][idx] = {}
+
+            # self.preloaded_buffer[self.seq_key][idx][self.multi_object_id] = (
+            #     img, label)
 
         if self.augment_with_single_obj_seq_dataset is not None:
             assert self.num_objects == 1, f'{self.seq_key} is not a single object sequence.'

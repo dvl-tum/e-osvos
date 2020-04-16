@@ -157,11 +157,15 @@ class YouTube(VOSDataset):
 
     @property
     def num_object_groups(self):
-        return len(torch.unique(torch.tensor([f for f, l in self.get_gt_object_frames()])))
+        if self.multi_object == 'all':
+            return len(torch.unique(torch.tensor([f for f, l in self.get_gt_object_frames()])))
+        return self.num_objects
 
     @property
     def num_objects_in_group(self):
-        return torch.unique(torch.tensor([f for f, l in self.get_gt_object_frames()]), return_counts=True)[1][self.multi_object_id].item()
+        if self.multi_object == 'all':
+            return torch.unique(torch.tensor([f for f, l in self.get_gt_object_frames()]), return_counts=True)[1][self.multi_object_id].item()
+        return 1
 
     @property
     def object_ids_in_group(self):

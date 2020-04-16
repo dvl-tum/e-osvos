@@ -2,12 +2,15 @@ datasets:
     train:
         name: DAVIS-2017
         split: train_seqs
+        eval: True
     val:
         name: DAVIS-2017
         split: val_seqs
+        eval: True
     test:
         name: DAVIS-2017
-        split: null
+        split: test-dev_seqs
+        eval: False
 data_cfg:
     multi_object: single_id
     # crop_sizes:

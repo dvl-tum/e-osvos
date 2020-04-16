@@ -244,7 +244,8 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
     if random_train_transform:
         train_transforms.extend([custom_transforms.RandomHorizontalFlip(),
                                  custom_transforms.RandomScaleNRotate(rots=(-30, 30),
-                                                                      scales=(.75, 1.25))])
+                                                                      scales=(.75, 1.25))
+                                ])
     train_transforms.append(custom_transforms.ToTensor())
     composed_transforms = transforms.Compose(train_transforms)
 
