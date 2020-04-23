@@ -425,6 +425,11 @@ def meta_run(rank: int, init_model_state_dict: dict,
         #                                        sub_meta_batch_size)
 
         for meta_mini_batch in meta_task_loader:
+
+            # print('PERFECT BATCH')
+
+            # continue
+
             # meta_mini_batch = meta_tasks # list(grouper(sub_meta_batch_size, meta_tasks))
 
             # num_sub_meta_batches_for_epoch = len(meta_tasks) // (sub_meta_batch_size * num_meta_processes)
@@ -558,42 +563,8 @@ def meta_run(rank: int, init_model_state_dict: dict,
                         meta_optim.seq_id = meta_loader.dataset.get_seq_id()
                     meta_optim.step(train_loss)
 
-                    # bptt_iter_loss = 0.0
-                    # for meta_batch in meta_loader:
-                    #     meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
-                    #     meta_inputs, meta_gts = meta_inputs.to(
-                    #         meta_device), meta_gts.to(meta_device)
-
-                    #     if _config['parent_model']['architecture'] == 'MaskRCNN':
-                    #         meta_loss, meta_losses = model(
-                    #             meta_inputs, meta_gts, sample['box_coord_perm'],
-                    #             meta_loader.dataset.flip_label)
-                    #     else:
-                    #         meta_outputs = model(meta_inputs)
-                    #         meta_loss = compute_loss(_config['loss_func'],
-                    #                                  meta_outputs[-1],
-                    #                                  meta_gts)
-
-                    #     # print(f"EPOCH {epoch} - META INPUTS SUM {meta_inputs.sum()} - META INPUTS SUM {meta_gts.sum()}")
-                    #     # print(f"EPOCH {epoch} - META LOSS {meta_loss.item()}")
-
-                    #     bptt_iter_loss += meta_loss
-
-                    # bptt_loss += bptt_iter_loss - prev_bptt_iter_loss
-                    # prev_bptt_iter_loss = bptt_iter_loss.detach()
-
-                    # visualization
-                    vis_data = [train_loss.item(),
-                                bptt_loss.item(),
-                                meta_optim.state_lr.cpu().detach().numpy()]
-                    vis_data_seqs_sample.append(vis_data)
-
-                    stop_train = stop_train or early_stopping(
-                        train_loss_hist, **_config['train_early_stopping_cfg'])
-
-                    # update params of meta optim
-                    if not epoch % _config['bptt_epochs'] or stop_train or epoch == num_epochs:
-
+                    if _config['multi_step_bptt_loss']:
+                        bptt_iter_loss = 0.0
                         for meta_batch in meta_loader:
                             meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
                             meta_inputs, meta_gts = meta_inputs.to(
@@ -606,38 +577,76 @@ def meta_run(rank: int, init_model_state_dict: dict,
                             else:
                                 meta_outputs = model(meta_inputs)
                                 meta_loss = compute_loss(_config['loss_func'],
-                                                        meta_outputs[-1],
-                                                        meta_gts)
+                                                         meta_outputs[-1],
+                                                         meta_gts)
 
-                            if vis_debug:
-                                if epoch == num_epochs:
-                                    meta_input = np.transpose(
-                                        meta_inputs[0].cpu().numpy(), (1, 2, 0))
-                                    meta_gt = np.transpose(
-                                        meta_gts[0].cpu().numpy(), (1, 2, 0))
+                            # print(f"EPOCH {epoch} - META INPUTS SUM {meta_inputs.sum()} - META INPUTS SUM {meta_gts.sum()}")
+                            # print(f"EPOCH {epoch} - META LOSS {meta_loss.item()}")
 
-                                    imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_input.jpg"), (meta_input * 255).astype(np.uint8))
-                                    imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_gt.png"), (meta_gt * 255).astype(np.uint8))
+                            bptt_iter_loss += meta_loss
 
-                                    # model.eval()
-                                    # meta_output = np.transpose(model(meta_inputs)[0].ge(0.5).float()[0].cpu().numpy(), (1, 2, 0)).astype(np.uint8)
-                                    # model.train_without_dropout()
+                        bptt_loss += bptt_iter_loss  # - prev_bptt_iter_loss
+                        # prev_bptt_iter_loss = bptt_iter_loss.detach()
 
-                                    # imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_output.png"), (meta_output * 255).astype(np.uint8))
+                    # visualization
 
-                            bptt_loss += meta_loss
+                    vis_data = [train_loss.item(),
+                                bptt_loss.item(),
+                                meta_optim.state_lr.cpu().detach().numpy()]
+                    vis_data_seqs_sample.append(vis_data)
 
-                        meta_loss_is_nan = torch.isnan(bptt_loss).any()
-                        if meta_loss_is_nan:
+                    stop_train = early_stopping(
+                        train_loss_hist, **_config['train_early_stopping_cfg']) or epoch == num_epochs
+
+                    # update params of meta optim
+                    if not epoch % _config['bptt_epochs'] or stop_train:
+
+                        if not _config['multi_step_bptt_loss']:
+                            for meta_batch in meta_loader:
+                                meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
+                                meta_inputs, meta_gts = meta_inputs.to(
+                                    meta_device), meta_gts.to(meta_device)
+
+                                if _config['parent_model']['architecture'] == 'MaskRCNN':
+                                    meta_loss, meta_losses = model(
+                                        meta_inputs, meta_gts, sample['box_coord_perm'],
+                                        meta_loader.dataset.flip_label)
+                                else:
+                                    meta_outputs = model(meta_inputs)
+                                    meta_loss = compute_loss(_config['loss_func'],
+                                                            meta_outputs[-1],
+                                                            meta_gts)
+
+                                if vis_debug:
+                                    if epoch == num_epochs:
+                                        meta_input = np.transpose(
+                                            meta_inputs[0].cpu().numpy(), (1, 2, 0))
+                                        meta_gt = np.transpose(
+                                            meta_gts[0].cpu().numpy(), (1, 2, 0))
+
+                                        imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_input.jpg"), (meta_input * 255).astype(np.uint8))
+                                        imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_gt.png"), (meta_gt * 255).astype(np.uint8))
+
+                                        # model.eval()
+                                        # meta_output = np.transpose(model(meta_inputs)[0].ge(0.5).float()[0].cpu().numpy(), (1, 2, 0)).astype(np.uint8)
+                                        # model.train_without_dropout()
+
+                                        # imageio.imsave(os.path.join(debug_save_dir, f"sample_{rank * sub_mini_batch_size + i_sample}_meta_output.png"), (meta_output * 255).astype(np.uint8))
+
+                                bptt_loss += meta_loss
+
+                        bptt_loss_is_nan = torch.isnan(bptt_loss).any()
+                        if bptt_loss_is_nan:
                             stop_train = True
 
                         # meta_optim.zero_grad()
                         bptt_loss.backward()
 
-                        meta_optim.reset(keep_state=True)
+                        if not stop_train:
+                            meta_optim.reset(keep_state=True)
 
-                        prev_bptt_iter_loss.zero_().detach_()
-                        bptt_loss.zero_().detach_()
+                            prev_bptt_iter_loss.zero_().detach_()
+                            bptt_loss.zero_().detach_()
 
                     if stop_train:
                         meta_optim.reset()
@@ -645,7 +654,7 @@ def meta_run(rank: int, init_model_state_dict: dict,
 
                     # print('TRAIN EPOCH ', (timeit.default_timer() - start_train_epoch) / 60)
 
-                if not meta_loss_is_nan:
+                if not bptt_loss_is_nan:
                     # loss_batches, _ = run_loader(model, meta_loader, loss_func)
                     # seqs_metrics['meta_loss'][seq_name].append(loss_batches.mean())
                     seqs_metrics['meta_loss'][seq_name].append(meta_loss.item())
@@ -786,6 +795,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         masks = {}
         boxes = {}
 
+        if _config['data_cfg']['multi_object'] == 'single_id':
+            model.roi_heads.detections_per_img = 1
+
         for seq_name in train_loader.dataset.seqs_names:
             train_loader.dataset.set_seq(seq_name)
             test_loader.dataset.set_seq(seq_name)
@@ -823,8 +835,12 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
             for obj_id in range(train_loader.dataset.num_object_groups):
                 train_loader.dataset.multi_object_id = obj_id
-                meta_loader.dataset.multi_object_id = obj_id
                 test_loader.dataset.multi_object_id = obj_id
+                meta_loader.dataset.multi_object_id = obj_id
+
+                # train_loader.dataset.fill_preload_buffer()
+                # test_loader.dataset.fill_preload_buffer()
+                # meta_loader.dataset.fill_preload_buffer()
 
                 train_loader.dataset.set_gt_frame_id()
                 num_objects_in_group = train_loader.dataset.num_objects_in_group
@@ -1165,7 +1181,8 @@ class MetaTaskset(Dataset):
         train_loader.dataset.multi_object_id = obj_id
         meta_loader.dataset.multi_object_id = obj_id
 
-        if num_objects == 1 and self.single_obj_seq_mode == 'AUGMENT':
+        single_augment = self.single_obj_seq_mode == 'AUGMENT_ALL' or (num_objects == 1 and self.single_obj_seq_mode == 'AUGMENT_SINGLE')
+        if single_augment:
             assert self.data_cfg['batch_sizes']['meta'] == 1
 
             single_obj_seqs_ids = list(range(len(self.single_obj_seqs)))
@@ -1183,9 +1200,7 @@ class MetaTaskset(Dataset):
             train_loader.dataset.augment_with_single_obj_seq_dataset = train_loader_dataset
             meta_loader.dataset.augment_with_single_obj_seq_dataset = meta_loader_dataset
 
-            augment_with_single_obj_seq_keep_orig = no_label = bool(random.getrandbits(1))
-            train_loader.dataset.augment_with_single_obj_seq_keep_orig = augment_with_single_obj_seq_keep_orig
-            meta_loader.dataset.augment_with_single_obj_seq_keep_orig = augment_with_single_obj_seq_keep_orig
+        # print(seq_name, random_other_single_obj_seq)
 
         train_loader.dataset.set_random_frame_id_with_label()
         # train_loader.dataset.set_gt_frame_id()
@@ -1193,13 +1208,6 @@ class MetaTaskset(Dataset):
         if self.random_frame_epsilon is not None:
             meta_loader.dataset.random_frame_id_epsilon = self.random_frame_epsilon
             meta_loader.dataset.random_frame_id_anchor_frame = train_loader.dataset.frame_id
-
-            if num_objects == 1 and self.single_obj_seq_mode == 'AUGMENT' and not train_loader.dataset.augment_with_single_obj_seq_keep_orig:
-                meta_loader.dataset.random_frame_id_epsilon = None
-                meta_loader.dataset.random_frame_id_anchor_frame = None
-
-                meta_loader.dataset.augment_with_single_obj_seq_dataset.random_frame_id_epsilon = random_frame_epsilon
-                meta_loader.dataset.augment_with_single_obj_seq_dataset.random_frame_id_anchor_frame = train_loader.dataset.augment_with_single_obj_seq_dataset.frame_id
 
         meta_frame_ids = [meta_loader.dataset.get_random_frame_id_with_label()
                             for _ in range(self.data_cfg['batch_sizes']['meta'])]
@@ -1390,8 +1398,8 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
                                     #                                      deterministic=True),
                                     custom_transforms.ToTensor(),]
 
-                if data_cfg['multi_object'] == 'all':
-                    random_transform.pop(2)
+                # if data_cfg['multi_object'] == 'all':
+                #     random_transform.pop(2)
 
                 train_loader.dataset.transform = transforms.Compose(random_transform)
 
@@ -1404,8 +1412,8 @@ def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: b
                                     #                                      deterministic=True),
                                     custom_transforms.ToTensor(),]
 
-                if data_cfg['multi_object'] == 'all':
-                    random_transform.pop(2)
+                # if data_cfg['multi_object'] == 'all':
+                #     random_transform.pop(2)
 
                 meta_loader.dataset.transform = transforms.Compose(random_transform)
 
@@ -1552,6 +1560,8 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
             lr = meta_optim_optim_cfg['log_init_lr_lr']
         elif 'param_group_lstm_hx_init' in n or 'param_group_lstm_cx_init' in n:
             lr = meta_optim_optim_cfg['param_group_lstm_init_lr']
+        elif 'lr_momentum' in n:
+            lr = meta_optim_optim_cfg['lr_momentum_lr']
         else:
             lr = meta_optim_optim_cfg['lr']
         meta_optim_params.append({'params': [p], 'lr': lr, 'weight_decay': weight_decay})

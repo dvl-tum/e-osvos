@@ -238,7 +238,7 @@ class MaskRCNN(_MaskRCNN):
 
         super(MaskRCNN, self).__init__(backbone_model,
                                        num_classes,
-                                    #    box_detections_per_img=50,
+                                    #    box_detections_per_img=1,
                                        box_roi_pool=box_roi_pool,
                                        mask_roi_pool=mask_roi_pool,
                                        mask_head=mask_head,)
@@ -293,8 +293,8 @@ class MaskRCNN(_MaskRCNN):
             self.roi_heads.mask_predictor.requires_grad_(True)
         else:
             self.backbone.requires_grad_(True)
-            self.backbone.body.conv1.requires_grad_(False)
-            self.backbone.body.layer1.requires_grad_(False)
+            # self.backbone.body.conv1.requires_grad_(False)
+            # self.backbone.body.layer1.requires_grad_(False)
 
             # self.rpn.requires_grad_(False)
 
@@ -341,9 +341,9 @@ class MaskRCNN(_MaskRCNN):
             # self.backbone.body.layer4.train()
             # self.backbone.fpn.train()
             # self.rpn.eval()
-        else:
-            self.backbone.body.layer1.eval()
-            self.backbone.body.conv1.eval()
+        # else:
+        #     self.backbone.body.layer1.eval()
+        #     self.backbone.body.conv1.eval()
         #     # self.backbone.eval()
         #     self.rpn.eval()
         #     # self.backbone.fpn.train()
