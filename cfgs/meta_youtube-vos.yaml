@@ -13,7 +13,7 @@ datasets:
         name: YouTube-VOS
         split: train_dev_val_seqs
         # split: train_debug_seqs
-        eval: False
+        eval: True
     test:
         name: YouTube-VOS
         split: null
@@ -21,15 +21,15 @@ datasets:
     train_val:
         name: YouTube-VOS
         split: train_dev_train_val_seqs
-        eval: False
+        eval: True
     val_davis16:
         name: DAVIS-2016
         split: val_seqs
-        eval: True
+        eval: False
     val_davis17:
         name: DAVIS-2017
         split: val_seqs
-        eval: True
+        eval: False
 parent_model:
     train:
         paths: []

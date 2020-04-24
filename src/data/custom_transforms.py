@@ -37,13 +37,13 @@ class RandomScaleNRotate:
 
         return rot, sc
 
-    def _rot_and_sc(self, tmp, rot, sc):
+    def _rot_and_sc(self, tmp, rot, sc, label=True):
         h, w = tmp.shape[:2]
         center = (w / 2, h / 2)
         assert(center != 0)  # Strange behaviour warpAffine
         M = cv2.getRotationMatrix2D(center, rot, sc)
 
-        if ((tmp == 0) | (tmp == 1)).all():
+        if label:
             flagval = cv2.INTER_NEAREST
         else:
             flagval = cv2.INTER_CUBIC
@@ -52,6 +52,8 @@ class RandomScaleNRotate:
 
     def __call__(self, sample):
         still_has_object = False
+
+        num_labels = len(np.unique(sample['gt']))
         while not still_has_object:
             if sample['file_name'] in self.deterministic_rot_sc:
                 rot, sc = self.deterministic_rot_sc[sample['file_name']]['rot'], \
@@ -62,22 +64,22 @@ class RandomScaleNRotate:
             aug_label = self._rot_and_sc(sample['gt'], rot, sc)
 
             # never had an object
-            if not len(np.unique(sample['gt'])) > 1:
+            if not num_labels > 1:
                 break
 
-            still_has_object = len(np.unique(aug_label)) > 1
+            still_has_object = len(np.unique(aug_label)) == num_labels
 
             if sample['file_name'] in self.deterministic_rot_sc:
 
                 if not still_has_object:
                     import imageio
-                    imageio.imsave("aug_img.png", (self._rot_and_sc(sample['image'], rot, sc) * 255).astype(np.uint8))
+                    imageio.imsave("aug_img.png", (self._rot_and_sc(sample['image'], rot, sc, False) * 255).astype(np.uint8))
                     imageio.imsave("aug_label.png", (aug_label * 255).astype(np.uint8))
 
                 assert still_has_object
 
         sample['gt'] = aug_label
-        sample['image'] = self._rot_and_sc(sample['image'], rot, sc)
+        sample['image'] = self._rot_and_sc(sample['image'], rot, sc, False)
 
         if self.deterministic:
             self.deterministic_rot_sc[sample['file_name']] = {}

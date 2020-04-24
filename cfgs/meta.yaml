@@ -11,7 +11,9 @@ resume_meta_run_epoch_mode: null        # [None, BEST_VAL, LAST]
 # increases seed random seed after each meta run. supposed to enrich the training and improve generalization.
 increase_seed_per_meta_run: True
 random_frame_transform_per_task: False
+multi_step_bptt_loss: False
 random_frame_epsilon: null
+random_object_id_sub_group: False
 # if meta_optim_cfg.lr_per_tensor=False meta learning is done for a single epoch and num_epochs is only evaluated
 num_epochs:
     train: 5
@@ -26,14 +28,12 @@ eval_online_adapt:
     num_epochs: 5
 meta_optim_model_file: null
 meta_optim_cfg:
-    num_layers: 2
-    lr_per_tensor: True
+    num_layers: 1
+    lr_hierarchy_level: TENSOR               # [PARAM, NEURON, TENSOR]
     tensor_rnn_hidden_size: 24
     global_rnn: False
     global_rnn_hidden_size: 24
     init_lr: 0.001
-    # optimizer that computes paramter update step witout learning rate
-    optim_func: SGD
     learn_model_init: False
     learn_model_init_last_layer_template: False
     layer_norm: True
@@ -45,9 +45,11 @@ meta_optim_cfg:
     learn_scheduler: False
     use_log_init_lr: False
     max_lr: null
+    learn_lr_momentum: False
 meta_optim_optim_cfg:
     model_init_lr: 0.0000001
     log_init_lr_lr: 0.0001
+    lr_momentum_lr: 0.0001
     lr: 0.001
     param_group_lstm_init_lr: 0.001
     step_in_seq: False

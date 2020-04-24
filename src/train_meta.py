@@ -400,7 +400,8 @@ def meta_run(rank: int, init_model_state_dict: dict,
                                 _config['data_cfg'],
                                 _config['single_obj_seq_mode'],
                                 _config['random_box_coord_perm'],
-                                _config['random_frame_epsilon'])
+                                _config['random_frame_epsilon'],
+                                _config['random_object_id_sub_group'])
 
     def collate_fn(batch):
         return batch
@@ -1128,7 +1129,8 @@ class MetaTaskset(Dataset):
     def __init__(self, datasets: dict, random_frame_transform_per_task: bool,
                  random_flip_label: bool, random_no_label: bool,
                  data_cfg: dict, single_obj_seq_mode: str,
-                 random_box_coord_perm: bool, random_frame_epsilon: int):
+                 random_box_coord_perm: bool, random_frame_epsilon: int,
+                 random_object_id_sub_group: bool):
         """
         """
         self.train_loader_tmp, self.test_loader_tmp, self.meta_loader_tmp = data_loaders(
@@ -1142,6 +1144,7 @@ class MetaTaskset(Dataset):
         self.single_obj_seq_mode = single_obj_seq_mode
         self.random_box_coord_perm = random_box_coord_perm
         self.random_frame_epsilon = random_frame_epsilon
+        self.random_object_id_sub_group = random_object_id_sub_group
 
         # if single_obj_seq_mode == 'AUGMENT':
 
@@ -1180,6 +1183,14 @@ class MetaTaskset(Dataset):
 
         train_loader.dataset.multi_object_id = obj_id
         meta_loader.dataset.multi_object_id = obj_id
+
+        if self.random_object_id_sub_group:
+            sub_group_size = torch.randint(1, train_loader.dataset.num_objects_in_group + 1, (1,)).item()
+            sub_group_ids = sorted([p.item()
+                                    for p in torch.randperm(train_loader.dataset.num_objects_in_group)[:sub_group_size]])
+
+            train_loader.dataset.sub_group_ids = sub_group_ids
+            meta_loader.dataset.sub_group_ids = sub_group_ids
 
         single_augment = self.single_obj_seq_mode == 'AUGMENT_ALL' or (num_objects == 1 and self.single_obj_seq_mode == 'AUGMENT_SINGLE')
         if single_augment:
@@ -1234,8 +1245,8 @@ class MetaTaskset(Dataset):
                                 #                                      deterministic=True),
                                 custom_transforms.ToTensor(),]
 
-            if self.data_cfg['multi_object'] == 'all':
-                random_transform.pop(2)
+            # if self.data_cfg['multi_object'] == 'all':
+            #     random_transform.pop(2)
 
             train_loader.dataset.transform = transforms.Compose(random_transform)
 
@@ -1248,8 +1259,8 @@ class MetaTaskset(Dataset):
                                 #                                      deterministic=True),
                                 custom_transforms.ToTensor(),]
 
-            if self.data_cfg['multi_object'] == 'all':
-                random_transform.pop(2)
+            # if self.data_cfg['multi_object'] == 'all':
+            #     random_transform.pop(2)
 
             meta_loader.dataset.transform = transforms.Compose(random_transform)
 

@@ -42,6 +42,7 @@ class VOSDataset(Dataset):
         self.random_frame_id_anchor_frame =None
         self._num_objects = None
         self._preload_buffer = [] #{'imgs': {}, 'labels': {}}
+        self.sub_group_ids = None
 
         # self.preloaded_buffer = {}
 
@@ -81,12 +82,15 @@ class VOSDataset(Dataset):
 
     @property
     def object_ids_in_group(self):
-        return list(range(self.num_objects))
+        object_ids = list(range(self.num_objects))
+        if self.sub_group_ids is not None:
+            object_ids = [object_ids[i] for i in self.sub_group_ids]
+        return object_ids
 
     @property
     def num_objects_in_group(self):
         if self.multi_object == 'all':
-            return self.num_objects
+            return len(self.object_ids_in_group)
         return 1
 
     @property
