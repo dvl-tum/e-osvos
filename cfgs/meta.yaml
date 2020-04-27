@@ -81,8 +81,8 @@ parent_model:
     train_encoder: True
     batch_norm:
         accum_stats: False
-        learn_weight: True
-        learn_bias: True
+        learn_weight: False
+        learn_bias: False
     replace_batch_with_group_norms: False
     eval_augment_rpn_proposals_mode: null   # [None, EXTEND, REPLACE]
     roi_pool_output_sizes:

@@ -1,4 +1,5 @@
 import types
+from collections import OrderedDict
 
 import numpy as np
 import torch
@@ -10,6 +11,49 @@ from torchvision.models.detection.rpn import concat_box_prediction_layers
 from torchvision.models.utils import load_state_dict_from_url
 from torchvision.ops import MultiScaleRoIAlign
 from torchvision.ops.misc import FrozenBatchNorm2d
+
+from .efficient_det.models.bifpn import BIFPN as _BIFPN
+from .efficient_det.models.efficientnet import EfficientNet
+
+
+class BIFPN(_BIFPN):
+
+    def forward(self, inputs):
+        assert len(inputs) == len(self.in_channels)
+
+        # build laterals
+        laterals = [
+            lateral_conv(inputs[i + self.start_level])
+            for i, lateral_conv in enumerate(self.lateral_convs)
+        ]
+
+        # part 1: build top-down and down-top path with stack
+        used_backbone_levels = len(laterals)
+        for bifpn_module in self.stack_bifpn_convs:
+            laterals = bifpn_module(laterals)
+        outs = laterals
+        # part 2: add extra levels
+        if self.num_outs > len(outs):
+            # use max pool to get more levels on top of outputs
+            # (e.g., Faster R-CNN, Mask R-CNN)
+            if not self.add_extra_convs:
+                for i in range(self.num_outs - used_backbone_levels):
+                    outs.append(F.max_pool2d(outs[-1], 1, stride=2))
+            # add conv layers on top of original feature maps (RetinaNet)
+            else:
+                if self.extra_convs_on_inputs:
+                    orig = inputs[self.backbone_end_level - 1]
+                    outs.append(self.fpn_convs[0](orig))
+                else:
+                    outs.append(self.fpn_convs[0](outs[-1]))
+                for i in range(1, self.num_outs - used_backbone_levels):
+                    if self.relu_before_extra_convs:
+                        outs.append(self.fpn_convs[i](F.relu(outs[-1])))
+                    else:
+                        outs.append(self.fpn_convs[i](outs[-1]))
+
+        names = [0, 1, 2, 3, 'pool']
+        return OrderedDict([(n, o) for n, o in zip(names, outs)])
 
 
 class ASPPConv(nn.Sequential):
@@ -210,7 +254,22 @@ class MaskRCNN(_MaskRCNN):
     def __init__(self, backbone, num_classes, batch_norm=None, train_encoder=True,
                  roi_pool_output_sizes=None, eval_augment_rpn_proposals_mode=None,
                  replace_batch_with_group_norms=False):
-        backbone_model = resnet_fpn_backbone(backbone, True)
+
+        self._num_groups = 32
+        if 'efficientnet' in backbone:
+            self._num_groups = 8
+            backbone_model_encoder = EfficientNet.from_pretrained(backbone)
+
+            backbone_model_fpn = BIFPN(in_channels=backbone_model_encoder.get_list_features()[-5:],
+                                       out_channels=88,
+                                       stack=3,
+                                       num_outs=5)
+
+            backbone_model = nn.Sequential(OrderedDict([('encoder', backbone_model_encoder),
+                                                        ('bifpn', backbone_model_fpn)]))
+            backbone_model.out_channels = backbone_model_fpn.out_channels
+        else:
+            backbone_model = resnet_fpn_backbone(backbone, True)
 
         mask_roi_pool, box_roi_pool = None, None
         if roi_pool_output_sizes is not None:
@@ -225,7 +284,7 @@ class MaskRCNN(_MaskRCNN):
 
         # rpn_pre_nms_top_n_train = 200
         # rpn_pre_nms_top_n_test = 100
-        rpn_post_nms_top_n_train = 1000
+        # rpn_post_nms_top_n_train = 1000
         # rpn_post_nms_top_n_test = 1000
 
         # large to include all proposals
@@ -266,15 +325,6 @@ class MaskRCNN(_MaskRCNN):
 
             self.load_state_dict(state_dict)
 
-        self._accum_batch_norm_stats = True
-        if batch_norm is not None:
-            self._accum_batch_norm_stats = batch_norm['accum_stats']
-
-            for m in self.modules():
-                if isinstance(m, torch.nn.BatchNorm2d):
-                    m.weight.requires_grad = batch_norm['learn_weight']
-                    m.bias.requires_grad = batch_norm['learn_bias']
-
         if replace_batch_with_group_norms:
             self.replace_batch_with_group_norms()
 
@@ -301,6 +351,20 @@ class MaskRCNN(_MaskRCNN):
         #     self.backbone.fpn.requires_grad_(True)
         #     self.rpn.requires_grad_(True)
 
+        self._accum_batch_norm_stats = True
+        if batch_norm is not None:
+            self._accum_batch_norm_stats = batch_norm['accum_stats']
+
+            for m in self.modules():
+                if isinstance(m, torch.nn.BatchNorm2d):
+                    m.weight.requires_grad = batch_norm['learn_weight']
+                    m.bias.requires_grad = batch_norm['learn_bias']
+
+        if 'efficientnet' in backbone:
+            self.backbone.encoder._conv_head.requires_grad_(False)
+            self.backbone.encoder._bn1.requires_grad_(False)
+            self.backbone.encoder._fc.requires_grad_(False)
+
         # self._second_order_derivates_module_names = ['rpn', 'roi_heads']
         self._second_order_derivates_module_names = ['roi_heads']
 
@@ -311,14 +375,15 @@ class MaskRCNN(_MaskRCNN):
                                        'roi_heads.mask_predictor.mask_fcn_logits.weight',
                                        'roi_heads.mask_predictor.mask_fcn_logits.bias']
 
+
     def replace_batch_with_group_norms(self):
         for module in self.modules():
             bn_keys = [k for k, m in module._modules.items()
-                       if isinstance(m, FrozenBatchNorm2d)]
+                       if isinstance(m, FrozenBatchNorm2d) or isinstance(m, nn.BatchNorm2d)]
             for k in bn_keys:
                 batch_norm = module._modules[k]
 
-                group_norm = nn.GroupNorm(32, batch_norm.weight.shape[0])
+                group_norm = nn.GroupNorm(self._num_groups, batch_norm.weight.shape[0])
                 group_norm.weight.data = batch_norm.weight
                 group_norm.bias.data = batch_norm.bias
 

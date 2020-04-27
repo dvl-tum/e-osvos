@@ -62,7 +62,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
     resume  = False if resume_meta_run_epoch_mode is None else True
 
     opts = dict(title=f"CONFIG and NON META BASELINE (RUN: {_run._id})",
-                width=900, height=2000)
+                width=1000, height=2000)
     vis_dict['config_vis'] = TextVis(opts, env=run_name, **torch_cfg['vis'])
     if not resume:
         vis_dict['config_vis'].plot(dict_to_html(_config))
@@ -81,7 +81,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         title=f"TRAIN METRICS (RUN: {_run._id})",
         xlabel='META ITERS',
         ylabel='METRICS',
-        width=900,
+        width=1000,
         height=450,
         legend=legend)
     vis_dict['meta_metrics_vis'] = LineVis(
@@ -125,7 +125,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
                     title=f"EVAL: {dataset_name.upper()} - FLIP LABEL: {flip_label} (RUN: {_run._id})",
                     xlabel='META ITERS',
                     ylabel=f'METRICS',
-                    width=900,
+                    width=1000,
                     height=450,
                     legend=legend)
                 vis_dict[f'{dataset_name}_flip_label_{flip_label}_eval_seq_vis'] = LineVis(
@@ -141,7 +141,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         title=f"FINAL META LOSS (RUN: {_run._id})",
         xlabel='META EPOCHS',
         ylabel=f'META LOSS',
-        width=900,
+        width=1000,
         height=450,
         legend=legend)
     vis_dict[f'meta_loss_seq_vis'] = LineVis(
@@ -157,7 +157,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         title=f"INIT TRAIN LOSS (RUN: {_run._id})",
         xlabel='META EPOCHS',
         ylabel=f'TRAIN LOSS',
-        width=900,
+        width=1000,
         height=450,
         legend=legend)
     vis_dict[f'train_loss_seq_vis'] = LineVis(
@@ -171,7 +171,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         title=f"FIRST EPOCH INIT LR (RUN: {_run._id})",
         xlabel='META ITERS',
         ylabel='LR',
-        width=900,
+        width=1000,
         height=450,
         legend=legend)
     vis_dict['init_lr_vis'] = LineVis(
@@ -181,7 +181,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
         title=f"LRS HIST (RUN: {_run._id})",
         xlabel='EPOCHS',
         ylabel='LR',
-        width=900,
+        width=1000,
         height=450,
         legend=legend)
     vis_dict['lrs_hist_vis'] = LineVis(
