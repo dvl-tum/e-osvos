@@ -12,48 +12,184 @@ from torchvision.models.utils import load_state_dict_from_url
 from torchvision.ops import MultiScaleRoIAlign
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from .efficient_det.models.bifpn import BIFPN as _BIFPN
-from .efficient_det.models.efficientnet import EfficientNet
+# from .efficient_det.models.bifpn import BIFPN as _BIFPN
+# from .efficient_det.models.efficientnet import EfficientNet
+
+from .efficient_det_v2.efficientdet.model import BiFPN as _BiFPN
+from .efficient_det_v2.efficientdet.model import EfficientNet as _EfficientNet
+from .efficient_det_v2.efficientnet.utils_extra import Conv2dStaticSamePadding
 
 
-class BIFPN(_BIFPN):
+class EfficientNet(_EfficientNet):
 
-    def forward(self, inputs):
-        assert len(inputs) == len(self.in_channels)
+    def forward(self, x):
+        feature_maps = super(EfficientNet, self).forward(x)
+        # return feature_maps[-3:]
+        # print([f.shape for f in feature_maps])
+        return feature_maps
 
-        # build laterals
-        laterals = [
-            lateral_conv(inputs[i + self.start_level])
-            for i, lateral_conv in enumerate(self.lateral_convs)
-        ]
 
-        # part 1: build top-down and down-top path with stack
-        used_backbone_levels = len(laterals)
-        for bifpn_module in self.stack_bifpn_convs:
-            laterals = bifpn_module(laterals)
-        outs = laterals
-        # part 2: add extra levels
-        if self.num_outs > len(outs):
-            # use max pool to get more levels on top of outputs
-            # (e.g., Faster R-CNN, Mask R-CNN)
-            if not self.add_extra_convs:
-                for i in range(self.num_outs - used_backbone_levels):
-                    outs.append(F.max_pool2d(outs[-1], 1, stride=2))
-            # add conv layers on top of original feature maps (RetinaNet)
-            else:
-                if self.extra_convs_on_inputs:
-                    orig = inputs[self.backbone_end_level - 1]
-                    outs.append(self.fpn_convs[0](orig))
-                else:
-                    outs.append(self.fpn_convs[0](outs[-1]))
-                for i in range(1, self.num_outs - used_backbone_levels):
-                    if self.relu_before_extra_convs:
-                        outs.append(self.fpn_convs[i](F.relu(outs[-1])))
-                    else:
-                        outs.append(self.fpn_convs[i](outs[-1]))
+class EfficientNetAndBiFPN(nn.Sequential):
 
+    def __init__(self, efficient_net, bifpn):
+        super(EfficientNetAndBiFPN, self).__init__(
+            efficient_net,
+            bifpn)
+
+    def forward(self, x):
+        outs = super(EfficientNetAndBiFPN, self).forward(x)
         names = [0, 1, 2, 3, 'pool']
         return OrderedDict([(n, o) for n, o in zip(names, outs)])
+
+
+class BiFPN(_BiFPN):
+
+    def __init__(self, num_channels, conv_channels, first_time=False, epsilon=1e-4, onnx_export=False, attention=True):
+        super(BiFPN, self).__init__(num_channels, conv_channels, first_time, epsilon, onnx_export, attention)
+
+        if self.first_time:
+            del self.p5_to_p6
+
+            self.p6_down_channel = nn.Sequential(
+                Conv2dStaticSamePadding(conv_channels[3], num_channels, 1),
+                nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
+            )
+
+    def _forward_fast_attention(self, inputs):
+        if self.first_time:
+            # p3, p4, p5 = inputs
+
+            # p6_in = self.p5_to_p6(p5)
+            # p7_in = self.p6_to_p7(p6_in)
+
+            # p3_in = self.p3_down_channel(p3)
+            # p4_in = self.p4_down_channel(p4)
+            # p5_in = self.p5_down_channel(p5)
+
+            p3, p4, p5, p6 = inputs
+
+            # p6_in = self.p5_to_p6(p5)
+
+
+            p3_in = self.p3_down_channel(p3)
+            p4_in = self.p4_down_channel(p4)
+            p5_in = self.p5_down_channel(p5)
+            p6_in = self.p6_down_channel(p6)
+
+            p7_in = self.p6_to_p7(p6_in)
+
+        else:
+            # P3_0, P4_0, P5_0, P6_0 and P7_0
+            p3_in, p4_in, p5_in, p6_in, p7_in = inputs
+
+        # P7_0 to P7_2
+
+        # Weights for P6_0 and P7_0 to P6_1
+        p6_w1 = self.p6_w1_relu(self.p6_w1)
+        weight = p6_w1 / (torch.sum(p6_w1, dim=0) + self.epsilon)
+        # Connections for P6_0 and P7_0 to P6_1 respectively
+        # p6_up = self.conv6_up(self.swish(weight[0] * p6_in + weight[1] * self.p6_upsample(p7_in)))
+
+        scale_factor = [p6_in.shape[2] / p7_in.shape[2],
+                        p6_in.shape[3] / p7_in.shape[3]]
+        p6_up = self.conv6_up(self.swish(weight[0] * p6_in + weight[1] * F.interpolate(p7_in, scale_factor=scale_factor, mode='nearest')))
+
+        # Weights for P5_0 and P6_0 to P5_1
+        p5_w1 = self.p5_w1_relu(self.p5_w1)
+        weight = p5_w1 / (torch.sum(p5_w1, dim=0) + self.epsilon)
+        # Connections for P5_0 and P6_0 to P5_1 respectively
+        scale_factor = [p5_in.shape[2] / p6_up.shape[2],
+                        p5_in.shape[3] / p6_up.shape[3]]
+        p5_up = self.conv5_up(self.swish(weight[0] * p5_in + weight[1] * F.interpolate(p6_up, scale_factor=scale_factor, mode='nearest')))
+
+        # Weights for P4_0 and P5_0 to P4_1
+        p4_w1 = self.p4_w1_relu(self.p4_w1)
+        weight = p4_w1 / (torch.sum(p4_w1, dim=0) + self.epsilon)
+        # Connections for P4_0 and P5_0 to P4_1 respectively
+        scale_factor = [p4_in.shape[2] / p5_up.shape[2],
+                        p4_in.shape[3] / p5_up.shape[3]]
+        p4_up = self.conv4_up(self.swish(weight[0] * p4_in + weight[1] * F.interpolate(p5_up, scale_factor=scale_factor, mode='nearest')))
+
+        # Weights for P3_0 and P4_1 to P3_2
+        p3_w1 = self.p3_w1_relu(self.p3_w1)
+        weight = p3_w1 / (torch.sum(p3_w1, dim=0) + self.epsilon)
+        # Connections for P3_0 and P4_1 to P3_2 respectively
+        scale_factor = [p3_in.shape[2] / p4_up.shape[2],
+                        p3_in.shape[3] / p4_up.shape[3]]
+        p3_out = self.conv3_up(self.swish(weight[0] * p3_in + weight[1] * F.interpolate(p4_up, scale_factor=scale_factor, mode='nearest')))
+
+        if self.first_time:
+            p4_in = self.p4_down_channel_2(p4)
+            p5_in = self.p5_down_channel_2(p5)
+
+        # Weights for P4_0, P4_1 and P3_2 to P4_2
+        p4_w2 = self.p4_w2_relu(self.p4_w2)
+        weight = p4_w2 / (torch.sum(p4_w2, dim=0) + self.epsilon)
+        # Connections for P4_0, P4_1 and P3_2 to P4_2 respectively
+        p4_out = self.conv4_down(
+            self.swish(weight[0] * p4_in + weight[1] * p4_up + weight[2] * self.p4_downsample(p3_out)))
+
+        # Weights for P5_0, P5_1 and P4_2 to P5_2
+        p5_w2 = self.p5_w2_relu(self.p5_w2)
+        weight = p5_w2 / (torch.sum(p5_w2, dim=0) + self.epsilon)
+        # Connections for P5_0, P5_1 and P4_2 to P5_2 respectively
+        p5_out = self.conv5_down(
+            self.swish(weight[0] * p5_in + weight[1] * p5_up + weight[2] * self.p5_downsample(p4_out)))
+
+        # Weights for P6_0, P6_1 and P5_2 to P6_2
+        p6_w2 = self.p6_w2_relu(self.p6_w2)
+        weight = p6_w2 / (torch.sum(p6_w2, dim=0) + self.epsilon)
+        # Connections for P6_0, P6_1 and P5_2 to P6_2 respectively
+        p6_out = self.conv6_down(
+            self.swish(weight[0] * p6_in + weight[1] * p6_up + weight[2] * self.p6_downsample(p5_out)))
+
+        # Weights for P7_0 and P6_2 to P7_2
+        p7_w2 = self.p7_w2_relu(self.p7_w2)
+        weight = p7_w2 / (torch.sum(p7_w2, dim=0) + self.epsilon)
+        # Connections for P7_0 and P6_2 to P7_2
+        p7_out = self.conv7_down(self.swish(weight[0] * p7_in + weight[1] * self.p7_downsample(p6_out)))
+
+        return p3_out, p4_out, p5_out, p6_out, p7_out
+
+
+# class BIFPN(_BIFPN):
+
+#     def forward(self, inputs):
+#         assert len(inputs) == len(self.in_channels)
+
+#         # build laterals
+#         laterals = [
+#             lateral_conv(inputs[i + self.start_level])
+#             for i, lateral_conv in enumerate(self.lateral_convs)
+#         ]
+
+#         # part 1: build top-down and down-top path with stack
+#         used_backbone_levels = len(laterals)
+#         for bifpn_module in self.stack_bifpn_convs:
+#             laterals = bifpn_module(laterals)
+#         outs = laterals
+#         # part 2: add extra levels
+#         if self.num_outs > len(outs):
+#             # use max pool to get more levels on top of outputs
+#             # (e.g., Faster R-CNN, Mask R-CNN)
+#             if not self.add_extra_convs:
+#                 for i in range(self.num_outs - used_backbone_levels):
+#                     outs.append(F.max_pool2d(outs[-1], 1, stride=2))
+#             # add conv layers on top of original feature maps (RetinaNet)
+#             else:
+#                 if self.extra_convs_on_inputs:
+#                     orig = inputs[self.backbone_end_level - 1]
+#                     outs.append(self.fpn_convs[0](orig))
+#                 else:
+#                     outs.append(self.fpn_convs[0](outs[-1]))
+#                 for i in range(1, self.num_outs - used_backbone_levels):
+#                     if self.relu_before_extra_convs:
+#                         outs.append(self.fpn_convs[i](F.relu(outs[-1])))
+#                     else:
+#                         outs.append(self.fpn_convs[i](outs[-1]))
+
+#         names = [0, 1, 2, 3, 'pool']
+#         return OrderedDict([(n, o) for n, o in zip(names, outs)])
 
 
 class ASPPConv(nn.Sequential):
@@ -137,6 +273,7 @@ def rpn_forward(self, images, features, targets=None):
         losses (Dict[Tensor]): the losses for the model during training. During
             testing, it is an empty dict.
     """
+
     # RPN uses all feature maps that are available
     features = list(features.values())
     objectness, pred_bbox_deltas = self.head(features)
@@ -258,16 +395,54 @@ class MaskRCNN(_MaskRCNN):
         self._num_groups = 32
         if 'efficientnet' in backbone:
             self._num_groups = 8
-            backbone_model_encoder = EfficientNet.from_pretrained(backbone)
 
-            backbone_model_fpn = BIFPN(in_channels=backbone_model_encoder.get_list_features()[-5:],
-                                       out_channels=88,
-                                       stack=3,
-                                       num_outs=5)
+            compound_coef = int(backbone[-1])
 
-            backbone_model = nn.Sequential(OrderedDict([('encoder', backbone_model_encoder),
-                                                        ('bifpn', backbone_model_fpn)]))
-            backbone_model.out_channels = backbone_model_fpn.out_channels
+            backbone_compound_coef = [0, 1, 2, 3, 4, 5, 6, 6]
+            fpn_num_filters = [64, 88, 112, 160, 224, 288, 384, 384]
+            fpn_cell_repeats = [3, 4, 5, 6, 7, 7, 8, 8]
+            # fpn_cell_repeats = [2, 2, 2, 2, 2, 2, 2, 2]
+            # conv_channel_coef = {
+            #     # the channels of P3/P4/P5.
+            #     0: [40, 112, 320],
+            #     1: [40, 112, 320],
+            #     2: [48, 120, 352],
+            #     3: [48, 136, 384],
+            #     4: [56, 160, 448],
+            #     5: [64, 176, 512],
+            #     6: [72, 200, 576],
+            #     7: [72, 200, 576],
+            # }
+
+            conv_channel_coef = {
+                # the channels of P3/P4/P5/P6.
+                0: [40, 112, 320],
+                1: [40, 112, 320],
+                2: [48, 120, 352],
+                3: [32, 48, 136, 384],
+                4: [56, 160, 448],
+                5: [40, 64, 176, 512],
+                6: [72, 200, 576],
+                7: [72, 200, 576],
+            }
+
+            backbone_model_encoder = EfficientNet(backbone_compound_coef[compound_coef], False)
+
+            backbone_model_fpn = nn.Sequential(
+                *[BiFPN(fpn_num_filters[compound_coef],
+                        conv_channel_coef[compound_coef],
+                        True if _ == 0 else False,
+                        attention=True if compound_coef < 6 else False)
+                for _ in range(fpn_cell_repeats[compound_coef])])
+
+            model_state_dict = torch.load(f"models/efficientdet-d{compound_coef}.pth")
+            backbone_model_encoder.load_state_dict({k.replace('backbone_net.', ''): v for k, v in model_state_dict.items()
+                                                    if 'backbone_net' in k})
+            # backbone_model_fpn.load_state_dict({k.replace('bifpn.', ''): v for k, v in model_state_dict.items()
+            #                                     if 'bifpn' in k})
+
+            backbone_model = EfficientNetAndBiFPN(backbone_model_encoder, backbone_model_fpn)
+            backbone_model.out_channels = fpn_num_filters[compound_coef]
         else:
             backbone_model = resnet_fpn_backbone(backbone, True)
 
@@ -359,11 +534,6 @@ class MaskRCNN(_MaskRCNN):
                 if isinstance(m, torch.nn.BatchNorm2d):
                     m.weight.requires_grad = batch_norm['learn_weight']
                     m.bias.requires_grad = batch_norm['learn_bias']
-
-        if 'efficientnet' in backbone:
-            self.backbone.encoder._conv_head.requires_grad_(False)
-            self.backbone.encoder._bn1.requires_grad_(False)
-            self.backbone.encoder._fc.requires_grad_(False)
 
         # self._second_order_derivates_module_names = ['rpn', 'roi_heads']
         self._second_order_derivates_module_names = ['roi_heads']

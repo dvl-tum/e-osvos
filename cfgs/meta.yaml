@@ -24,7 +24,7 @@ bptt_epochs: 10
 # choose uneven frames to have meta matching frame in the middle of eval frame interval.
 eval_online_adapt:
     step: null
-    reset_model: True
+    reset_model: False
     num_epochs: 5
 meta_optim_model_file: null
 meta_optim_cfg:
