@@ -858,16 +858,16 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     meta_frame_iter = [meta_loader.dataset.frame_id]
                 else:
                     eval_online_adapt_step = _config['eval_online_adapt']['step']
-                    meta_frame_iter = range(eval_online_adapt_step,
+                    meta_frame_iter = range(train_loader.dataset.frame_id + 1,
                                             len(test_loader.dataset),
                                             eval_online_adapt_step)
 
                 # meta_frame_id might be a str, e.g., 'middle'
                 start_eval = timeit.default_timer()
-                for i, meta_frame_id in enumerate(meta_frame_iter):
+                for eval_online_step_count, _ in enumerate(meta_frame_iter):
                     # print(i, train_loader.dataset.frame_id + 1)
                     # range [min, max[
-                    if i == 0:
+                    if eval_online_step_count == 0:
                         train_frame = train_loader.dataset[0]
                         train_frame_gt = train_frame['gt']
                         train_frame_input = train_frame['image']
@@ -884,7 +884,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                                                                        :, :] = 2 * train_frame_gt
 
                         eval_frame_range_min = train_loader.dataset.frame_id + 1
-                        eval_frame_range_max = eval_online_adapt_step // 2 + 1
+                        eval_frame_range_max = eval_frame_range_min # + eval_online_adapt_step // 2
                     else:
                         # eval_frame_range_min = (meta_frame_id - eval_online_adapt_step // 2) + 1
                         eval_frame_range_min = eval_frame_range_max
@@ -893,23 +893,24 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         train_loader.dataset.frame_id = eval_frame_range_min - 1
 
                     eval_frame_range_max += eval_online_adapt_step
-                    if eval_frame_range_max + (eval_online_adapt_step // 2 + 1) > len(test_loader.dataset):
+                    # if eval_frame_range_max + (eval_online_adapt_step // 2 + 1) > len(test_loader.dataset):
+                    if eval_frame_range_max > len(test_loader.dataset):
                         eval_frame_range_max = len(test_loader.dataset)
 
                     if obj_id == 0:
                         num_frames += eval_frame_range_max - eval_frame_range_min
 
                     # load_state_dict(model, seq_name, parent_states[dataset_key])
-                    if i == 0 or _config['eval_online_adapt']['reset_model']:
+                    if eval_online_step_count == 0 or _config['eval_online_adapt']['reset_model']:
                         meta_optim.load_state_dict(meta_optim_state_dict)
                         meta_optim.reset()
                         meta_optim.eval()
 
-                    if _config['meta_optim_cfg']['matching_input']:
-                        meta_loader_frame_id = meta_loader.dataset.frame_id
-                        meta_loader.dataset.frame_id = meta_frame_id
-                        match_embed(model, train_loader, meta_loader)
-                        meta_loader.dataset.frame_id = meta_loader_frame_id
+                    # if _config['meta_optim_cfg']['matching_input']:
+                    #     meta_loader_frame_id = meta_loader.dataset.frame_id
+                    #     meta_loader.dataset.frame_id = meta_frame_id
+                    #     match_embed(model, train_loader, meta_loader)
+                    #     meta_loader.dataset.frame_id = meta_loader_frame_id
 
                         # for module in model.modules_with_requires_grad_params():
                         #     print(dataset_key, seq_name, module.match_embed.mean(dim=0, keepdim=True).detach().mean())
@@ -921,10 +922,12 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     #     loss_func=loss_func)
 
                     train_loss_hist = []
-                    if i == 0:
+                    if eval_online_step_count == 0:
                         num_epochs = _config['num_epochs']['eval']
                     else:
                         num_epochs = _config['eval_online_adapt']['num_epochs']
+
+                    model.train_without_dropout()
 
                     for epoch in epoch_iter(num_epochs):
                         set_random_seeds(_config['seed'] + epoch)
@@ -932,7 +935,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         for _, sample_batched in enumerate(train_loader):
                             inputs, gts = sample_batched['image'], sample_batched['gt']
 
-                            if not i == 0:
+                            if not eval_online_step_count == 0:
                                 # gts = propagate_frame_gt.unsqueeze(dim=0)
 
                                 if propagate_frame_gt.sum().item() == 0:
@@ -940,13 +943,11 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                                     inputs = train_frame_input.unsqueeze(dim=0)
                                 else:
                                     gts = torch.cat([propagate_frame_gt.unsqueeze(dim=0),
-                                                    train_frame_gt.unsqueeze(dim=0)])
+                                                     train_frame_gt.unsqueeze(dim=0)])
                                     inputs = torch.cat([inputs,
                                                         train_frame_input.unsqueeze(dim=0)])
 
                             inputs, gts = inputs.to(device), gts.to(device)
-
-                            model.train_without_dropout()
 
                             if isinstance(model, MaskRCNN):
                                 train_loss, train_losses = model(inputs, gts)
@@ -978,7 +979,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     # run model on frame range
                     test_loader.sampler.indices = range(eval_frame_range_min, eval_frame_range_max)
 
-                    if i == 0:
+                    if eval_online_step_count == 0:
                         targets = train_frame_gt.unsqueeze(dim=0)
                     else:
                         targets = propagate_frame_gt.unsqueeze(dim=0)
@@ -1246,7 +1247,7 @@ class MetaTaskset(Dataset):
                                 custom_transforms.ToTensor(),]
 
             # if self.data_cfg['multi_object'] == 'all':
-            #     random_transform.pop(2)
+            #     random_transform.pop(1)
 
             train_loader.dataset.transform = transforms.Compose(random_transform)
 
@@ -1260,7 +1261,7 @@ class MetaTaskset(Dataset):
                                 custom_transforms.ToTensor(),]
 
             # if self.data_cfg['multi_object'] == 'all':
-            #     random_transform.pop(2)
+            #     random_transform.pop(1)
 
             meta_loader.dataset.transform = transforms.Compose(random_transform)
 
@@ -1286,188 +1287,6 @@ class MetaTaskset(Dataset):
                 'box_coord_perm': box_coord_perm,
                 'train_loader': train_loader,
                 'meta_loader': meta_loader}
-
-
-@ex.capture
-def generate_meta_train_tasks(datasets: dict, random_frame_transform_per_task: bool,
-                              random_flip_label: bool, random_no_label: bool,
-                              data_cfg: dict, single_obj_seq_mode: str,
-                              random_box_coord_perm: bool, random_frame_epsilon: int,
-                              sub_meta_batch_size=None):
-    train_loader_tmp, test_loader_tmp, meta_loader_tmp = data_loaders(
-        datasets['train'], **data_cfg)
-    test_dataset = test_loader_tmp.dataset
-    seqs_names = test_dataset.seqs_names
-
-    if single_obj_seq_mode == 'AUGMENT':
-        single_obj_seqs = []
-        for seq_name in seqs_names:
-            test_dataset.set_seq(seq_name)
-            if test_dataset.num_objects == 1:
-                single_obj_seqs.append(seq_name)
-
-        assert not len(single_obj_seqs) % 2
-
-    # prepare mini batches for epoch. sequences and random frames.
-    random_seqs_idx = torch.randperm(len(seqs_names))
-    random_seqs_names = [seqs_names[i] for i in random_seqs_idx]
-
-    meta_tasks = []
-    for seq_name in random_seqs_names:
-        test_dataset.set_seq(seq_name)
-        num_objects = test_dataset.num_objects
-
-        if num_objects == 1:
-            if single_obj_seq_mode == 'IGNORE':
-                continue
-            elif single_obj_seq_mode == 'AUGMENT':
-                assert data_cfg['batch_sizes']['meta'] == 1
-                seq_obj_ids = [0, 0]
-
-                single_obj_seqs_ids = list(range(len(single_obj_seqs)))
-                random_single_obj_seqs_id = random.choice(single_obj_seqs_ids)
-                random_other_single_obj_seq = single_obj_seqs.pop(
-                    random_single_obj_seqs_id)
-
-            elif single_obj_seq_mode == 'KEEP':
-                seq_obj_ids = [0]
-            else:
-                raise NotImplementedError
-        else:
-            # pick 2 random obj ids such that each batch contains 2 obj per sequence
-            seq_obj_ids = [obj_id.item() for obj_id
-                           in torch.randperm(test_dataset.num_object_groups)]
-            # seq_obj_ids = seq_obj_ids[:2]
-
-        for i, obj_id in enumerate(seq_obj_ids):
-            train_loader = copy.deepcopy(train_loader_tmp)
-            meta_loader = copy.deepcopy(meta_loader_tmp)
-
-            # train_loader, _, meta_loader = data_loaders(
-            #     datasets['train'], **data_cfg)
-
-            train_loader.dataset.set_seq(seq_name)
-            meta_loader.dataset.set_seq(seq_name)
-
-            train_loader.dataset.multi_object_id = obj_id
-            meta_loader.dataset.multi_object_id = obj_id
-
-            if num_objects == 1 and single_obj_seq_mode == 'AUGMENT':
-                train_loader_dataset = copy.deepcopy(train_loader_tmp).dataset
-                meta_loader_dataset = copy.deepcopy(meta_loader_tmp).dataset
-
-                train_loader_dataset.set_seq(random_other_single_obj_seq)
-                meta_loader_dataset.set_seq(random_other_single_obj_seq)
-
-                train_loader_dataset.multi_object_id = 0
-                meta_loader_dataset.multi_object_id = 0
-
-                train_loader.dataset.augment_with_single_obj_seq_dataset = train_loader_dataset
-                meta_loader.dataset.augment_with_single_obj_seq_dataset = meta_loader_dataset
-
-                if i == 1:
-                    train_loader.dataset.augment_with_single_obj_seq_keep_orig = False
-                    meta_loader.dataset.augment_with_single_obj_seq_keep_orig = False
-
-            train_loader.dataset.set_random_frame_id_with_label()
-            # train_loader.dataset.set_gt_frame_id()
-
-            if random_frame_epsilon is not None:
-                meta_loader.dataset.random_frame_id_epsilon = random_frame_epsilon
-                meta_loader.dataset.random_frame_id_anchor_frame = train_loader.dataset.frame_id
-
-                if not train_loader.dataset.augment_with_single_obj_seq_keep_orig:
-                # if num_objects == 1 and single_obj_seq_mode == 'AUGMENT' and i == 1:
-                    meta_loader.dataset.random_frame_id_epsilon = None
-                    meta_loader.dataset.random_frame_id_anchor_frame = None
-
-                    meta_loader.dataset.augment_with_single_obj_seq_dataset.random_frame_id_epsilon = random_frame_epsilon
-                    meta_loader.dataset.augment_with_single_obj_seq_dataset.random_frame_id_anchor_frame = train_loader.dataset.augment_with_single_obj_seq_dataset.frame_id
-
-            meta_frame_ids = [meta_loader.dataset.get_random_frame_id_with_label()
-                              for _ in range(data_cfg['batch_sizes']['meta'])]
-
-            meta_loader.sampler.indices = meta_frame_ids
-
-            if random_frame_transform_per_task:
-                scales = (.5, 1.0)
-                color_transform = custom_transforms.ColorJitter(brightness=.2,
-                                                                contrast=.2,
-                                                                hue=.1,
-                                                                saturation=.2,
-                                                                deterministic=True)
-                flip_transform = custom_transforms.RandomHorizontalFlip(deterministic=True)
-                scale_rotate_transform = custom_transforms.RandomScaleNRotate(
-                    rots=(-30, 30), scales=scales, deterministic=True)
-
-                random_transform = [color_transform,
-                                    flip_transform,
-                                    scale_rotate_transform,
-                                    # custom_transforms.RandomHorizontalFlip(deterministic=True),
-                                    # custom_transforms.RandomScaleNRotate(rots=(-30, 30),
-                                    #                                      scales=scales,
-                                    #                                      deterministic=True),
-                                    custom_transforms.ToTensor(),]
-
-                # if data_cfg['multi_object'] == 'all':
-                #     random_transform.pop(2)
-
-                train_loader.dataset.transform = transforms.Compose(random_transform)
-
-                random_transform = [color_transform,
-                                    flip_transform,
-                                    scale_rotate_transform,
-                                    # custom_transforms.RandomHorizontalFlip(deterministic=True),
-                                    # custom_transforms.RandomScaleNRotate(rots=(-30, 30),
-                                    #                                      scales=scales,
-                                    #                                      deterministic=True),
-                                    custom_transforms.ToTensor(),]
-
-                # if data_cfg['multi_object'] == 'all':
-                #     random_transform.pop(2)
-
-                meta_loader.dataset.transform = transforms.Compose(random_transform)
-
-                if data_cfg['random_train_transform']:
-                    raise NotImplementedError
-                    # train_loader.dataset.transform = random_transform
-
-            if random_flip_label:
-                flip_label = bool(random.getrandbits(1))
-                train_loader.dataset.flip_label = flip_label
-                meta_loader.dataset.flip_label = flip_label
-
-            if random_no_label:
-                no_label = bool(random.getrandbits(1))
-                train_loader.dataset.no_label = no_label
-                meta_loader.dataset.no_label = no_label
-
-            box_coord_perm = None
-            if random_box_coord_perm:
-                box_coord_perm = torch.randperm(4)
-
-            meta_tasks.append({'seq_name': seq_name,
-                               'box_coord_perm': box_coord_perm,
-                               'train_loader': train_loader,
-                               'meta_loader': meta_loader})
-
-            if sub_meta_batch_size is not None and sub_meta_batch_size == len(meta_tasks):
-                yield meta_tasks
-                meta_tasks = []
-
-    # print([(t['seq_name'],
-    #         t['train_loader'].dataset.seq_key,
-    #         t['train_loader'].dataset.multi_object_id,
-    #         t['meta_loader'].dataset.multi_object_id,
-    #         t['train_loader'].dataset.frame_id,
-    #         t['meta_loader'].sampler.indices,
-    #         t['train_loader'].dataset.augment_with_single_obj_seq_key,
-    #         t['meta_loader'].dataset.augment_with_single_obj_seq_key)
-    #        for t in meta_tasks if t['seq_name'] == 'b1d7c03927'])
-
-    # exit()
-
-    return meta_tasks
 
 
 @ex.automain
@@ -1530,6 +1349,10 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
     if meta_optim_model_file is not None:
         previous_meta_optim_state_dict = torch.load(meta_optim_model_file)['meta_optim_state_dict']
+
+        # for i in range(len(meta_optim.log_init_lr)):
+        #     meta_optim.log_init_lr[i].data.fill_(previous_meta_optim_state_dict['log_init_lr'][i].item())
+
         # meta_optim_state_dict = meta_optim.state_dict()
 
         # for layer in range(previous_meta_optim_state_dict['log_init_lr'].shape[0]):
@@ -1538,7 +1361,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         #     meta_optim_state_dict['param_group_lstm_cx_init'][:, layer, :] = previous_meta_optim_state_dict['param_group_lstm_cx_init'][:, layer, :]
 
         # previous_meta_optim_state_dict = {k: previous_meta_optim_state_dict[k]
-        #                                   if k in previous_meta_optim_state_dict # and k not in ['log_init_lr', 'param_group_lstm_hx_init', 'param_group_lstm_cx_init']
+        #                                   if k in previous_meta_optim_state_dict and previous_meta_optim_state_dict[k].shape == v.shape #and 'log_init_lr_backbone' not in k# and k not in ['log_init_lr', 'param_group_lstm_hx_init', 'param_group_lstm_cx_init']
         #                                   else v
         #                                   for k, v in meta_optim_state_dict.items()}
 
@@ -1553,6 +1376,8 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         # del previous_meta_optim_state_dict['model_init_backbone-body-conv1-weight']
 
         # previous_meta_optim_state_dict['log_init_lr'].data = meta_optim.log_init_lr.data
+
+        # previous_meta_optim_state_dict['lr_momentum'] = meta_optim.lr_momentum.clone()
 
         meta_optim.load_state_dict(previous_meta_optim_state_dict)
 

@@ -477,7 +477,7 @@ class MaskRCNN(_MaskRCNN):
                                        mask_roi_pool=mask_roi_pool,
                                        mask_head=mask_head,)
                                     #    bbox_reg_weights=bbox_reg_weights)
-                                    #    box_batch_size_per_image=128,
+                                    #    box_batch_size_per_image=256,)
                                     #    rpn_pre_nms_top_n_train=rpn_pre_nms_top_n_train,
                                     #    rpn_pre_nms_top_n_test=rpn_pre_nms_top_n_test,
                                     #    rpn_post_nms_top_n_train=rpn_post_nms_top_n_train)
