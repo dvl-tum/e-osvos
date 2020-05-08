@@ -1537,11 +1537,12 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                 # evalutate only once if in eval mode
                 if not num_meta_processes:
                     p['process'].terminate()
+                    p['shared_dict']['meta_iter'] = None
                 else:
                     p['shared_dict']['meta_iter'] = None
 
         # finish in eval mode when all evaluations are done
-        if not num_meta_processes and all([p['shared_dict']['meta_iter'] is not None for p in eval_processes]):
+        if not num_meta_processes and all([not p['process'].is_alive() for p in eval_processes]):
             return
 
         if num_meta_processes and all([p['shared_dict']['sub_iter_done'] for p in meta_processes]):
