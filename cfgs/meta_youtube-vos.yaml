@@ -6,30 +6,34 @@ data_cfg:
     #     meta: [480, 854]
 datasets:
     train:
-        name: YouTube-VOS
-        split: train_dev_train_seqs
+        name: [YouTube-VOS, DAVIS-2017]
+        split: [train_dev_train_seqs, train_seqs]
         eval: False
     val:
         name: YouTube-VOS
-        split: train_dev_val_seqs
+        split: valid_seqs
         # split: train_debug_seqs
-        eval: True
+        eval: False
     test:
         name: YouTube-VOS
         split: null
         eval: False
-    train_val:
+    train_dev_train_val:
         name: YouTube-VOS
         split: train_dev_train_val_seqs
+        eval: True
+    train_dev_val:
+        name: YouTube-VOS
+        split: train_dev_val_seqs
         eval: True
     val_davis16:
         name: DAVIS-2016
         split: val_seqs
-        eval: False
+        eval: True
     val_davis17:
         name: DAVIS-2017
         split: val_seqs
-        eval: False
+        eval: True
 parent_model:
     train:
         paths: []

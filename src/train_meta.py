@@ -30,7 +30,7 @@ from pytorch_tools.ingredients import (save_model_to_db, set_random_seeds,
 from pytorch_tools.vis import LineVis, TextVis
 from radam import RAdam
 # from spatial_correlation_sampler import spatial_correlation_sample
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 from torchvision import transforms
 from util.helper_func import (compute_loss, data_loaders, early_stopping,
                               epoch_iter, eval_davis_seq, eval_loader, grouper,
@@ -55,9 +55,15 @@ train_val = ex.capture(train_val)
 
 
 @ex.capture
+def get_run_name(datasets, env_suffix):
+    dataset_name = str(datasets['train']['name']).replace(', ', '+').replace("'", '').replace('[', '').replace(']', '')
+    return f"{dataset_name}_{env_suffix}"
+
+
+@ex.capture
 def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
              torch_cfg: dict, datasets: dict, resume_meta_run_epoch_mode: str):
-    run_name = f"{_run.experiment_info['name']}_{datasets['train']['name']}_{env_suffix}"
+    run_name = f"{_run.experiment_info['name']}_{get_run_name()}"
     vis_dict = {}
     resume  = False if resume_meta_run_epoch_mode is None else True
 
@@ -340,18 +346,15 @@ def load_state_dict(model, seq_name, parent_states):
 
 
 @ex.capture
-def device_for_process(rank: int, _config: dict):
-    if _config['eval_datasets']:
-
-        gpu_rank = (rank // _config['num_meta_processes_per_gpu'])
-        if _config['gpu_per_dataset_eval']:
-            datasets = {k: v for k, v in _config['datasets'].items()
-                        if v['eval'] and v['split'] is not None}
-            gpu_rank += len(datasets)
-        else:
-            gpu_rank += 1
+def device_for_process(rank: int,
+                       eval_datasets: bool,
+                       num_meta_processes_per_gpu: int,
+                       num_eval_gpus: int):
+    if eval_datasets:
+        gpu_rank = (rank // num_meta_processes_per_gpu)
+        gpu_rank += num_eval_gpus
     else:
-        gpu_rank = rank // _config['num_meta_processes_per_gpu']
+        gpu_rank = rank // num_meta_processes_per_gpu
 
     device = torch.device(f'cuda:{gpu_rank}')
     meta_device = torch.device(f'cuda:{gpu_rank}')
@@ -366,7 +369,10 @@ def meta_run(rank: int, init_model_state_dict: dict,
              shared_meta_optim_grads: dict, save_dir: str,
              num_meta_processes: int):
 
-    device, meta_device = device_for_process(rank, _config)
+    device, meta_device = device_for_process(rank,
+                                             _config['eval_datasets'],
+                                             _config['num_meta_processes_per_gpu'],
+                                             _config['num_eval_gpus'])
 
     torch.backends.cudnn.fastest = False
     torch.backends.cudnn.benchmark = False
@@ -393,15 +399,27 @@ def meta_run(rank: int, init_model_state_dict: dict,
 
     sub_meta_batch_size = _config['meta_batch_size'] // num_meta_processes
 
-    meta_task_set = MetaTaskset(_config['datasets'],
-                                _config['random_frame_transform_per_task'],
-                                _config['random_flip_label'],
-                                _config['random_no_label'],
-                                _config['data_cfg'],
-                                _config['single_obj_seq_mode'],
-                                _config['random_box_coord_perm'],
-                                _config['random_frame_epsilon'],
-                                _config['random_object_id_sub_group'])
+    meta_task_set_config = (
+        _config['random_frame_transform_per_task'],
+        _config['random_flip_label'],
+        _config['random_no_label'],
+        _config['data_cfg'],
+        _config['single_obj_seq_mode'],
+        _config['random_box_coord_perm'],
+        _config['random_frame_epsilon'],
+        _config['random_object_id_sub_group'])
+
+    if isinstance(_config['datasets']['train']['name'], list):
+        meta_task_set = []
+        for n, s in zip(_config['datasets']['train']['name'],
+                        _config['datasets']['train']['split']):
+            meta_task_set.append(MetaTaskset(
+                {'name': n, 'split': s}, *meta_task_set_config))
+
+        meta_task_set = ConcatDataset(meta_task_set)
+    else:
+        meta_task_set = MetaTaskset(
+            _config['datasets']['train'], *meta_task_set_config)
 
     def collate_fn(batch):
         return batch
@@ -415,32 +433,7 @@ def meta_run(rank: int, init_model_state_dict: dict,
 
     while True:
 
-        # meta_tasks = generate_meta_train_tasks(_config['datasets'],
-        #                                        _config['random_frame_transform_per_task'],
-        #                                        _config['random_flip_label'],
-        #                                        _config['random_no_label'],
-        #                                        _config['data_cfg'],
-        #                                        _config['single_obj_seq_mode'],
-        #                                        _config['random_box_coord_perm'],
-        #                                        _config['random_frame_epsilon'],
-        #                                        sub_meta_batch_size)
-
         for meta_mini_batch in meta_task_loader:
-
-            # print('PERFECT BATCH')
-
-            # continue
-
-            # meta_mini_batch = meta_tasks # list(grouper(sub_meta_batch_size, meta_tasks))
-
-            # num_sub_meta_batches_for_epoch = len(meta_tasks) // (sub_meta_batch_size * num_meta_processes)
-
-            # print('len(meta_tasks)', len(meta_tasks))
-            # print('sub_meta_batch_size', sub_meta_batch_size)
-            # print('num_sub_meta_batches_for_epoch', num_sub_meta_batches_for_epoch)
-
-            # for i, meta_mini_batch in enumerate(sub_meta_mini_batches):
-                # print(f"rank {rank} meta_mini_batch {i}")
 
             # main process sets iter_done=False after shared_meta_optim is updated
             while shared_dict['sub_iter_done']:
@@ -719,6 +712,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
     # data_cfg['multi_object'] = 'all'
 
     while True:
+        while shared_dict['meta_iter'] is not None:
+            time.sleep(0.25)
+
         meta_optim_state_dict = copy.deepcopy(shared_meta_optim_state_dict)
         meta_iter = shared_variables['meta_iter']
         meta_epoch = shared_variables['meta_epoch']
@@ -897,8 +893,8 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     if eval_frame_range_max > len(test_loader.dataset):
                         eval_frame_range_max = len(test_loader.dataset)
 
-                    if obj_id == 0:
-                        num_frames += eval_frame_range_max - eval_frame_range_min
+                    # if obj_id == 0:
+                    num_frames += eval_frame_range_max - eval_frame_range_min
 
                     # load_state_dict(model, seq_name, parent_states[dataset_key])
                     if eval_online_step_count == 0 or _config['eval_online_adapt']['reset_model']:
@@ -1094,7 +1090,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         ax.imshow(mask_frame.squeeze(2), cmap='jet', vmin=0, vmax=test_loader.dataset.num_objects)
 
                         if frame_id and boxes_seq[frame_id] is not None:
-                            for box in boxes_seq[frame_id]:
+                            for obj_id, box in enumerate(boxes_seq[frame_id]):
                                 ax.add_patch(
                                     plt.Rectangle(
                                         (box[0], box[1]),
@@ -1103,6 +1099,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                                         fill=False,
                                         linewidth=1.0,
                                     ))
+
+                                ax.annotate(obj_id, (box[0] + (box[2] - box[0]) / 2.0, box[1] + (box[3] - box[1]) / 2.0),
+                                            weight='bold', fontsize=12, ha='center', va='center')
 
                         plt.axis('off')
                         # plt.tight_layout()
@@ -1127,7 +1126,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 class MetaTaskset(Dataset):
     """Face Landmarks dataset."""
 
-    def __init__(self, datasets: dict, random_frame_transform_per_task: bool,
+    def __init__(self, dataset: dict, random_frame_transform_per_task: bool,
                  random_flip_label: bool, random_no_label: bool,
                  data_cfg: dict, single_obj_seq_mode: str,
                  random_box_coord_perm: bool, random_frame_epsilon: int,
@@ -1135,7 +1134,7 @@ class MetaTaskset(Dataset):
         """
         """
         self.train_loader_tmp, self.test_loader_tmp, self.meta_loader_tmp = data_loaders(
-        datasets['train'], **data_cfg)
+        dataset, **data_cfg)
         self.test_dataset = self.test_loader_tmp.dataset
         self.seqs_names = self.test_dataset.seqs_names
         self.random_frame_transform_per_task = random_frame_transform_per_task
@@ -1289,11 +1288,12 @@ class MetaTaskset(Dataset):
                 'meta_loader': meta_loader}
 
 
+
 @ex.automain
 def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
          eval_datasets: bool, num_meta_processes_per_gpu: int, datasets: dict,
          meta_optim_optim_cfg: dict, seed: int, _config: dict, _log: logging,
-         meta_optim_model_file: str, gpu_per_dataset_eval: bool,
+         meta_optim_model_file: str, num_eval_gpus: int,
          meta_batch_size: int, vis_interval: int, data_cfg: dict):
     mp.set_start_method('spawn')
     mp.set_sharing_strategy('file_system')
@@ -1306,7 +1306,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
     vis_dict = init_vis()  # pylint: disable=E1120
 
     if save_dir is not None:
-        save_dir = os.path.join(save_dir, f"{datasets['train']['name']}_{env_suffix}")
+        save_dir = os.path.join(save_dir, get_run_name())
         if os.path.exists(save_dir):
             if resume_meta_run_epoch_mode is None:
                 shutil.rmtree(save_dir)
@@ -1421,11 +1421,9 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         #     eval_processes.extend([{'dataset_key': k, 'flip_label': True}
         #                            for k, v in datasets.items()
         #                            if v['split'] is not None])
+        assert len(eval_processes) % num_eval_gpus == 0
 
-        if gpu_per_dataset_eval:
-            num_meta_processes -= len(eval_processes)
-        else:
-            num_meta_processes -= 1
+        num_meta_processes -= num_eval_gpus
 
         assert num_meta_processes >= 0
 
@@ -1467,8 +1465,9 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         p['shared_dict'] = process_manager.dict()
         p['shared_dict']['meta_iter'] = None
         p['shared_dict']['best_mean_J'] = 0.0
-        p['shared_dict']['eval_done'] = False
-        rank = rank if gpu_per_dataset_eval else 0
+
+        rank = rank % num_eval_gpus
+
         process_args = [rank, p['dataset_key'], p['flip_label'], meta_optim.state_dict(), shared_variables,
                         _config, p['shared_dict'], save_dir, {n: v.win for n, v in vis_dict.items()},]
         p['process'] = mp.Process(target=evaluate, args=process_args)
@@ -1512,7 +1511,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         # VIS EVAL
         #
         for p in eval_processes:
-            if p['shared_dict']['meta_iter'] is not None and not p['shared_dict']['eval_done']:
+            if p['shared_dict']['meta_iter'] is not None:
                 # copy to avoid overwriting by evaluation subprocess
                 shared_dict = copy.deepcopy(p['shared_dict'])
 
@@ -1537,8 +1536,13 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
                 # evalutate only once if in eval mode
                 if not num_meta_processes:
-                    p['shared_dict']['eval_done'] = True
-                p['shared_dict']['meta_iter'] = None
+                    p['process'].terminate()
+                else:
+                    p['shared_dict']['meta_iter'] = None
+
+        # finish in eval mode when all evaluations are done
+        if not num_meta_processes and all([p['shared_dict']['meta_iter'] is not None for p in eval_processes]):
+            return
 
         if num_meta_processes and all([p['shared_dict']['sub_iter_done'] for p in meta_processes]):
             shared_variables['meta_iter'] += 1

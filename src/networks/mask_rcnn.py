@@ -472,10 +472,11 @@ class MaskRCNN(_MaskRCNN):
 
         super(MaskRCNN, self).__init__(backbone_model,
                                        num_classes,
-                                    #    box_detections_per_img=1,
                                        box_roi_pool=box_roi_pool,
                                        mask_roi_pool=mask_roi_pool,
                                        mask_head=mask_head,)
+                                    #    box_detections_per_img=1,
+                                    #    box_nms_thresh=0.95)
                                     #    bbox_reg_weights=bbox_reg_weights)
                                     #    box_batch_size_per_image=256,)
                                     #    rpn_pre_nms_top_n_train=rpn_pre_nms_top_n_train,
