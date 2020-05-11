@@ -45,7 +45,7 @@ class YouTube(VOSDataset):
         self._split = self.seqs_key.split('_')[0]
         seqs_dir = os.path.join(self.root_dir, self._split)
 
-        if self._split in ['valid', 'test']:
+        if self._split in ['valid', 'test', 'valid-all-frames', 'test-all-frames']:
             self.test_mode = True
 
         self._meta_data = None
