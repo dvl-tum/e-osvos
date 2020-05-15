@@ -178,6 +178,7 @@ class VOSDataset(Dataset):
         self.labels = self.seqs[seq_name]['labels']
         self.seq_key = seq_name
         self._num_objects = None
+        self._preload_buffer = []
 
         # if seq_name not in self.preloaded_buffer:
         #     self.preloaded_buffer[seq_name] = {}
@@ -223,7 +224,7 @@ class VOSDataset(Dataset):
 
     def fill_preload_buffer(self):
         self._preload_buffer = [self.make_img_label_pair(idx)
-                                  for idx in range(len(self.imgs))]
+                                for idx in range(len(self.imgs))]
 
     def make_img_label_pair(self, idx):
         """

@@ -88,6 +88,20 @@ class YouTube(VOSDataset):
 
             self.setup_davis_eval()
 
+    def get_random_frame_id(self):
+        if self.random_frame_id_epsilon is not None:
+            random_frame_id_epsilon = self.random_frame_id_epsilon
+            if 'all-frames' not in self._split:
+                assert random_frame_id_epsilon % 5 == 0, "random_frame_id_epsilon={random_frame_id_epsilon} must be multiples of 5."
+
+                random_frame_id_epsilon //= 5
+
+            return torch.randint(max(0, self.random_frame_id_anchor_frame - random_frame_id_epsilon),
+                                 min(self.random_frame_id_anchor_frame + random_frame_id_epsilon + 1, len(self.imgs)),
+                                 (1,)).item()
+        else:
+            return torch.randint(len(self.imgs), (1,)).item()
+
     @property
     def num_objects(self):
         """

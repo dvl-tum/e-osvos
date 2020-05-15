@@ -835,9 +835,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 test_loader.dataset.multi_object_id = obj_id
                 meta_loader.dataset.multi_object_id = obj_id
 
-                # train_loader.dataset.fill_preload_buffer()
-                # test_loader.dataset.fill_preload_buffer()
-                # meta_loader.dataset.fill_preload_buffer()
+                train_loader.dataset.fill_preload_buffer()
+                test_loader.dataset.fill_preload_buffer()
+                meta_loader.dataset.fill_preload_buffer()
 
                 train_loader.dataset.set_gt_frame_id()
                 num_objects_in_group = train_loader.dataset.num_objects_in_group
@@ -885,7 +885,8 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         # eval_frame_range_min = (meta_frame_id - eval_online_adapt_step // 2) + 1
                         eval_frame_range_min = eval_frame_range_max
 
-                        propagate_frame_gt = masks[seq_name][eval_frame_range_min - 1][obj_id: obj_id + 1].ge(0.5).float()
+                        propagate_frame_gt = masks[seq_name][eval_frame_range_min -
+                                                             1][obj_id: obj_id + 1].ge(_config['eval_online_adapt']['min_prop']).float()
                         train_loader.dataset.frame_id = eval_frame_range_min - 1
 
                     eval_frame_range_max += eval_online_adapt_step
@@ -1531,6 +1532,7 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                                      torch.tensor(shared_dict['init_J_seq']).mean()])
                 eval_seq_vis.extend(shared_dict['init_J_seq'])
                 eval_seq_vis.extend(shared_dict['J_seq'])
+
                 vis_dict[f"{p['dataset_key']}_flip_label_{p['flip_label']}_eval_seq_vis"].plot(
                     eval_seq_vis, shared_dict['meta_iter'])
 

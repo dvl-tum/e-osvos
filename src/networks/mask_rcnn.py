@@ -489,7 +489,7 @@ class MaskRCNN(_MaskRCNN):
         self.rpn._eval_augment_proposals_mode = eval_augment_rpn_proposals_mode
         self.rpn.forward = types.MethodType(rpn_forward, self.rpn)
 
-        if 'resnet50' == backbone:
+        if 'resnet' in backbone:
             pretrained_state_dict = load_state_dict_from_url('https://download.pytorch.org/models/maskrcnn_resnet50_fpn_coco-bf2d0c1e.pth',
                                                   progress=True)
 
