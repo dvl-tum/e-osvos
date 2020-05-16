@@ -835,9 +835,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 test_loader.dataset.multi_object_id = obj_id
                 meta_loader.dataset.multi_object_id = obj_id
 
-                train_loader.dataset.fill_preload_buffer()
-                test_loader.dataset.fill_preload_buffer()
-                meta_loader.dataset.fill_preload_buffer()
+                # train_loader.dataset.fill_preload_buffer()
+                # test_loader.dataset.fill_preload_buffer()
+                # meta_loader.dataset.fill_preload_buffer()
 
                 train_loader.dataset.set_gt_frame_id()
                 num_objects_in_group = train_loader.dataset.num_objects_in_group
