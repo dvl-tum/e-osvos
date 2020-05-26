@@ -11,6 +11,7 @@ from torchvision.models.detection.rpn import concat_box_prediction_layers
 from torchvision.models.utils import load_state_dict_from_url
 from torchvision.ops import MultiScaleRoIAlign
 from torchvision.ops.misc import FrozenBatchNorm2d
+from torchvision.ops import boxes as box_ops
 
 # from .efficient_det.models.bifpn import BIFPN as _BIFPN
 # from .efficient_det.models.efficientnet import EfficientNet
@@ -24,9 +25,9 @@ class EfficientNet(_EfficientNet):
 
     def forward(self, x):
         feature_maps = super(EfficientNet, self).forward(x)
-        # return feature_maps[-3:]
+        return feature_maps[-3:]
         # print([f.shape for f in feature_maps])
-        return feature_maps
+        # return feature_maps
 
 
 class EfficientNetAndBiFPN(nn.Sequential):
@@ -44,39 +45,39 @@ class EfficientNetAndBiFPN(nn.Sequential):
 
 class BiFPN(_BiFPN):
 
-    def __init__(self, num_channels, conv_channels, first_time=False, epsilon=1e-4, onnx_export=False, attention=True):
-        super(BiFPN, self).__init__(num_channels, conv_channels, first_time, epsilon, onnx_export, attention)
+#     def __init__(self, num_channels, conv_channels, first_time=False, epsilon=1e-4, onnx_export=False, attention=True):
+#         super(BiFPN, self).__init__(num_channels, conv_channels, first_time, epsilon, onnx_export, attention)
 
-        if self.first_time:
-            del self.p5_to_p6
+#         if self.first_time:
+#             del self.p5_to_p6
 
-            self.p6_down_channel = nn.Sequential(
-                Conv2dStaticSamePadding(conv_channels[3], num_channels, 1),
-                nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
-            )
+#             self.p6_down_channel = nn.Sequential(
+#                 Conv2dStaticSamePadding(conv_channels[3], num_channels, 1),
+#                 nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
+#             )
 
     def _forward_fast_attention(self, inputs):
         if self.first_time:
-            # p3, p4, p5 = inputs
+            p3, p4, p5 = inputs
 
-            # p6_in = self.p5_to_p6(p5)
-            # p7_in = self.p6_to_p7(p6_in)
-
-            # p3_in = self.p3_down_channel(p3)
-            # p4_in = self.p4_down_channel(p4)
-            # p5_in = self.p5_down_channel(p5)
-
-            p3, p4, p5, p6 = inputs
-
-            # p6_in = self.p5_to_p6(p5)
-
+            p6_in = self.p5_to_p6(p5)
+            p7_in = self.p6_to_p7(p6_in)
 
             p3_in = self.p3_down_channel(p3)
             p4_in = self.p4_down_channel(p4)
             p5_in = self.p5_down_channel(p5)
-            p6_in = self.p6_down_channel(p6)
 
-            p7_in = self.p6_to_p7(p6_in)
+            # p3, p4, p5, p6 = inputs
+
+            # p6_in = self.p5_to_p6(p5)
+
+
+            # p3_in = self.p3_down_channel(p3)
+            # p4_in = self.p4_down_channel(p4)
+            # p5_in = self.p5_down_channel(p5)
+            # p6_in = self.p6_down_channel(p6)
+
+            # p7_in = self.p6_to_p7(p6_in)
 
         else:
             # P3_0, P4_0, P5_0, P6_0 and P7_0
@@ -386,11 +387,87 @@ def rpn_forward(self, images, features, targets=None):
     return boxes, losses
 
 
+def postprocess_detections(self, class_logits, box_regression, proposals, image_shapes):
+    device = class_logits.device
+    num_classes = class_logits.shape[-1]
+
+    boxes_per_image = [len(boxes_in_image) for boxes_in_image in proposals]
+    pred_boxes = self.box_coder.decode(box_regression, proposals)
+
+    pred_scores = F.softmax(class_logits, -1)
+
+    # split boxes and scores per image
+    pred_boxes = pred_boxes.split(boxes_per_image, 0)
+    pred_scores = pred_scores.split(boxes_per_image, 0)
+
+    all_boxes = []
+    all_scores = []
+    all_labels = []
+    for boxes, scores, image_shape in zip(pred_boxes, pred_scores, image_shapes):
+        boxes = box_ops.clip_boxes_to_image(boxes, image_shape)
+        # print(self.training, boxes.shape)
+
+        # create labels for each prediction
+        labels = torch.arange(num_classes, device=device)
+        labels = labels.view(1, -1).expand_as(scores)
+
+        # remove predictions with the background label
+        boxes = boxes[:, 1:]
+        scores = scores[:, 1:]
+        labels = labels[:, 1:]
+
+        # batch everything, by making every class prediction be a separate instance
+        boxes = boxes.reshape(-1, 4)
+        scores = scores.flatten()
+        labels = labels.flatten()
+
+        orig_inds = torch.arange(boxes.shape[0])
+
+        # remove low scoring boxes
+        inds = torch.nonzero(scores > self.score_thresh).squeeze(1)
+        boxes, scores, labels, orig_inds = boxes[inds], scores[inds], labels[inds], orig_inds[inds]
+
+        # remove empty boxes
+        keep = box_ops.remove_small_boxes(boxes, min_size=1e-2)
+        boxes, scores, labels, orig_inds = boxes[keep], scores[keep], labels[keep], orig_inds[keep]
+
+        # non-maximum suppression, independently done per class
+        keep = box_ops.batched_nms(boxes, scores, labels, self.nms_thresh)
+        # keep only topk scoring predictions
+
+        # if self._eval_augment_proposals_mode == 'EXTEND':
+        #     assert self.detections_per_img == 1
+
+        #     use_local = False
+        #     for i, orig_ind in enumerate(orig_inds[keep]):
+        #         if orig_ind >= 500:
+        #             print(orig_ind)
+        #             keep = keep[i:i + self.detections_per_img]
+        #             use_local = True
+        #             break
+
+        #     if not use_local:
+        #         print('not local')
+        #         keep = keep[:self.detections_per_img]
+        # else:
+        #    keep = keep[:self.detections_per_img]
+
+        keep = keep[:self.detections_per_img]
+
+        boxes, scores, labels = boxes[keep], scores[keep], labels[keep]
+
+        all_boxes.append(boxes)
+        all_scores.append(scores)
+        all_labels.append(labels)
+
+    return all_boxes, all_scores, all_labels
+
+
 class MaskRCNN(_MaskRCNN):
 
     def __init__(self, backbone, num_classes, batch_norm=None, train_encoder=True,
                  roi_pool_output_sizes=None, eval_augment_rpn_proposals_mode=None,
-                 replace_batch_with_group_norms=False):
+                 replace_batch_with_group_norms=False, box_nms_thresh=0.5):
 
         self._num_groups = 32
         if 'efficientnet' in backbone:
@@ -419,9 +496,9 @@ class MaskRCNN(_MaskRCNN):
                 0: [40, 112, 320],
                 1: [40, 112, 320],
                 2: [48, 120, 352],
-                3: [32, 48, 136, 384],
+                3: [48, 136, 384],
                 4: [56, 160, 448],
-                5: [40, 64, 176, 512],
+                5: [64, 176, 512],
                 6: [72, 200, 576],
                 7: [72, 200, 576],
             }
@@ -438,8 +515,8 @@ class MaskRCNN(_MaskRCNN):
             model_state_dict = torch.load(f"models/efficientdet-d{compound_coef}.pth")
             backbone_model_encoder.load_state_dict({k.replace('backbone_net.', ''): v for k, v in model_state_dict.items()
                                                     if 'backbone_net' in k})
-            # backbone_model_fpn.load_state_dict({k.replace('bifpn.', ''): v for k, v in model_state_dict.items()
-            #                                     if 'bifpn' in k})
+            backbone_model_fpn.load_state_dict({k.replace('bifpn.', ''): v for k, v in model_state_dict.items()
+                                                if 'bifpn' in k})
 
             backbone_model = EfficientNetAndBiFPN(backbone_model_encoder, backbone_model_fpn)
             backbone_model.out_channels = fpn_num_filters[compound_coef]
@@ -474,7 +551,8 @@ class MaskRCNN(_MaskRCNN):
                                        num_classes,
                                        box_roi_pool=box_roi_pool,
                                        mask_roi_pool=mask_roi_pool,
-                                       mask_head=mask_head,)
+                                       mask_head=mask_head,
+                                       box_nms_thresh=box_nms_thresh)
                                     #    box_detections_per_img=1,
                                     #    box_nms_thresh=0.95)
                                     #    bbox_reg_weights=bbox_reg_weights)
@@ -489,16 +567,25 @@ class MaskRCNN(_MaskRCNN):
         self.rpn._eval_augment_proposals_mode = eval_augment_rpn_proposals_mode
         self.rpn.forward = types.MethodType(rpn_forward, self.rpn)
 
-        if 'resnet50' in backbone:
-            pretrained_state_dict = load_state_dict_from_url('https://download.pytorch.org/models/maskrcnn_resnet50_fpn_coco-bf2d0c1e.pth',
-                                                  progress=True)
+        self.roi_heads._eval_augment_proposals_mode = eval_augment_rpn_proposals_mode
+        self.roi_heads.postprocess_detections = types.MethodType(
+            postprocess_detections, self.roi_heads)
 
-            state_dict = self.state_dict()
+        pretrained_state_dict = load_state_dict_from_url('https://download.pytorch.org/models/maskrcnn_resnet50_fpn_coco-bf2d0c1e.pth',
+                                                  progress=True)
+        state_dict = self.state_dict()
+
+        if 'resnet50' in backbone:
 
             for k in state_dict.keys():
                 if k in pretrained_state_dict and state_dict[k].shape == pretrained_state_dict[k].shape:
                     state_dict[k] = pretrained_state_dict[k]
 
+            self.load_state_dict(state_dict)
+        elif 'efficientnet' in backbone:
+            for k in state_dict.keys():
+                if 'backbone' not in k and k in pretrained_state_dict and state_dict[k].shape == pretrained_state_dict[k].shape:
+                    state_dict[k] = pretrained_state_dict[k]
             self.load_state_dict(state_dict)
 
         if replace_batch_with_group_norms:

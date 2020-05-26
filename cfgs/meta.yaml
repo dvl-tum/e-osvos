@@ -24,7 +24,7 @@ bptt_epochs: 10
 # choose uneven frames to have meta matching frame in the middle of eval frame interval.
 eval_online_adapt:
     step: null
-    reset_model: False
+    reset_model_mode: None                  # [None, FIRST_STEP, FULL]
     num_epochs: 5
     min_prop: 0.9
 meta_optim_model_file: null
@@ -89,7 +89,7 @@ parent_model:
     roi_pool_output_sizes:
         box: 7
         mask: 14
-
+    box_nms_thresh: 0.5
     decoder_norm_layer: GroupNorm
     # decoder_norm_layer: BatchNorm2d
     # encoder: resnet34

@@ -79,17 +79,24 @@ def run_loader(model, loader, loss_func, img_save_dir=None, return_probs=False, 
     # if hasattr(loader.sampler, 'indices') and loader.sampler.indices is not None:
     #     assert 1 in loader.sampler.indices
 
-    # if augment_target_proposals_mode is not None:
-    #     if start_targets is None:
-    #         loader_frame_id = loader.dataset.frame_id
-    #         # loader.dataset.frame_id = None
-    #         loader.dataset.set_gt_frame_id()
-    #         train_frame = loader.dataset[loader.dataset.frame_id]
-    #         train_frame_gt = train_frame['gt']
-    #         loader.dataset.frame_id = loader_frame_id
-    #         start_targets = train_frame_gt.unsqueeze(dim=0)
-
-    #     targets = start_targets.clone()
+    if augment_target_proposals_mode is not None:
+        if start_targets is None:
+        #     raise NotImplementedError
+        #     loader_frame_id = loader.dataset.frame_id
+        #     # loader.dataset.frame_id = None
+        #     loader.dataset.set_gt_frame_id()
+        #     train_frame = loader.dataset[loader.dataset.frame_id]
+        #     train_frame_gt = train_frame['gt']
+        #     loader.dataset.frame_id = loader_frame_id
+        #     start_targets = train_frame_gt.unsqueeze(dim=0)
+            targets = start_targets
+        else:
+            if start_targets.sum().item() == 0:
+                start_targets = None
+                model.rpn._eval_augment_proposals_mode = 'EXTEND'
+                targets = start_targets
+            else:
+                targets = start_targets.clone()
 
     probs_all = []
     boxes_all =[]
@@ -167,11 +174,19 @@ def eval_loader(model, loader, loss_func, img_save_dir=None, return_preds=False)
 
     evaluation = eval_davis_seq(img_save_dir, seq_name)
 
+    eval_J_mean = evaluation['J']['mean']
+    if not eval_J_mean:
+        eval_J_mean = [0.0]
+
+    eval_F_mean = evaluation['F']['mean']
+    if not eval_F_mean:
+        eval_F_mean = [0.0]
+
     if '/tmp/' in img_save_dir:
         shutil.rmtree(img_save_dir)
     if return_preds:
-        return loss_batches, acc_batches, evaluation['J']['mean'], evaluation['F']['mean'], preds
-    return loss_batches, acc_batches, evaluation['J']['mean'], evaluation['F']['mean']
+        return loss_batches, acc_batches, eval_J_mean, eval_F_mean, preds
+    return loss_batches, acc_batches, eval_J_mean, eval_F_mean
 
 
 def train_val(model, train_loader, val_loader, optim, num_epochs,
@@ -326,7 +341,7 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
 def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
                       replace_batch_with_group_norms, batch_norm,
                       roi_pool_output_sizes, eval_augment_rpn_proposals_mode,
-                      **datasets):
+                      box_nms_thresh, **datasets):
     if architecture == 'FPN':
         model = FPN(encoder, classes=1, activation=None, decoder_dropout=0.0,
                     batch_norm=batch_norm, train_encoder=train_encoder,
@@ -342,7 +357,8 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
             encoder, num_classes=2, batch_norm=batch_norm, train_encoder=train_encoder,
             roi_pool_output_sizes=roi_pool_output_sizes,
             eval_augment_rpn_proposals_mode=eval_augment_rpn_proposals_mode,
-            replace_batch_with_group_norms=replace_batch_with_group_norms)
+            replace_batch_with_group_norms=replace_batch_with_group_norms,
+            box_nms_thresh=box_nms_thresh)
     else:
         raise NotImplementedError
 
@@ -437,6 +453,10 @@ def eval_davis_seq(results_dir, seq_name):
     segmentations = Segmentation(os.path.join(
         results_dir, seq_name), not eval_cfg.MULTIOBJECT)
     annotations = Annotation(seq_name, not eval_cfg.MULTIOBJECT)
+
+    if 'NUM_OBJECTS' in eval_cfg:
+        segmentations.n_objects = eval_cfg.NUM_OBJECTS
+        annotations.n_objects = eval_cfg.NUM_OBJECTS
 
     evaluation = {}
     for m in ['J', 'F']:

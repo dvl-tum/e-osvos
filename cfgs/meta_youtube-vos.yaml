@@ -6,12 +6,34 @@ data_cfg:
     #     meta: [480, 854]
 datasets:
     train:
+        # split: [train_dev_train_seqs, train_seqs, train_seqs]
+        # name: [YouTube-VOS, DAVIS-2017, DAVIS-2016]
         name: [YouTube-VOS, DAVIS-2017]
-        split: [train_dev_train_seqs, train_seqs]
+        split: [train_dev_random_123_train_seqs, train_seqs]
         eval: False
     val:
         name: YouTube-VOS
-        split: valid_seqs
+        split: valid-all-frames_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_1:
+        name: YouTube-VOS
+        split: valid_split_1_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_2:
+        name: YouTube-VOS
+        split: valid_split_2_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_3:
+        name: YouTube-VOS
+        split: valid_split_3_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_4:
+        name: YouTube-VOS
+        split: valid_split_4_seqs
         # split: train_debug_seqs
         eval: False
     test:
@@ -20,11 +42,13 @@ datasets:
         eval: False
     train_dev_train_val:
         name: YouTube-VOS
-        split: train_dev_train_val_seqs
+        # split: train_dev_train_val_seqs
+        split: train_dev_random_123_train_val_seqs
         eval: True
     train_dev_val:
         name: YouTube-VOS
-        split: train_dev_val_seqs
+        # split: train_dev_val_seqs
+        split: train_dev_random_123_val_seqs
         eval: True
     val_davis16:
         name: DAVIS-2016
@@ -36,6 +60,7 @@ datasets:
         eval: True
 parent_model:
     train:
+        # paths: ['models/MaskRCNN_ResNet50/YouTube-VOS/train_dev_random_123_train_seqs/MaskRCNN_ResNet50_epoch-7.pth']
         paths: []
         val_split_files: []
     val:

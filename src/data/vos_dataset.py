@@ -43,6 +43,7 @@ class VOSDataset(Dataset):
         self._num_objects = None
         self._preload_buffer = [] #{'imgs': {}, 'labels': {}}
         self.sub_group_ids = None
+        self.all_frames = False
 
         # self.preloaded_buffer = {}
 
@@ -243,19 +244,22 @@ class VOSDataset(Dataset):
             #     self._preload_buffer['imgs'][img_path] = img
 
             # load first frame GT as placeholder for test mode
-            if self.test_mode:
-                if self._label_id is not None:
-                    label = Image.open(self.labels[self._label_id])
-                else:
-                    label = Image.open(self.labels[0])
+            # if self.test_mode:
+            #     label = Image.open(self.labels[0])
+            # else:
+            if self._label_id is not None:
+                label = Image.open(self.labels[self._label_id])
             else:
-                label_path = self.labels[idx]
-                label = Image.open(label_path)
-                # if label_path in self._preload_buffer['labels']:
-                #     label = self._preload_buffer['labels'][label_path]
-                # else:
-                #     label = Image.open(label_path)
-                #     self._preload_buffer['labels'][label_path] = label
+                if self.test_mode:
+                    label = Image.open(self.labels[0])
+                else:
+                    label_path = self.labels[idx]
+                    label = Image.open(label_path)
+            # if label_path in self._preload_buffer['labels']:
+            #     label = self._preload_buffer['labels'][label_path]
+            # else:
+            #     label = Image.open(label_path)
+            #     self._preload_buffer['labels'][label_path] = label
 
             label = np.atleast_3d(label)[..., 0]
 
@@ -263,15 +267,15 @@ class VOSDataset(Dataset):
                 crop_h, crop_w = self.crop_size
                 img_h, img_w = label.shape
 
-                if (label != 0).any():
-                    pos = np.where(label != 0)
-                    xmin = np.min(pos[1])
-                    xmax = np.max(pos[1]) + 1
-                    ymin = np.min(pos[0])
-                    ymax = np.max(pos[0]) + 1
+                # if (label != 0).any():
+                #     pos = np.where(label != 0)
+                #     xmin = np.min(pos[1])
+                #     xmax = np.max(pos[1]) + 1
+                #     ymin = np.min(pos[0])
+                #     ymax = np.max(pos[0]) + 1
 
-                    crop_w = max(crop_w, xmax - xmin)
-                    crop_h = max(crop_h, ymax - ymin)
+                #     crop_w = max(crop_w, xmax - xmin)
+                #     crop_h = max(crop_h, ymax - ymin)
 
                 if crop_h != img_h or crop_w != img_w:
                     pad_h = max(crop_h - img_h, 0)
@@ -297,8 +301,8 @@ class VOSDataset(Dataset):
                         img = img_pad[h_off: h_off + crop_h, w_off: w_off + crop_w]
                         label = label_pad[h_off: h_off + crop_h, w_off: w_off + crop_w]
 
-                        crop_with_all_labels = len(
-                            np.unique(label)) == num_unique_labels
+                        crop_with_all_labels = True # len(
+                            # np.unique(label)) == num_unique_labels
 
             img = np.array(img, dtype=np.float32)
             if self.normalize:

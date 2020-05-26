@@ -698,7 +698,9 @@ def meta_run(rank: int, init_model_state_dict: dict,
 
 def evaluate(rank: int, dataset_key: str, flip_label: bool,
              shared_meta_optim_state_dict: dict, shared_variables: dict,
-             _config: dict, shared_dict: dict, save_dir: str, vis_win_names: dict,):
+             _config: dict, shared_dict: dict, save_dir: str,
+             vis_win_names: dict, evaluate_only: bool, _log: logging):
+
     seed = _config['seed']
     loss_func = _config['loss_func']
     datasets = _config['datasets']
@@ -720,6 +722,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         meta_epoch = shared_variables['meta_epoch']
 
         set_random_seeds(seed)
+
         device = torch.device(f'cuda:{rank}')
 
         model, parent_states = init_parent_model(**_config['parent_model'])
@@ -813,7 +816,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 meta_optim.reset()
                 meta_optim.eval()
 
-                if test_loader.dataset.test_mode:
+                if test_loader.dataset.test_mode or test_loader.dataset.all_frames:
                     J = [0.0]
                 else:
                     _, _, J, _,  = eval_loader(model, test_loader, loss_func)
@@ -898,8 +901,12 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     num_frames += eval_frame_range_max - eval_frame_range_min
 
                     # load_state_dict(model, seq_name, parent_states[dataset_key])
-                    if eval_online_step_count == 0 or _config['eval_online_adapt']['reset_model']:
+                    if eval_online_step_count == 0 or _config['eval_online_adapt']['reset_model_mode'] == 'FULL':
                         meta_optim.load_state_dict(meta_optim_state_dict)
+                        meta_optim.reset()
+                        meta_optim.eval()
+                    elif _config['eval_online_adapt']['reset_model_mode'] == 'FIRST_STEP':
+                        meta_optim.load_state_dict(meta_optim_state_dict_first_step)
                         meta_optim.reset()
                         meta_optim.eval()
 
@@ -946,6 +953,12 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                             inputs, gts = inputs.to(device), gts.to(device)
 
+                            # if epoch == 1 and eval_online_step_count > 0:
+                            #     mask_frame = np.transpose(
+                            #         propagate_frame_gt.cpu().numpy(), (1, 2, 0)).astype(np.uint8) * 200
+                            #     imageio.imsave(
+                            #         f"{eval_online_step_count}.png", mask_frame)
+
                             if isinstance(model, MaskRCNN):
                                 train_loss, train_losses = model(inputs, gts)
                             else:
@@ -966,8 +979,10 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                         if early_stopping_func(train_loss_hist):
                             break
-
                     train_loss_seq.append(train_loss.item())
+
+                    if _config['eval_online_adapt']['reset_model_mode'] == 'FIRST_STEP' and eval_online_step_count == 0:
+                        meta_optim_state_dict_first_step = copy.deepcopy(meta_optim.state_dict())
 
                     if _config['parent_model']['architecture'] == 'MaskRCNN':
                         train_losses_seq.append({k: v.cpu().item()
@@ -1017,6 +1032,10 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             test_loader.dataset.frame_id = None
             for frame_id, mask_frame in enumerate(masks[seq_name]):
                 file_name = test_loader.dataset[frame_id]['file_name']
+
+                if test_loader.dataset.all_frames and not any([file_name in l for l in test_loader.dataset.labels]):
+                    continue
+
                 mask_frame = np.transpose(mask_frame.cpu().numpy(), (1, 2, 0)).astype(np.uint8)
 
                 if flip_label:
@@ -1032,6 +1051,10 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                               'F': {'mean': [0.0], 'recall': [0.0]}}
             else:
                 evaluation = eval_davis_seq(preds_save_dir, seq_name)
+
+            if evaluate_only:
+                _log.info(
+                    f"{dataset_key}: {seq_name} {evaluation['J']['mean']}")
 
             # print(evaluation)
             J_seq.extend(evaluation['J']['mean'])
@@ -1158,6 +1181,9 @@ class MetaTaskset(Dataset):
             if self.test_dataset.num_objects == 1:
                 if self.single_obj_seq_mode == 'IGNORE':
                     continue
+            else:
+                if self.single_obj_seq_mode == 'ONLY':
+                    continue
 
                 self.single_obj_seqs.append(seq_name)
 
@@ -1222,6 +1248,7 @@ class MetaTaskset(Dataset):
             meta_loader.dataset.random_frame_id_anchor_frame = train_loader.dataset.frame_id
 
         meta_frame_ids = [meta_loader.dataset.get_random_frame_id_with_label()
+        # meta_frame_ids = [meta_loader.dataset.get_random_frame_id()
                             for _ in range(self.data_cfg['batch_sizes']['meta'])]
 
         meta_loader.sampler.indices = meta_frame_ids
@@ -1470,7 +1497,8 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
         rank = rank % num_eval_gpus
 
         process_args = [rank, p['dataset_key'], p['flip_label'], meta_optim.state_dict(), shared_variables,
-                        _config, p['shared_dict'], save_dir, {n: v.win for n, v in vis_dict.items()},]
+                        _config, p['shared_dict'], save_dir, {n: v.win for n, v in vis_dict.items()},
+                        not bool(num_meta_processes), _log]
         p['process'] = mp.Process(target=evaluate, args=process_args)
         p['process'].start()
 

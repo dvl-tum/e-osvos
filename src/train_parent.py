@@ -22,7 +22,8 @@ from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
 from networks.mask_rcnn import MaskRCNN
 from tensorboardX import SummaryWriter
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
+
 from torchvision import transforms
 from util import visualize as viz
 from util.helper_func import eval_loader, run_loader, compute_loss
@@ -42,7 +43,7 @@ train_batch = 8  # Testing Batch
 test_batch = 8  # Testing Batch
 nTestInterval = 5  # Run on test set every nTestInterval epochs
 vis_net = False  # Visualize the network?
-snapshot = 5  # Store a model every snapshot epochs
+snapshot = 1  # Store a model every snapshot epochs
 nAveGrad = 1
 seed = 123
 log_to_tb = True
@@ -56,11 +57,11 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 # DAVIS
-db_root_dir = 'data/DAVIS-2016'
+# db_root_dir = 'data/DAVIS-2016'
 # db_root_dir = 'data/DAVIS-2017'
 
-train_dataset = 'train_seqs'
-test_dataset = 'val_seqs'
+# train_dataset = 'train_seqs'
+# test_dataset = 'val_seqs'
 
 # train_dataset = 'train_split_3_train'
 # test_dataset = 'train_split_3_val'
@@ -73,8 +74,9 @@ test_dataset = 'val_seqs'
 # train_dataset = 'pascal_voc'
 
 # YoutTube VOS
-# db_root_dir = 'data/YouTube-VOS'
-# train_dataset = 'train'
+db_root_dir = 'data/YouTube-VOS'
+train_dataset = 'train_dev_random_123_train_seqs'
+test_dataset = 'train_dev_random_123_val_seqs'
 
 
 # Network definition
@@ -85,8 +87,9 @@ test_dataset = 'val_seqs'
 # model_name = 'FPN_ResNet101'
 # model_name = 'FPN_efficientnet-b3'
 # model_name = 'DeepLabV3_ResNet50'
-model_name = 'DeepLabV3Plus_ResNet50_TEST'
-# model_name = 'MaskRCNN_ResNet50'
+# model_name = 'DeepLabV3Plus_ResNet50_TEST'
+model_name = 'MaskRCNN_ResNet50_YouTube+DAVIS-2017'
+# model_name = 'MaskRCNN_EfficientNet-b5'
 # loss_func = 'cross_entropy'
 # loss_func = 'class_balanced_cross_entropy'
 loss_func = 'dice'
@@ -163,7 +166,15 @@ elif 'MaskRCNN_ResNet50' in model_name:
     num_losses = 1
     lr = 0.0001
 
-    net = MaskRCNN('resnet50', num_classes=2, train_encoder=True)
+    net = MaskRCNN('resnet50', num_classes=2, train_encoder=True,
+                   roi_pool_output_sizes={'box': 7, 'mask': 28},
+                   replace_batch_with_group_norms=True)
+elif 'MaskRCNN_EfficientNet-b5' in model_name:
+    num_losses = 1
+    lr = 0.0001
+
+    net = MaskRCNN('efficientnet-b5', num_classes=2, train_encoder=True,
+                   roi_pool_output_sizes={'box': 7, 'mask': 28})
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 
@@ -232,8 +243,8 @@ else:
 # Preparation of the data loaders
 # Define augmentation transformations as a composition
 composed_transforms = transforms.Compose([tr.RandomHorizontalFlip(),
-                                        tr.RandomScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
-                                        tr.ToTensor()])
+                                          tr.RandomScaleNRotate(rots=(-30, 30), scales=(.75, 1.25)),
+                                          tr.ToTensor()])
 train_crop_size = None
 train_multi_object = False
 
@@ -252,11 +263,11 @@ if 'DAVIS' in db_root_dir:
                     transform=tr.ToTensor())
 
 elif 'YouTube-VOS' in db_root_dir:
-    train_batch = 16
-    test_batch = 16
-    nTestInterval = 2
-    train_crop_size = (720, 960)
-    train_multi_object = False#'single_id'
+    train_batch = 8
+    test_batch = 1
+    nTestInterval = 1
+    train_crop_size = (480, 854)
+    train_multi_object = False  #'single_id'
 
     # Testing dataset and its iterator
     db_train = YouTube(seqs_key=train_dataset,
@@ -265,13 +276,25 @@ elif 'YouTube-VOS' in db_root_dir:
                        transform=composed_transforms,
                        multi_object=train_multi_object)
 
+    # db_train_17 = YouTube(seqs_key='train_seqs',
+    #                       root_dir='data/DAVIS-2017',
+    #                         crop_size=train_crop_size,
+    #                         transform=composed_transforms,
+    #                         multi_object=train_multi_object)
+    # db_train = ConcatDataset([db_train_17, db_train])
+
     if train_multi_object == 'single_id':
         db_train.multi_object_id = 0
 
     # validate YouTube-VOS with DAVIS-16 val
-    db_test = DAVIS(seqs_key='val_seqs',
-                    root_dir='data/DAVIS-2016',
-                    transform=tr.ToTensor())
+    # db_test = DAVIS(seqs_key='val_seqs',
+    #                 root_dir='data/DAVIS-2016',
+    #                 transform=tr.ToTensor())
+
+    db_test = YouTube(seqs_key=test_dataset,
+                       root_dir=db_root_dir,
+                      transform=tr.ToTensor(),
+                       multi_object=train_multi_object)
 
     # Training dataset and its iterator
 
@@ -334,7 +357,7 @@ for epoch in range(resume_epoch, nEpochs):
         # Print stuff
 
         # if ii % num_img_tr == num_img_tr - 1:
-        if (ii + 1) % 25 == 0:
+        if (ii + 1) % 100 == 0:
             running_loss_tr = [x / num_img_tr for x in running_loss_tr]
             loss_tr.append(running_loss_tr[-1])
             # writer.add_scalar('data/total_loss_epoch', running_loss_tr[-1], epoch)

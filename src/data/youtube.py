@@ -48,6 +48,10 @@ class YouTube(VOSDataset):
         if self._split in ['valid', 'test', 'valid-all-frames', 'test-all-frames']:
             self.test_mode = True
 
+        self.all_frames = False
+        if 'all-frames' in self._split:
+            self.all_frames = True
+
         self._meta_data = None
         self.seq_key = None
         self.seqs = None
@@ -72,8 +76,13 @@ class YouTube(VOSDataset):
                 label_paths = list(map(lambda x: os.path.join(
                     seqs_dir, 'Annotations', seq_name, x), label_names))
 
-                if not self.test_mode and len(label_names) != len(img_names):
-                    print(f'failure in: {self.seqs_key}/{seq_name}')
+                # we never train on all frames
+                if self.all_frames:
+                    label_paths = label_paths + [label_paths[0]] * (len(img_paths) - len(label_paths))
+
+                if not self.test_mode:
+                    assert len(img_paths) == len(
+                        label_paths), f"{self._split} {img_names} {label_names}"
 
                 seqs[seq_name] = {}
                 seqs[seq_name]['imgs'] = img_paths
@@ -92,7 +101,7 @@ class YouTube(VOSDataset):
         if self.random_frame_id_epsilon is not None:
             random_frame_id_epsilon = self.random_frame_id_epsilon
             if 'all-frames' not in self._split:
-                assert random_frame_id_epsilon % 5 == 0, "random_frame_id_epsilon={random_frame_id_epsilon} must be multiples of 5."
+                assert random_frame_id_epsilon % 5 == 0, "random_frame_id_epsilon={random_frame_id_epsilon} must be a multiple of 5."
 
                 random_frame_id_epsilon //= 5
 
@@ -141,6 +150,8 @@ class YouTube(VOSDataset):
         super(YouTube, self).set_seq(seq_name)
         self._multi_object_id_to_label = [
             int(k) for k in sorted(self._meta_data['videos'][self.seq_key]['objects'].keys())]
+
+        eval_cfg.NUM_OBJECTS = self.num_object_groups
 
     def get_gt_frame_id(self, multi_object_id):
         objects_info = self._meta_data['videos'][self.seq_key]['objects']
@@ -237,7 +248,7 @@ class YouTube(VOSDataset):
         # eval_cfg.PATH.PALETTE = os.path.abspath(
         #     os.path.join(eval_cfg.PATH.ROOT, 'data/palette.txt'))
 
-        eval_cfg.SEQUENCES = {n: {'name': n, 'attributes': [], 'set': 'train', 'eval_t': False, 'year': 2017, 'num_frames': len(v['imgs'])}
+        eval_cfg.SEQUENCES = {n: {'name': n, 'attributes': [], 'set': 'train', 'eval_t': False, 'year': 2017, 'num_frames': len(set(v['labels']))}
                               for n, v in self.seqs.items()}
 
     def __deepcopy__(self, memo):
