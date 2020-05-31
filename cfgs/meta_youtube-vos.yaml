@@ -16,24 +16,64 @@ datasets:
         split: valid-all-frames_seqs
         # split: train_debug_seqs
         eval: False
-    val_split_1:
+    val_split_1_4:
         name: YouTube-VOS
-        split: valid_split_1_seqs
+        split: valid_split_1_4_seqs
         # split: train_debug_seqs
         eval: False
-    val_split_2:
+    val_split_2_4:
         name: YouTube-VOS
-        split: valid_split_2_seqs
+        split: valid_split_2_4_seqs
         # split: train_debug_seqs
         eval: False
-    val_split_3:
+    val_split_3_4:
         name: YouTube-VOS
-        split: valid_split_3_seqs
+        split: valid_split_3_4_seqs
         # split: train_debug_seqs
         eval: False
-    val_split_4:
+    val_split_4_4:
         name: YouTube-VOS
-        split: valid_split_4_seqs
+        split: valid_split_4_4_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_1_8:
+        name: YouTube-VOS
+        split: valid_split_1_8_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_2_8:
+        name: YouTube-VOS
+        split: valid_split_2_8_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_3_8:
+        name: YouTube-VOS
+        split: valid_split_3_8_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_4_8:
+        name: YouTube-VOS
+        split: valid_split_4_8_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_5_8:
+        name: YouTube-VOS
+        split: valid_split_5_8_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_6_8:
+        name: YouTube-VOS
+        split: valid_split_6_8_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_7_8:
+        name: YouTube-VOS
+        split: valid_split_7_8_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_8_8:
+        name: YouTube-VOS
+        split: valid_split_8_8_seqs
         # split: train_debug_seqs
         eval: False
     test:

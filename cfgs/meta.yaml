@@ -25,8 +25,8 @@ bptt_epochs: 10
 eval_online_adapt:
     step: null
     reset_model_mode: None                  # [None, FIRST_STEP, FULL]
-    num_epochs: 5
-    min_prop: 0.9
+    num_epochs: 10
+    min_prop: 0.5
 meta_optim_model_file: null
 meta_optim_cfg:
     num_layers: 1
@@ -99,6 +99,7 @@ parent_model:
     # encoder: resnet101-group-norm
     train:
         paths: []
+        # paths: ['models/MaskRCNN_ResNet50_YouTube-VOS-DAVIS-17_ABLATION/YouTube-VOS/train_dev_random_123_train_seqs/MaskRCNN_ResNet50_YouTube-VOS-DAVIS-17_ABLATION_epoch-3.pth']
         # paths: ['models/MaskRCNN_ResNet50_train_encoder=False/VOC2012/pascal_voc/MaskRCNN_ResNet50_train_encoder=False_epoch-50.pth']
         # paths:
         #     # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth

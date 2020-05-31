@@ -39,8 +39,8 @@ device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
 resume_epoch = False  # Default is False, change if want to resume
 nEpochs = 500  # Number of epochs for training (nAveGrad * (50000)/(2079/train_batch))
 useTest = True  # See evolution of the test set when training?
-train_batch = 8  # Testing Batch
-test_batch = 8  # Testing Batch
+train_batch = 4  # Testing Batch
+test_batch = 1  # Testing Batch
 nTestInterval = 5  # Run on test set every nTestInterval epochs
 vis_net = False  # Visualize the network?
 snapshot = 1  # Store a model every snapshot epochs
@@ -88,7 +88,7 @@ test_dataset = 'train_dev_random_123_val_seqs'
 # model_name = 'FPN_efficientnet-b3'
 # model_name = 'DeepLabV3_ResNet50'
 # model_name = 'DeepLabV3Plus_ResNet50_TEST'
-model_name = 'MaskRCNN_ResNet50_YouTube+DAVIS-2017'
+model_name = 'MaskRCNN_ResNet50_YouTube-VOS-DAVIS-17_ABLATION'
 # model_name = 'MaskRCNN_EfficientNet-b5'
 # loss_func = 'cross_entropy'
 # loss_func = 'class_balanced_cross_entropy'
@@ -168,7 +168,7 @@ elif 'MaskRCNN_ResNet50' in model_name:
 
     net = MaskRCNN('resnet50', num_classes=2, train_encoder=True,
                    roi_pool_output_sizes={'box': 7, 'mask': 28},
-                   replace_batch_with_group_norms=True)
+                   replace_batch_with_group_norms=False)
 elif 'MaskRCNN_EfficientNet-b5' in model_name:
     num_losses = 1
     lr = 0.0001
@@ -263,7 +263,7 @@ if 'DAVIS' in db_root_dir:
                     transform=tr.ToTensor())
 
 elif 'YouTube-VOS' in db_root_dir:
-    train_batch = 8
+    train_batch = 4
     test_batch = 1
     nTestInterval = 1
     train_crop_size = (480, 854)
@@ -276,25 +276,26 @@ elif 'YouTube-VOS' in db_root_dir:
                        transform=composed_transforms,
                        multi_object=train_multi_object)
 
-    # db_train_17 = YouTube(seqs_key='train_seqs',
-    #                       root_dir='data/DAVIS-2017',
-    #                         crop_size=train_crop_size,
-    #                         transform=composed_transforms,
-    #                         multi_object=train_multi_object)
-    # db_train = ConcatDataset([db_train_17, db_train])
+    db_train_17 = DAVIS(seqs_key='train_seqs',
+                        root_dir='data/DAVIS-2017',
+                        crop_size=train_crop_size,
+                        transform=composed_transforms,
+                        multi_object=train_multi_object)
+    db_train = ConcatDataset([db_train_17, db_train])
 
     if train_multi_object == 'single_id':
         db_train.multi_object_id = 0
 
     # validate YouTube-VOS with DAVIS-16 val
-    # db_test = DAVIS(seqs_key='val_seqs',
-    #                 root_dir='data/DAVIS-2016',
-    #                 transform=tr.ToTensor())
+    db_test = DAVIS(seqs_key='val_seqs',
+                    root_dir='data/DAVIS-2017',
+                    transform=tr.ToTensor())
+    db_test.resetup_davis_eval()
 
-    db_test = YouTube(seqs_key=test_dataset,
-                       root_dir=db_root_dir,
-                      transform=tr.ToTensor(),
-                       multi_object=train_multi_object)
+    # db_test = YouTube(seqs_key=test_dataset,
+    #                    root_dir=db_root_dir,
+    #                   transform=tr.ToTensor(),
+    #                    multi_object=train_multi_object)
 
     # Training dataset and its iterator
 
@@ -388,7 +389,7 @@ for epoch in range(resume_epoch, nEpochs):
         #     break
 
     # Save the model
-    if (epoch % snapshot) == snapshot - 1 and epoch != 0:
+    if (epoch % snapshot) == snapshot - 1:
         torch.save(net.state_dict(), os.path.join(
             save_dir, model_name, db_root_dir.split('/')[-1], train_dataset, model_name + '_epoch-' + str(epoch + 1) + '.pth'))
 

@@ -552,11 +552,11 @@ class MaskRCNN(_MaskRCNN):
                                        box_roi_pool=box_roi_pool,
                                        mask_roi_pool=mask_roi_pool,
                                        mask_head=mask_head,
-                                       box_nms_thresh=box_nms_thresh)
+                                       box_nms_thresh=box_nms_thresh,)
                                     #    box_detections_per_img=1,
                                     #    box_nms_thresh=0.95)
                                     #    bbox_reg_weights=bbox_reg_weights)
-                                    #    box_batch_size_per_image=256,)
+                                    #    box_batch_size_per_image=box_batch_size_per_image,)
                                     #    rpn_pre_nms_top_n_train=rpn_pre_nms_top_n_train,
                                     #    rpn_pre_nms_top_n_test=rpn_pre_nms_top_n_test,
                                     #    rpn_post_nms_top_n_train=rpn_post_nms_top_n_train)

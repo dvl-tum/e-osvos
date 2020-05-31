@@ -112,7 +112,7 @@ def init_vis(env_suffix: str, _config: dict, _run: sacred.run.Run,
                     legend.extend(['MEAN_TRAIN_LOSS_cls_score',
                                    'MEAN_TRAIN_LOSS_bbox_pred',
                                    'MEAN_TRAIN_LOSS_mask_fcn_logits'])
-                legend.extend(['J & F MEAN', 'J MEAN', 'J RECALL MEAN', 'F MEAN', 'F RECALL MEAN', 'INIT J MEAN'])
+                legend.extend(['J & F MEAN', 'J MEAN', 'J RECALL MEAN', 'J DECAY MEAN', 'F MEAN', 'F RECALL MEAN', 'F DECAY MEAN', 'INIT J MEAN'])
                 # for seq_name in loader.dataset.seqs_names:
                 #     loader.dataset.set_seq(seq_name)
                 #     if loader.dataset.num_objects == 1:
@@ -788,10 +788,12 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         init_J_seq = []
         J_seq = []
         J_recall_seq = []
+        J_decay_seq = []
         train_loss_seq = []
         train_losses_seq = []
         F_seq = []
         F_recall_seq = []
+        F_decay_seq = []
         masks = {}
         boxes = {}
 
@@ -1047,8 +1049,8 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             test_loader.dataset.frame_id = test_loader_frame_id
 
             if test_loader.dataset.test_mode:
-                evaluation = {'J': {'mean': [0.0], 'recall': [0.0]},
-                              'F': {'mean': [0.0], 'recall': [0.0]}}
+                evaluation = {'J': {'mean': [0.0], 'recall': [0.0], 'decay': [0.0]},
+                              'F': {'mean': [0.0], 'recall': [0.0], 'decay': [0.0]}}
             else:
                 evaluation = eval_davis_seq(preds_save_dir, seq_name)
 
@@ -1059,8 +1061,10 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
             # print(evaluation)
             J_seq.extend(evaluation['J']['mean'])
             J_recall_seq.extend(evaluation['J']['recall'])
+            J_decay_seq.extend(evaluation['J']['decay'])
             F_seq.extend(evaluation['F']['mean'])
             F_recall_seq.extend(evaluation['F']['recall'])
+            F_decay_seq.extend(evaluation['F']['decay'])
 
         # shutil.rmtree(preds_save_dir)
 
@@ -1137,10 +1141,12 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         shared_dict['init_J_seq'] = init_J_seq
         shared_dict['J_seq'] = J_seq
         shared_dict['J_recall_seq'] = J_recall_seq
+        shared_dict['J_decay_seq'] = J_decay_seq
         shared_dict['train_losses_seq'] = train_losses_seq
         shared_dict['train_loss_seq'] = train_loss_seq
         shared_dict['F_seq'] = F_seq
         shared_dict['F_recall_seq'] = F_recall_seq
+        shared_dict['F_decay_seq'] = F_decay_seq
         shared_dict['time_per_frame'] = eval_time / num_frames
 
         # set meta_iter here to signal main process that eval is finished
@@ -1555,8 +1561,10 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                 eval_seq_vis.extend([(torch.tensor(shared_dict['J_seq']).mean() + torch.tensor(shared_dict['F_seq']).mean()) / 2.0,
                                      torch.tensor(shared_dict['J_seq']).mean(),
                                      torch.tensor(shared_dict['J_recall_seq']).mean(),
+                                     torch.tensor(shared_dict['J_decay_seq']).mean(),
                                      torch.tensor(shared_dict['F_seq']).mean(),
                                      torch.tensor(shared_dict['F_recall_seq']).mean(),
+                                     torch.tensor(shared_dict['F_decay_seq']).mean(),
                                      torch.tensor(shared_dict['init_J_seq']).mean()])
                 eval_seq_vis.extend(shared_dict['init_J_seq'])
                 eval_seq_vis.extend(shared_dict['J_seq'])

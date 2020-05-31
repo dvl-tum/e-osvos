@@ -82,7 +82,10 @@ class DAVIS(VOSDataset):
         if self.year == 2016:
             eval_cfg.MULTIOBJECT = False
         if self._full_resolution:
-            eval_cfg.RESOLUTION = '1080p'
+            if self.year == 2016:
+                eval_cfg.RESOLUTION = '1080p'
+            else:
+                eval_cfg.RESOLUTION = 'Full-Resolution'
         if self.test_mode:
             eval_cfg.PHASE = 'test-dev'
         eval_cfg.YEAR = self.year
@@ -91,3 +94,8 @@ class DAVIS(VOSDataset):
         eval_cfg.PATH.SEQUENCES = os.path.join(eval_cfg.PATH.DATA, "JPEGImages", eval_cfg.RESOLUTION)
         eval_cfg.PATH.ANNOTATIONS = os.path.join(eval_cfg.PATH.DATA, "Annotations", eval_cfg.RESOLUTION)
         eval_cfg.PATH.PALETTE = os.path.abspath(os.path.join(eval_cfg.PATH.ROOT, 'data/palette.txt'))
+
+    def resetup_davis_eval(self):
+        self.setup_davis_eval()
+        eval_cfg.SEQUENCES = {n: {'name': n, 'attributes': [], 'set': 'train', 'eval_t': False, 'year': 2017, 'num_frames': len(set(v['labels']))}
+                              for n, v in self.seqs.items()}
