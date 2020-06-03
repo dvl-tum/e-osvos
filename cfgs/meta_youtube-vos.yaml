@@ -76,6 +76,86 @@ datasets:
         split: valid_split_8_8_seqs
         # split: train_debug_seqs
         eval: False
+    val_split_1_16:
+        name: YouTube-VOS
+        split: valid_split_1_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_2_16:
+        name: YouTube-VOS
+        split: valid_split_2_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_3_16:
+        name: YouTube-VOS
+        split: valid_split_3_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_4_16:
+        name: YouTube-VOS
+        split: valid_split_4_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_5_16:
+        name: YouTube-VOS
+        split: valid_split_5_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_6_16:
+        name: YouTube-VOS
+        split: valid_split_6_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_7_16:
+        name: YouTube-VOS
+        split: valid_split_7_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_8_16:
+        name: YouTube-VOS
+        split: valid_split_8_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_9_16:
+        name: YouTube-VOS
+        split: valid_split_9_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_10_16:
+        name: YouTube-VOS
+        split: valid_split_10_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_11_16:
+        name: YouTube-VOS
+        split: valid_split_11_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_12_16:
+        name: YouTube-VOS
+        split: valid_split_12_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_13_16:
+        name: YouTube-VOS
+        split: valid_split_13_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_14_16:
+        name: YouTube-VOS
+        split: valid_split_14_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_15_16:
+        name: YouTube-VOS
+        split: valid_split_15_16_seqs
+        # split: train_debug_seqs
+        eval: False
+    val_split_16_16:
+        name: YouTube-VOS
+        split: valid_split_16_16_seqs
+        # split: train_debug_seqs
+        eval: False
     test:
         name: YouTube-VOS
         split: null

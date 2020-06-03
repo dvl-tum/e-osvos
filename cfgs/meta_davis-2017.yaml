@@ -11,6 +11,30 @@ datasets:
         name: DAVIS-2017
         split: test-dev_seqs
         eval: False
+    test_split_1_6:
+        name: DAVIS-2017
+        split: test-dev_split_1_6_seqs
+        eval: False
+    test_split_2_6:
+        name: DAVIS-2017
+        split: test-dev_split_2_6_seqs
+        eval: False
+    test_split_3_6:
+        name: DAVIS-2017
+        split: test-dev_split_3_6_seqs
+        eval: False
+    test_split_4_6:
+        name: DAVIS-2017
+        split: test-dev_split_4_6_seqs
+        eval: False
+    test_split_5_6:
+        name: DAVIS-2017
+        split: test-dev_split_5_6_seqs
+        eval: False
+    test_split_6_6:
+        name: DAVIS-2017
+        split: test-dev_split_6_6_seqs
+        eval: False
 data_cfg:
     multi_object: single_id
     # crop_sizes:

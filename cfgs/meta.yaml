@@ -89,6 +89,7 @@ parent_model:
     roi_pool_output_sizes:
         box: 7
         mask: 14
+    maskrcnn_loss: LOVASZ         #[BCE, LOVASZ]
     box_nms_thresh: 0.5
     decoder_norm_layer: GroupNorm
     # decoder_norm_layer: BatchNorm2d

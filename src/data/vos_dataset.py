@@ -44,6 +44,7 @@ class VOSDataset(Dataset):
         self._preload_buffer = [] #{'imgs': {}, 'labels': {}}
         self.sub_group_ids = None
         self.all_frames = False
+        self.propagate_frame_gt = None
 
         # self.preloaded_buffer = {}
 
@@ -208,6 +209,9 @@ class VOSDataset(Dataset):
 
         if self.no_label:
             label[:] = 0.0
+
+        if self.propagate_frame_gt is not None:
+            label = self.propagate_frame_gt
 
         sample = {'image': img,
                   'gt': label,

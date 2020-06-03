@@ -8,10 +8,12 @@ from torch.nn import functional as F
 from torchvision.models.detection import MaskRCNN as _MaskRCNN
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
 from torchvision.models.detection.rpn import concat_box_prediction_layers
+from torchvision.models.detection.roi_heads import project_masks_on_boxes, maskrcnn_inference, fastrcnn_loss, keypointrcnn_loss, keypointrcnn_inference
 from torchvision.models.utils import load_state_dict_from_url
 from torchvision.ops import MultiScaleRoIAlign
 from torchvision.ops.misc import FrozenBatchNorm2d
 from torchvision.ops import boxes as box_ops
+from .lovasz_losses import lovasz_hinge
 
 # from .efficient_det.models.bifpn import BIFPN as _BIFPN
 # from .efficient_det.models.efficientnet import EfficientNet
@@ -257,6 +259,194 @@ class ASPP(nn.Module):
         return self.project(res)
 
 
+def maskrcnn_loss(mask_logits, proposals, gt_masks, gt_labels, mask_matched_idxs, gt_proposal_ids):
+    """
+    Arguments:
+        proposals (list[BoxList])
+        mask_logits (Tensor)
+        targets (list[BoxList])
+
+    Return:
+        mask_loss (Tensor): scalar tensor containing the loss
+    """
+
+    discretization_size = mask_logits.shape[-1]
+    labels = [l[idxs] for l, idxs in zip(gt_labels, mask_matched_idxs)]
+    mask_targets = [
+        project_masks_on_boxes(m, p, i, discretization_size)
+        for m, p, i in zip(gt_masks, proposals, mask_matched_idxs)
+    ]
+
+    labels = torch.cat(labels, dim=0)
+    mask_targets = torch.cat(mask_targets, dim=0)
+
+    # torch.mean (in binary_cross_entropy_with_logits) doesn't
+    # accept empty tensors, so handle it separately
+    if mask_targets.numel() == 0:
+        return mask_logits.sum() * 0
+
+    mask_loss = F.binary_cross_entropy_with_logits(
+        mask_logits[torch.arange(labels.shape[0], device=labels.device), labels], mask_targets
+    )
+    return mask_loss
+
+
+def maskrcnn_loss_lovasz(mask_logits, proposals, gt_masks, gt_labels, mask_matched_idxs, gt_proposal_ids):
+    """
+    Arguments:
+        proposals (list[BoxList])
+        mask_logits (Tensor)
+        targets (list[BoxList])
+
+    Return:
+        mask_loss (Tensor): scalar tensor containing the loss
+    """
+
+    discretization_size = mask_logits.shape[-1]
+    labels = [l[idxs] for l, idxs in zip(gt_labels, mask_matched_idxs)]
+    mask_targets = [
+        project_masks_on_boxes(m, p, i, discretization_size)
+        for m, p, i in zip(gt_masks, proposals, mask_matched_idxs)
+    ]
+
+    labels = torch.cat(labels, dim=0)
+    mask_targets = torch.cat(mask_targets, dim=0)
+
+    # torch.mean (in binary_cross_entropy_with_logits) doesn't
+    # accept empty tensors, so handle it separately
+    if mask_targets.numel() == 0:
+        return mask_logits.sum() * 0
+
+    # print([torch.unique(m) for m in gt_masks])
+
+    mask_loss = lovasz_hinge(mask_logits[torch.arange(labels.shape[0], device=labels.device), labels],
+                             mask_targets, ignore=255.0)
+
+    return mask_loss
+
+
+def roi_heads_forward(self, features, proposals, image_shapes, targets=None, box_coord_perm=None, images=None):
+    """
+    Arguments:
+        features (List[Tensor])
+        proposals (List[Tensor[N, 4]])
+        image_shapes (List[Tuple[H, W]])
+        targets (List[Dict])
+    """
+    if targets is not None:
+        for t in targets:
+            assert t["boxes"].dtype.is_floating_point, 'target boxes must of float type'
+            assert t["labels"].dtype == torch.int64, 'target labels must of int64 type'
+            if self.has_keypoint:
+                assert t["keypoints"].dtype == torch.float32, 'target keypoints must of float type'
+
+    if self.training:
+        proposals, matched_idxs, labels, regression_targets = self.select_training_samples(proposals, targets)
+
+    box_features = self.box_roi_pool(features, proposals, image_shapes)
+    box_features = self.box_head(box_features)
+    class_logits, box_regression = self.box_predictor(box_features)
+
+    result, losses = [], {}
+    if self.training:
+        loss_classifier, loss_box_reg = fastrcnn_loss(
+            class_logits, box_regression, labels, regression_targets, box_coord_perm)
+        losses = dict(loss_classifier=loss_classifier, loss_box_reg=loss_box_reg)
+    else:
+        boxes, scores, labels = self.postprocess_detections(class_logits, box_regression, proposals, image_shapes)
+        num_images = len(boxes)
+        for i in range(num_images):
+            result.append(
+                dict(
+                    boxes=boxes[i],
+                    labels=labels[i],
+                    scores=scores[i],
+                )
+            )
+
+    if self.has_mask:
+        mask_proposals = [p["boxes"] for p in result]
+        if self.training:
+            # during training, only focus on positive boxes
+            num_images = len(proposals)
+            mask_proposals = []
+            pos_matched_idxs = []
+            for img_id in range(num_images):
+                pos = torch.nonzero(labels[img_id] > 0).squeeze(1)
+                mask_proposals.append(proposals[img_id][pos])
+                pos_matched_idxs.append(matched_idxs[img_id][pos])
+
+
+        mask_features = self.mask_roi_pool(features, mask_proposals, image_shapes)
+
+        if mask_features.shape[0] > 0:
+            mask_features = self.mask_head(mask_features)
+        elif len(mask_proposals) > 1:
+            raise NotImplementedError
+        mask_logits = self.mask_predictor(mask_features)
+
+        loss_mask = {}
+        gt_proposal_ids = None
+        if self.training:
+            gt_masks = [t["masks"] for t in targets]
+            gt_labels = [t["labels"] for t in targets]
+
+            if self.maskrcnn_loss == 'BCE':
+                maskrcnn_loss_func = maskrcnn_loss
+            elif self.maskrcnn_loss == 'LOVASZ':
+                maskrcnn_loss_func = maskrcnn_loss_lovasz
+            else:
+                raise NotImplementedError
+
+            loss_mask = maskrcnn_loss_func(
+                mask_logits, mask_proposals,
+                gt_masks, gt_labels, pos_matched_idxs,
+                gt_proposal_ids)
+
+            loss_mask = dict(loss_mask=loss_mask)
+        else:
+            labels = [r["labels"] for r in result]
+            masks_probs = maskrcnn_inference(mask_logits, labels)
+
+            for mask_prob, r in zip(masks_probs, result):
+                r["masks"] = mask_prob
+
+        losses.update(loss_mask)
+
+    if self.has_keypoint:
+        keypoint_proposals = [p["boxes"] for p in result]
+        if self.training:
+            # during training, only focus on positive boxes
+            num_images = len(proposals)
+            keypoint_proposals = []
+            pos_matched_idxs = []
+            for img_id in range(num_images):
+                pos = torch.nonzero(labels[img_id] > 0).squeeze(1)
+                keypoint_proposals.append(proposals[img_id][pos])
+                pos_matched_idxs.append(matched_idxs[img_id][pos])
+
+        keypoint_features = self.keypoint_roi_pool(features, keypoint_proposals, image_shapes)
+        keypoint_features = self.keypoint_head(keypoint_features)
+        keypoint_logits = self.keypoint_predictor(keypoint_features)
+
+        loss_keypoint = {}
+        if self.training:
+            gt_keypoints = [t["keypoints"] for t in targets]
+            loss_keypoint = keypointrcnn_loss(
+                keypoint_logits, keypoint_proposals,
+                gt_keypoints, pos_matched_idxs)
+            loss_keypoint = dict(loss_keypoint=loss_keypoint)
+        else:
+            keypoints_probs, kp_scores = keypointrcnn_inference(keypoint_logits, keypoint_proposals)
+            for keypoint_prob, kps, r in zip(keypoints_probs, kp_scores, result):
+                r["keypoints"] = keypoint_prob
+                r["keypoints_scores"] = kps
+
+        losses.update(loss_keypoint)
+
+    return result, losses
+
+
 def rpn_forward(self, images, features, targets=None):
     """
     Arguments:
@@ -467,7 +657,8 @@ class MaskRCNN(_MaskRCNN):
 
     def __init__(self, backbone, num_classes, batch_norm=None, train_encoder=True,
                  roi_pool_output_sizes=None, eval_augment_rpn_proposals_mode=None,
-                 replace_batch_with_group_norms=False, box_nms_thresh=0.5):
+                 replace_batch_with_group_norms=False, box_nms_thresh=0.5,
+                 maskrcnn_loss='LOVASZ'):
 
         self._num_groups = 32
         if 'efficientnet' in backbone:
@@ -570,6 +761,10 @@ class MaskRCNN(_MaskRCNN):
         self.roi_heads._eval_augment_proposals_mode = eval_augment_rpn_proposals_mode
         self.roi_heads.postprocess_detections = types.MethodType(
             postprocess_detections, self.roi_heads)
+
+        self.roi_heads.maskrcnn_loss = maskrcnn_loss
+        self.roi_heads.forward = types.MethodType(
+            roi_heads_forward, self.roi_heads)
 
         pretrained_state_dict = load_state_dict_from_url('https://download.pytorch.org/models/maskrcnn_resnet50_fpn_coco-bf2d0c1e.pth',
                                                   progress=True)

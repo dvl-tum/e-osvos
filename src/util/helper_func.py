@@ -341,7 +341,7 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
 def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
                       replace_batch_with_group_norms, batch_norm,
                       roi_pool_output_sizes, eval_augment_rpn_proposals_mode,
-                      box_nms_thresh, **datasets):
+                      box_nms_thresh, maskrcnn_loss, **datasets):
     if architecture == 'FPN':
         model = FPN(encoder, classes=1, activation=None, decoder_dropout=0.0,
                     batch_norm=batch_norm, train_encoder=train_encoder,
@@ -358,7 +358,7 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
             roi_pool_output_sizes=roi_pool_output_sizes,
             eval_augment_rpn_proposals_mode=eval_augment_rpn_proposals_mode,
             replace_batch_with_group_norms=replace_batch_with_group_norms,
-            box_nms_thresh=box_nms_thresh)
+            box_nms_thresh=box_nms_thresh, maskrcnn_loss=maskrcnn_loss)
     else:
         raise NotImplementedError
 

@@ -854,6 +854,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                 # evaluation with online adaptation
                 if _config['eval_online_adapt']['step'] is None:
+                # if _config['eval_online_adapt']['step'] is None or train_loader.dataset.num_object_groups == 1:
                     # one iteration with original meta frame and evaluation of entire sequence
                     eval_online_adapt_step = len(test_loader.dataset)
                     meta_frame_iter = [meta_loader.dataset.frame_id]
@@ -869,9 +870,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     # print(i, train_loader.dataset.frame_id + 1)
                     # range [min, max[
                     if eval_online_step_count == 0:
-                        train_frame = train_loader.dataset[0]
+                        train_frame = test_loader.dataset[train_loader.dataset.frame_id]
                         train_frame_gt = train_frame['gt']
-                        train_frame_input = train_frame['image']
+                        # train_frame_input = train_frame['image']
 
                         for frame_id in range(len(test_loader.dataset)):
                             if not obj_id:
@@ -892,7 +893,20 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                         propagate_frame_gt = masks[seq_name][eval_frame_range_min -
                                                              1][obj_id: obj_id + 1].ge(_config['eval_online_adapt']['min_prop']).float()
-                        train_loader.dataset.frame_id = eval_frame_range_min - 1
+
+                        propagate_frame_gt_numpy = np.transpose(propagate_frame_gt.cpu().numpy(), (1, 2, 0))
+
+                        # kernel = np.ones((5, 5), np.uint8)
+                        # import cv2
+                        # # imageio.imsave(f"before_erosion.png", (propagate_frame_gt * 255).astype(np.uint8))
+                        # propagate_frame_gt_numpy_eroded = cv2.erode(
+                        #     propagate_frame_gt_numpy, kernel, iterations=1)[..., np.newaxis]
+                        # # imageio.imsave(
+                        # #     f"after_erosion.png", (propagate_frame_gt_eroded * 255).astype(np.uint8))
+                        # propagate_frame_gt_numpy[(
+                        #     propagate_frame_gt_numpy - propagate_frame_gt_numpy_eroded) == 1.0] = 255.0
+                        # # imageio.imsave(
+                        # #     f"before_erosion_minus.png", (propagate_frame_gt).astype(np.uint8))
 
                     eval_frame_range_max += eval_online_adapt_step
                     # if eval_frame_range_max + (eval_online_adapt_step // 2 + 1) > len(test_loader.dataset):
@@ -908,8 +922,36 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         meta_optim.reset()
                         meta_optim.eval()
                     elif _config['eval_online_adapt']['reset_model_mode'] == 'FIRST_STEP':
-                        meta_optim.load_state_dict(meta_optim_state_dict_first_step)
-                        meta_optim.reset()
+                        meta_optim.load_state_dict(meta_optim_state_dict)
+                        # model.load_state_dict(model_state_dict_first_step)
+
+                        # print('eval_online_step_count', eval_online_step_count)
+                        # print(
+                        #     meta_optim._model_init['backbone.body.conv1.weight'].abs().mean().item())
+                        # for n, p in model.named_parameters():
+                        #     print(n, p.abs().mean().item())
+                        #     break
+                        # meta_optim.load_state_dict(meta_optim_state_dict_first_step)
+                        # model.load_state_dict(model_state_dict_first_step)
+                        # for n, p in model.named_parameters():
+                        #     print(n, p.abs().mean().item())
+                        #     break
+                        # print(
+                        #     meta_optim._model_init['backbone.body.conv1.weight'].abs().mean().item())
+                        # for n, p in meta_optim.named_parameters():
+                        #     if 'model_init' in n:
+                        #         print(n, p.abs().mean().item())
+                        #         break
+
+                        model.load_state_dict(model_state_dict_first_step)
+
+                        # meta_optim.reset()
+                        # model.load_state_dict(
+                        #     {k: model_state_dict_first_step[k]
+                        #      if 'roi_heads.box_' not in k
+                        #      else v
+                        #      for k, v in model.state_dict().items()})
+
                         meta_optim.eval()
 
                     # if _config['meta_optim_cfg']['matching_input']:
@@ -936,30 +978,42 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     model.train_without_dropout()
 
                     for epoch in epoch_iter(num_epochs):
-                        set_random_seeds(_config['seed'] + epoch)
+                        set_random_seeds(
+                            _config['seed'] + epoch + eval_online_step_count)
 
                         for _, sample_batched in enumerate(train_loader):
                             inputs, gts = sample_batched['image'], sample_batched['gt']
 
-                            if not eval_online_step_count == 0:
-                                # gts = propagate_frame_gt.unsqueeze(dim=0)
+                            if eval_online_step_count  and propagate_frame_gt_numpy.sum().item() != 0:
+                                train_loader.dataset.frame_id = eval_frame_range_min - 1
 
-                                if propagate_frame_gt.sum().item() == 0:
-                                    gts = train_frame_gt.unsqueeze(dim=0)
-                                    inputs = train_frame_input.unsqueeze(dim=0)
-                                else:
-                                    gts = torch.cat([propagate_frame_gt.unsqueeze(dim=0),
-                                                     train_frame_gt.unsqueeze(dim=0)])
-                                    inputs = torch.cat([inputs,
-                                                        train_frame_input.unsqueeze(dim=0)])
+                                train_loader.dataset.propagate_frame_gt = propagate_frame_gt_numpy
+
+                                for _, sample_batched in enumerate(train_loader):
+                                    inputs_propagate, gts_propagate = sample_batched['image'], sample_batched['gt']
+
+                                train_batch_size = _config['data_cfg']['batch_sizes']['train']
+                                train_batch_size_part = min(train_batch_size // 2, 1)
+                                inputs = torch.cat(
+                                    [inputs[:train_batch_size_part],
+                                     inputs_propagate[:train_batch_size_part]])
+                                gts = torch.cat([gts[:train_batch_size_part],
+                                                 gts_propagate[:train_batch_size_part]])
+
+                                train_loader.dataset.propagate_frame_gt = None
+                                train_loader.dataset.set_gt_frame_id()
 
                             inputs, gts = inputs.to(device), gts.to(device)
 
-                            # if epoch == 1 and eval_online_step_count > 0:
+                            # if eval_online_step_count:
                             #     mask_frame = np.transpose(
-                            #         propagate_frame_gt.cpu().numpy(), (1, 2, 0)).astype(np.uint8) * 200
+                            #         inputs[0].cpu().numpy(), (1, 2, 0)) * 255
                             #     imageio.imsave(
-                            #         f"{eval_online_step_count}.png", mask_frame)
+                            #         f"{eval_online_step_count}_{epoch}_1.png", mask_frame.astype(np.uint8))
+                            #     mask_frame = np.transpose(
+                            #         inputs[1].cpu().numpy(), (1, 2, 0)) * 255
+                            #     imageio.imsave(
+                            #         f"{eval_online_step_count}_{epoch}_2.png", mask_frame.astype(np.uint8))
 
                             if isinstance(model, MaskRCNN):
                                 train_loss, train_losses = model(inputs, gts)
@@ -972,7 +1026,20 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                             model.zero_grad()
 
                             meta_optim.set_train_loss(train_loss)
+
+                            if _config['eval_online_adapt']['reset_model_mode'] == 'FIRST_STEP':
+                                meta_optim.only_box_head = eval_online_step_count != 0
+
+                            # for n, p in model.named_parameters():
+                            #     if 'roi_heads.box_predictor.bbox_pred.weight' in n:
+                            #         print(epoch, n, p.abs().mean().item())
+                            #         break
                             meta_optim.step(train_loss)
+
+                            # for n, p in model.named_parameters():
+                            #     if 'roi_heads.box_predictor.bbox_pred.weight' in n:
+                            #         print(epoch, n, p.abs().mean().item())
+                            #         break
 
                             meta_optim.meta_model.detach_param_groups()
 
@@ -984,7 +1051,10 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     train_loss_seq.append(train_loss.item())
 
                     if _config['eval_online_adapt']['reset_model_mode'] == 'FIRST_STEP' and eval_online_step_count == 0:
-                        meta_optim_state_dict_first_step = copy.deepcopy(meta_optim.state_dict())
+                        # meta_optim_state_dict_first_step = copy.deepcopy(
+                        #     meta_optim.state_dict())
+                        model_state_dict_first_step = copy.deepcopy(
+                            model.state_dict())
 
                     if _config['parent_model']['architecture'] == 'MaskRCNN':
                         train_losses_seq.append({k: v.cpu().item()
