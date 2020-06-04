@@ -865,8 +865,9 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                                             eval_online_adapt_step)
 
                 # meta_frame_id might be a str, e.g., 'middle'
-                start_eval = timeit.default_timer()
                 for eval_online_step_count, _ in enumerate(meta_frame_iter):
+                    if eval_online_step_count == 0:
+                        start_eval = timeit.default_timer()
                     # print(i, train_loader.dataset.frame_id + 1)
                     # range [min, max[
                     if eval_online_step_count == 0:
@@ -926,7 +927,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         eval_frame_range_max = len(test_loader.dataset)
 
                     # if obj_id == 0:
-                    num_frames += eval_frame_range_max - eval_frame_range_min
+                    # num_frames += eval_frame_range_max - eval_frame_range_min
 
                     # load_state_dict(model, seq_name, parent_states[dataset_key])
                     if eval_online_step_count == 0 or _config['eval_online_adapt']['reset_model_mode'] == 'FULL':
@@ -1089,6 +1090,10 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                     test_loader.sampler.indices = None
 
+                    if eval_online_step_count == 0:
+                        eval_time += (timeit.default_timer() - start_eval) * train_loader.dataset.num_object_groups
+                        num_frames += len(test_loader.dataset) * train_loader.dataset.num_object_groups
+
                     if eval_frame_range_max == len(test_loader.dataset):
                         break
 
@@ -1097,8 +1102,6 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                 background_mask = masks[seq_name][frame_id].max(dim=0, keepdim=True)[0].lt(0.5)
                 masks[seq_name][frame_id] = masks[seq_name][frame_id].argmax(dim=0, keepdim=True).float() + 1.0
                 masks[seq_name][frame_id][background_mask] = 0.0
-
-            eval_time += timeit.default_timer() - start_eval
 
             # TODO: refactor
             # assert test_loader.dataset.frame_id is None
