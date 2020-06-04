@@ -894,10 +894,22 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         propagate_frame_gt = masks[seq_name][eval_frame_range_min -
                                                              1][obj_id: obj_id + 1].ge(_config['eval_online_adapt']['min_prop']).float()
 
-                        propagate_frame_gt_numpy = np.transpose(propagate_frame_gt.cpu().numpy(), (1, 2, 0))
+                        propagate_frame_gt_conservative = masks[seq_name][eval_frame_range_min -
+                                                                          1][obj_id: obj_id + 1].ge(0.95).float()
 
-                        # kernel = np.ones((5, 5), np.uint8)
+                        propagate_frame_gt_numpy = np.copy(np.transpose(propagate_frame_gt.cpu().numpy(), (1, 2, 0)))
+
+                        propagate_frame_gt_conservative_numpy = np.transpose(
+                            propagate_frame_gt_conservative.cpu().numpy(), (1, 2, 0))
+
+                        propagate_frame_gt_numpy[(
+                            propagate_frame_gt_numpy - propagate_frame_gt_conservative_numpy) == 1.0] = 255.0
+
+                        # propagate_frame_gt_conservative_numpy[propagate_frame_gt_conservative_numpy != 1.0] = 255.0
+                        # propagate_frame_gt_numpy = propagate_frame_gt_conservative_numpy
+
                         # import cv2
+                        # kernel = np.ones((10, 10), np.uint8)
                         # # imageio.imsave(f"before_erosion.png", (propagate_frame_gt * 255).astype(np.uint8))
                         # propagate_frame_gt_numpy_eroded = cv2.erode(
                         #     propagate_frame_gt_numpy, kernel, iterations=1)[..., np.newaxis]
@@ -923,34 +935,8 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         meta_optim.eval()
                     elif _config['eval_online_adapt']['reset_model_mode'] == 'FIRST_STEP':
                         meta_optim.load_state_dict(meta_optim_state_dict)
-                        # model.load_state_dict(model_state_dict_first_step)
-
-                        # print('eval_online_step_count', eval_online_step_count)
-                        # print(
-                        #     meta_optim._model_init['backbone.body.conv1.weight'].abs().mean().item())
-                        # for n, p in model.named_parameters():
-                        #     print(n, p.abs().mean().item())
-                        #     break
-                        # meta_optim.load_state_dict(meta_optim_state_dict_first_step)
-                        # model.load_state_dict(model_state_dict_first_step)
-                        # for n, p in model.named_parameters():
-                        #     print(n, p.abs().mean().item())
-                        #     break
-                        # print(
-                        #     meta_optim._model_init['backbone.body.conv1.weight'].abs().mean().item())
-                        # for n, p in meta_optim.named_parameters():
-                        #     if 'model_init' in n:
-                        #         print(n, p.abs().mean().item())
-                        #         break
 
                         model.load_state_dict(model_state_dict_first_step)
-
-                        # meta_optim.reset()
-                        # model.load_state_dict(
-                        #     {k: model_state_dict_first_step[k]
-                        #      if 'roi_heads.box_' not in k
-                        #      else v
-                        #      for k, v in model.state_dict().items()})
 
                         meta_optim.eval()
 
@@ -977,6 +963,18 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                     model.train_without_dropout()
 
+                    # if eval_online_step_count and (propagate_frame_gt_numpy == 1.0).astype(float).sum().item() == 0:
+                    #     meta_optim.load_state_dict(meta_optim_state_dict)
+                    #     model.load_state_dict(model_state_dict_first_step)
+                    #     meta_optim.eval()
+                    # else:
+
+                    random_transformation_transforms = train_loader.dataset.transform
+                    if eval_online_step_count:
+                        train_loader.dataset.transform = custom_transforms.ToTensor()
+                    else:
+                        train_loader.dataset.transform = random_transformation_transforms
+
                     for epoch in epoch_iter(num_epochs):
                         set_random_seeds(
                             _config['seed'] + epoch + eval_online_step_count)
@@ -984,21 +982,25 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         for _, sample_batched in enumerate(train_loader):
                             inputs, gts = sample_batched['image'], sample_batched['gt']
 
-                            if eval_online_step_count  and propagate_frame_gt_numpy.sum().item() != 0:
+                            if eval_online_step_count and (propagate_frame_gt_numpy == 1.0).astype(float).sum().item() != 0:
                                 train_loader.dataset.frame_id = eval_frame_range_min - 1
-
                                 train_loader.dataset.propagate_frame_gt = propagate_frame_gt_numpy
+
+                                # train_loader.dataset.transforms
+                                # no_random_transformation_transforms
 
                                 for _, sample_batched in enumerate(train_loader):
                                     inputs_propagate, gts_propagate = sample_batched['image'], sample_batched['gt']
 
                                 train_batch_size = _config['data_cfg']['batch_sizes']['train']
-                                train_batch_size_part = min(train_batch_size // 2, 1)
+                                # train_batch_size_part = min(train_batch_size // 2, 1)
+                                train_batch_size_part = min(train_batch_size - 1, 1)
+
                                 inputs = torch.cat(
-                                    [inputs[:train_batch_size_part],
-                                     inputs_propagate[:train_batch_size_part]])
-                                gts = torch.cat([gts[:train_batch_size_part],
-                                                 gts_propagate[:train_batch_size_part]])
+                                    [inputs[:1],
+                                     inputs_propagate[:1]])
+                                gts = torch.cat([gts[:1],
+                                                 gts_propagate[:1]])
 
                                 train_loader.dataset.propagate_frame_gt = None
                                 train_loader.dataset.set_gt_frame_id()
@@ -1050,7 +1052,7 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                             break
                     train_loss_seq.append(train_loss.item())
 
-                    if _config['eval_online_adapt']['reset_model_mode'] == 'FIRST_STEP' and eval_online_step_count == 0:
+                    if eval_online_step_count == 0:
                         # meta_optim_state_dict_first_step = copy.deepcopy(
                         #     meta_optim.state_dict())
                         model_state_dict_first_step = copy.deepcopy(

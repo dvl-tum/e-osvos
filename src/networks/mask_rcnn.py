@@ -317,7 +317,12 @@ def maskrcnn_loss_lovasz(mask_logits, proposals, gt_masks, gt_labels, mask_match
     if mask_targets.numel() == 0:
         return mask_logits.sum() * 0
 
-    # print([torch.unique(m) for m in gt_masks])
+    # if len(gt_masks) == 2:
+    #     print([torch.unique(m) for m in gt_masks])
+    #     print([(torch.max(m), m.shape) for m in mask_targets[:-1]])
+
+    mask_targets[mask_targets > 1.0] = 255.0
+    # print([torch.max(m) for m in mask_targets])
 
     mask_loss = lovasz_hinge(mask_logits[torch.arange(labels.shape[0], device=labels.device), labels],
                              mask_targets, ignore=255.0)
@@ -903,12 +908,14 @@ class MaskRCNN(_MaskRCNN):
 
                 # first id is the background, so remove it
                 obj_ids = torch.tensor([obj_id.item() for obj_id in obj_ids
-                                        if obj_id.item() != 0.0]).to(obj_ids.device)
+                                        if obj_id.item() != 0.0 and obj_id.item() != 255.0]).to(obj_ids.device)
                 # obj_ids = obj_ids[1:]
 
                 # split the color-encoded mask into a set
                 # of binary masks
                 masks = mask == obj_ids[:, None, None]
+
+                masks[mask == 255.0] = True
 
                 # get bounding box coordinates for each mask
                 num_objs = len(obj_ids)
@@ -944,6 +951,13 @@ class MaskRCNN(_MaskRCNN):
                 labels = obj_ids.type(torch.int64)
 
                 masks = masks.type(torch.uint8)
+                # masks[mask == 255.0] = 255.0
+                if (mask == 255.0).any():
+                    masks[mask == 255.0] = 255.0
+                    masks[mask == 0.0] = 255.0
+
+                # if self.training:
+                #     print(torch.unique(masks))
 
                 image_id = torch.tensor([0])
 
