@@ -970,11 +970,11 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     #     meta_optim.eval()
                     # else:
 
-                    # random_transformation_transforms = train_loader.dataset.transform
-                    # if eval_online_step_count:
-                    #     train_loader.dataset.transform = custom_transforms.ToTensor()
-                    # else:
-                    #     train_loader.dataset.transform = random_transformation_transforms
+                    random_transformation_transforms = train_loader.dataset.transform
+                    if eval_online_step_count:
+                        train_loader.dataset.transform = custom_transforms.ToTensor()
+                    else:
+                        train_loader.dataset.transform = random_transformation_transforms
 
                     for epoch in epoch_iter(num_epochs):
                         set_random_seeds(
@@ -1000,8 +1000,8 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                                 inputs = torch.cat(
                                     [inputs[:1],
                                      inputs_propagate[:1]])
-                                gts = torch.cat([gts[:train_batch_size_part],
-                                                 gts_propagate[:train_batch_size_part]])
+                                gts = torch.cat([gts[:1],
+                                                 gts_propagate[:1]])
 
                                 train_loader.dataset.propagate_frame_gt = None
                                 train_loader.dataset.set_gt_frame_id()

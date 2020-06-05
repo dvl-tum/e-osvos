@@ -748,7 +748,7 @@ class MaskRCNN(_MaskRCNN):
                                        box_roi_pool=box_roi_pool,
                                        mask_roi_pool=mask_roi_pool,
                                        mask_head=mask_head,
-                                       box_nms_thresh=box_nms_thresh,)
+                                       box_score_thresh=box_nms_thresh,)
                                     #    box_detections_per_img=1,
                                     #    box_nms_thresh=0.95)
                                     #    bbox_reg_weights=bbox_reg_weights)
