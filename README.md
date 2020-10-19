@@ -6,9 +6,6 @@ This repository provides the implementation of our paper **Make One-Shot Video O
   <img src="data/teaser.png" alt="Performance versus runtime comparison of modern video object segmentation (VOS) approaches on the DAVIS 2017 validation set."/>
 </p>
 
-![](data/teaser.png)
-
-
 ## Installation
 
 ...
