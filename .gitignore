@@ -14,3 +14,5 @@ cluster/train_parent.sh
 experiments/
 .python-version
 *.sbatch
+__pycache__
+.ipynb_checkpoints

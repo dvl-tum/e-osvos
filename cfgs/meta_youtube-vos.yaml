@@ -164,7 +164,7 @@ datasets:
         name: YouTube-VOS
         # split: train_dev_train_val_seqs
         split: train_dev_random_123_train_val_seqs
-        eval: True
+        eval: False
     train_dev_val:
         name: YouTube-VOS
         # split: train_dev_val_seqs

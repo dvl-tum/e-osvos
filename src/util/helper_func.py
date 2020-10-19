@@ -257,7 +257,9 @@ def data_loaders(dataset, random_train_transform, batch_sizes, shuffles,
     # train
     train_transforms = []
     if random_train_transform:
-        train_transforms.extend([custom_transforms.RandomHorizontalFlip(),
+        train_transforms.extend([
+                                #  custom_transforms.LucidDream()
+                                 custom_transforms.RandomHorizontalFlip(),
                                  custom_transforms.RandomScaleNRotate(rots=(-30, 30),
                                                                       scales=(.75, 1.25))
                                 ])

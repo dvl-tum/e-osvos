@@ -153,6 +153,38 @@ class ColorJitter:
         return sample
 
 
+# from .pyLucid import lucidDream, patchPaint
+
+
+# class LucidDream:
+
+#     # def __init__(self, brightness=0, contrast=0, saturation=0, hue=0, deterministic=False):
+
+#     def __call__(self, sample):
+
+#         pil_image = (sample['image'] * 255).astype(np.uint8)
+#         # Image.fromarray(np.uint8(sample['gt']))
+#         pil_gt = sample['gt'].astype(np.uint8)
+
+#         bg = patchPaint.paint(pil_image, pil_gt, False)
+#         im_1, gt_1, _ = lucidDream.dreamData(
+#             pil_image, pil_gt, bg, False)
+
+#         sample['image'] = im_1.astype(np.float32) / 255.0
+#         sample['gt'] = gt_1.astype(np.float32)
+
+#         # import imageio
+#         # imageio.imsave("img_after.png",
+#         #                (sample['image'] * 255).astype(np.uint8))
+#         # imageio.imsave("img_bg.png",
+#         #                (bg).astype(np.uint8))
+#         # imageio.imsave("label_after.png",
+#         #                (sample['gt'] * 255).astype(np.uint8))
+#         # exit()
+
+#         return sample
+
+
 class RandomHorizontalFlip:
     """Horizontally flip the given image and ground truth randomly with a probability of 0.5."""
 

@@ -52,10 +52,11 @@ meta_optim_optim_cfg:
     log_init_lr_lr: 0.0001
     lr_momentum_lr: 0.0001
     lr: 0.001
+    freeze_encoder: False
     param_group_lstm_init_lr: 0.001
     step_in_seq: False
     grad_clip: null
-    model_init_weight_decay: 0.001
+    model_init_weight_decay: 0.0
 loss_func: dice
 # evalute all datasets
 eval_datasets: True

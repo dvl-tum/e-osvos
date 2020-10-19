@@ -558,6 +558,8 @@ def meta_run(rank: int, init_model_state_dict: dict,
                     meta_optim.step(train_loss)
 
                     if _config['multi_step_bptt_loss']:
+                        assert num_epochs == len(_config['multi_step_bptt_loss'])
+
                         bptt_iter_loss = 0.0
                         for meta_batch in meta_loader:
                             meta_inputs, meta_gts = meta_batch['image'], meta_batch['gt']
@@ -579,7 +581,7 @@ def meta_run(rank: int, init_model_state_dict: dict,
 
                             bptt_iter_loss += meta_loss
 
-                        bptt_loss += bptt_iter_loss  # - prev_bptt_iter_loss
+                        bptt_loss += _config['multi_step_bptt_loss'][epoch - 1] * bptt_iter_loss  # - prev_bptt_iter_loss
                         # prev_bptt_iter_loss = bptt_iter_loss.detach()
 
                     # visualization
@@ -800,6 +802,8 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
         if _config['data_cfg']['multi_object'] == 'single_id':
             model.roi_heads.detections_per_img = 1
 
+        random_transformation_transforms = train_loader.dataset.transform
+
         for seq_name in train_loader.dataset.seqs_names:
             train_loader.dataset.set_seq(seq_name)
             test_loader.dataset.set_seq(seq_name)
@@ -865,9 +869,8 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                                             eval_online_adapt_step)
 
                 # meta_frame_id might be a str, e.g., 'middle'
+                start_eval = timeit.default_timer()
                 for eval_online_step_count, _ in enumerate(meta_frame_iter):
-                    if eval_online_step_count == 0:
-                        start_eval = timeit.default_timer()
                     # print(i, train_loader.dataset.frame_id + 1)
                     # range [min, max[
                     if eval_online_step_count == 0:
@@ -895,31 +898,32 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         propagate_frame_gt = masks[seq_name][eval_frame_range_min -
                                                              1][obj_id: obj_id + 1].ge(_config['eval_online_adapt']['min_prop']).float()
 
-                        propagate_frame_gt_conservative = masks[seq_name][eval_frame_range_min -
-                                                                          1][obj_id: obj_id + 1].ge(0.95).float()
+                        propagate_frame_gts = []
+                        for propagate_frame_id in range(1, _config['eval_online_adapt']['step']):
 
-                        propagate_frame_gt_numpy = np.copy(np.transpose(propagate_frame_gt.cpu().numpy(), (1, 2, 0)))
+                            propagate_frame_gt_numpy = masks[seq_name][eval_frame_range_min -
+                                                                       propagate_frame_id][obj_id: obj_id + 1].ge(_config['eval_online_adapt']['min_prop']).float()
 
-                        propagate_frame_gt_conservative_numpy = np.transpose(
-                            propagate_frame_gt_conservative.cpu().numpy(), (1, 2, 0))
+                            propagate_frame_gt_numpy = np.copy(np.transpose(propagate_frame_gt_numpy.cpu().numpy(), (1, 2, 0)))
 
-                        propagate_frame_gt_numpy[(
-                            propagate_frame_gt_numpy - propagate_frame_gt_conservative_numpy) == 1.0] = 255.0
 
-                        # propagate_frame_gt_conservative_numpy[propagate_frame_gt_conservative_numpy != 1.0] = 255.0
-                        # propagate_frame_gt_numpy = propagate_frame_gt_conservative_numpy
+                            # propagate_frame_gt_conservative = masks[seq_name][eval_frame_range_min -
+                            #                                                   propagate_frame_id][obj_id: obj_id + 1].ge(0.90).float()
+                            # propagate_frame_gt_conservative_numpy = np.copy(np.transpose(
+                            #     propagate_frame_gt_conservative.cpu().numpy(), (1, 2, 0)))
+                            # propagate_frame_gt_numpy[(
+                            #     propagate_frame_gt_numpy - propagate_frame_gt_conservative_numpy) == 1.0] = 255.0
 
-                        # import cv2
-                        # kernel = np.ones((10, 10), np.uint8)
-                        # # imageio.imsave(f"before_erosion.png", (propagate_frame_gt * 255).astype(np.uint8))
-                        # propagate_frame_gt_numpy_eroded = cv2.erode(
-                        #     propagate_frame_gt_numpy, kernel, iterations=1)[..., np.newaxis]
-                        # # imageio.imsave(
-                        # #     f"after_erosion.png", (propagate_frame_gt_eroded * 255).astype(np.uint8))
-                        # propagate_frame_gt_numpy[(
-                        #     propagate_frame_gt_numpy - propagate_frame_gt_numpy_eroded) == 1.0] = 255.0
-                        # # imageio.imsave(
-                        # #     f"before_erosion_minus.png", (propagate_frame_gt).astype(np.uint8))
+
+                            # import cv2
+                            # kernel = np.ones((10, 10), np.uint8)
+                            # propagate_frame_gt_numpy_eroded = cv2.erode(
+                            #     propagate_frame_gt_numpy, kernel, iterations=1)[..., np.newaxis]
+                            # propagate_frame_gt_numpy[(
+                            #     propagate_frame_gt_numpy - propagate_frame_gt_numpy_eroded) == 1.0] = 255.0
+
+                            propagate_frame_gts.append(
+                                propagate_frame_gt_numpy)
 
                     eval_frame_range_max += eval_online_adapt_step
                     # if eval_frame_range_max + (eval_online_adapt_step // 2 + 1) > len(test_loader.dataset):
@@ -970,7 +974,6 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                     #     meta_optim.eval()
                     # else:
 
-                    random_transformation_transforms = train_loader.dataset.transform
                     if eval_online_step_count:
                         train_loader.dataset.transform = custom_transforms.ToTensor()
                     else:
@@ -983,25 +986,32 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
                         for _, sample_batched in enumerate(train_loader):
                             inputs, gts = sample_batched['image'], sample_batched['gt']
 
-                            if eval_online_step_count and (propagate_frame_gt_numpy == 1.0).astype(float).sum().item() != 0:
-                                train_loader.dataset.frame_id = eval_frame_range_min - 1
-                                train_loader.dataset.propagate_frame_gt = propagate_frame_gt_numpy
+                            if eval_online_step_count:
+                                inputs = inputs[:1]
+                                gts = gts[:1]
 
-                                # train_loader.dataset.transforms
-                                # no_random_transformation_transforms
+                                for propagate_frame_id in range(1, _config['eval_online_adapt']['step']):
+                                    propagate_frame_gt_numpy = propagate_frame_gts[propagate_frame_id - 1]
 
-                                for _, sample_batched in enumerate(train_loader):
-                                    inputs_propagate, gts_propagate = sample_batched['image'], sample_batched['gt']
+                                    if (propagate_frame_gt_numpy == 1.0).astype(float).sum().item() != 0:
+                                        train_loader.dataset.frame_id = eval_frame_range_min - propagate_frame_id
+                                        train_loader.dataset.propagate_frame_gt = propagate_frame_gt_numpy
 
-                                train_batch_size = _config['data_cfg']['batch_sizes']['train']
-                                # train_batch_size_part = min(train_batch_size // 2, 1)
-                                train_batch_size_part = min(train_batch_size - 1, 1)
+                                        # train_loader.dataset.transforms
+                                        # no_random_transformation_transforms
 
-                                inputs = torch.cat(
-                                    [inputs[:1],
-                                     inputs_propagate[:1]])
-                                gts = torch.cat([gts[:1],
-                                                 gts_propagate[:1]])
+                                        for _, sample_batched in enumerate(train_loader):
+                                            inputs_propagate, gts_propagate = sample_batched['image'], sample_batched['gt']
+
+                                        train_batch_size = _config['data_cfg']['batch_sizes']['train']
+                                        # train_batch_size_part = min(train_batch_size // 2, 1)
+                                        train_batch_size_part = min(train_batch_size - 1, 1)
+
+                                        inputs = torch.cat(
+                                            [inputs,
+                                            inputs_propagate[:1]])
+                                        gts = torch.cat([gts,
+                                                        gts_propagate[:1]])
 
                                 train_loader.dataset.propagate_frame_gt = None
                                 train_loader.dataset.set_gt_frame_id()
@@ -1090,12 +1100,11 @@ def evaluate(rank: int, dataset_key: str, flip_label: bool,
 
                     test_loader.sampler.indices = None
 
-                    if eval_online_step_count == 0:
-                        eval_time += (timeit.default_timer() - start_eval) * train_loader.dataset.num_object_groups
-                        num_frames += len(test_loader.dataset) * train_loader.dataset.num_object_groups
-
                     if eval_frame_range_max == len(test_loader.dataset):
                         break
+
+                eval_time += (timeit.default_timer() - start_eval) # * train_loader.dataset.num_object_groups
+                num_frames += len(test_loader.dataset) # * train_loader.dataset.num_object_groups
 
             # merge all logit maps and set object predictions by argmax
             for frame_id in range(len(test_loader.dataset)):
@@ -1509,6 +1518,10 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
             lr = meta_optim_optim_cfg['lr_momentum_lr']
         else:
             lr = meta_optim_optim_cfg['lr']
+
+        if meta_optim_optim_cfg['freeze_encoder'] and ('backbone' in n or 'rpn' in n):
+            lr = 0.0
+
         meta_optim_params.append({'params': [p], 'lr': lr, 'weight_decay': weight_decay})
 
     meta_optim_optim = RAdam(meta_optim_params,
