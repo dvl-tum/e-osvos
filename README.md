@@ -26,6 +26,6 @@ This repository provides the implementation of our paper **Make One-Shot Video O
   author = {Meinhardt, Tim and Leal{-}Taix{\'{e}}, Laura},
   title = {Make One-Shot Video Object Segmentation Efficient Again},
   booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
-  month = {October},
+  month = {December},
   year = {2020}}
 ```
