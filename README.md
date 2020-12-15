@@ -1,11 +1,15 @@
 # Make One-Shot Video Object Segmentation Efficient Again
 
-This repository provides the implementation of **Make One-Shot Video Object Segmentation Efficient Again** ([Tim Meinhardt](https://dvl.in.tum.de/team/meinhardt/), [Laura Leal-Taixe](https://dvl.in.tum.de/team/lealtaixe/)) [coming] and includes the training and evaluation code for our efficient One-Shot Video Object Segmentation (**e-OSVOS**) approach.
+This repository provides the implementation of **Make One-Shot Video Object Segmentation Efficient Again** ([Tim Meinhardt](https://dvl.in.tum.de/team/meinhardt/), [Laura Leal-Taixe](https://dvl.in.tum.de/team/lealtaixe/)) [paper](https://arxiv.org/abs/2012.01866) and includes the training and evaluation code for our efficient One-Shot Video Object Segmentation (**e-OSVOS**) approach.
 
-<p align="center">
-  <img src="data/teaser.png" alt="Performance versus runtime comparison of modern video object segmentation (VOS) approaches on the DAVIS 2017 validation set."/>
-  <img src="data/drift-chicane_overlay.gif" width="40" height="40" />
-</p>
+<div align="center">
+    <img src="data/teaser_dark.png" alt="Performance versus runtime comparison of modern video object segmentation (VOS) approaches on
+  the DAVIS 2017 validation set." width="500"/>
+</div>
+<div align="center">
+  <img src="data/drift-chicane_overlay.gif" alt="DAVIS 2017 drift-chicane" width="400"/>
+  <img src="data/soapbox_overlay.gif" alt="DAVIS 2017 soapbox" width="400"/>
+</div>
 
 ## Installation
 
@@ -34,7 +38,7 @@ This repository provides the implementation of **Make One-Shot Video Object Segm
 
 3. Download and unpack pre-trained **e-OSVOS** model files in the `model` directory:
 
-In order to configure, organize, log and reproduce our computational experiments, we  structure our code with the [Sacred](http://sacred.readthedocs.io/en/latest/index.html) framework. For a detailed explanation of the Sacred interface please read its documentation.
+In order to configure, log and reproduce our computational experiments, we  structure our code with the [Sacred](http://sacred.readthedocs.io/en/latest/index.html) framework. For a detailed explanation of the Sacred interface please read its documentation.
 
 ## Train e-OSVOS
 

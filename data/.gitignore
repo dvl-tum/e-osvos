@@ -1,5 +1,6 @@
 *
 !.gitignore
-!teaser.png
+!teaser_dark.png
+!teaser_light.png
 !drift-chicane_overlay.gif
 !soapbox_overlay.gif
