@@ -21,7 +21,6 @@ def evaluate(rank: int, dataset_key: str,
              shared_meta_optim_state_dict: dict, shared_variables: dict,
              _config: dict, shared_dict: dict, save_dir: str,
              vis_win_names: dict, evaluate_only: bool, _log: logging):
-
     seed = _config['seed']
     loss_func = _config['loss_func']
     datasets = _config['datasets']
@@ -140,16 +139,15 @@ def evaluate(rank: int, dataset_key: str,
                 num_objects_in_group = train_loader.dataset.num_objects_in_group
 
                 # evaluation with online adaptation
-                if _config['eval_online_adapt']['step'] is None:
-                # if _config['eval_online_adapt']['step'] is None or train_loader.dataset.num_object_groups == 1:
-                    # one iteration with original meta frame and evaluation of entire sequence
-                    eval_online_adapt_step = len(test_loader.dataset)
-                    meta_frame_iter = [meta_loader.dataset.frame_id]
-                else:
+                if _config['eval_online_adapt']['step']:
                     eval_online_adapt_step = _config['eval_online_adapt']['step']
                     meta_frame_iter = range(train_loader.dataset.frame_id + 1,
                                             len(test_loader.dataset),
                                             eval_online_adapt_step)
+                else:
+                    # one iteration with original meta frame and evaluation of entire sequence
+                    eval_online_adapt_step = len(test_loader.dataset)
+                    meta_frame_iter = [meta_loader.dataset.frame_id]
 
                 # meta_frame_id might be a str, e.g., 'middle'
                 start_eval = timeit.default_timer()
@@ -349,8 +347,7 @@ def evaluate(rank: int, dataset_key: str,
                 evaluation = eval_davis_seq(preds_save_dir, seq_name)
 
             if evaluate_only:
-                _log.info(
-                    f"{dataset_key}: {seq_name} {evaluation['J']['mean']}")
+                _log.info(f"{dataset_key}: {seq_name} {evaluation['J']['mean']}")
 
             J_seq.extend(evaluation['J']['mean'])
             J_recall_seq.extend(evaluation['J']['recall'])

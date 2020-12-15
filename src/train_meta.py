@@ -141,10 +141,11 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
         assert num_meta_processes >= 0
 
-    if num_meta_processes:
+    if num_meta_processes and num_meta_processes_per_gpu:
         num_meta_processes *= num_meta_processes_per_gpu
         assert not meta_batch_size % num_meta_processes, ('meta_batch_size is not a multiple of num_meta_processes.')
     else:
+        num_meta_processes = 0
         _log.warning(f"EVAL modus.")
 
     process_manager = mp.Manager()
@@ -212,24 +213,28 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
                                 torch.tensor(shared_dict['train_loss_seq']).mean()]
 
                 if _config['parent_model']['architecture'] == 'MaskRCNN':
-                    eval_seq_vis.extend([torch.tensor([losses['loss_classifier'] for losses in shared_dict['train_losses_seq']]).mean(),
-                                         torch.tensor([losses['loss_box_reg'] for losses in shared_dict['train_losses_seq']]).mean(),
-                                         torch.tensor([losses['loss_mask'] for losses in shared_dict['train_losses_seq']]).mean()])
+                    eval_seq_vis.extend([
+                        torch.tensor([losses['loss_classifier'] for losses in shared_dict['train_losses_seq']]).mean(),
+                        torch.tensor([losses['loss_box_reg'] for losses in shared_dict['train_losses_seq']]).mean(),
+                        torch.tensor([losses['loss_mask'] for losses in shared_dict['train_losses_seq']]).mean()])
 
-                eval_seq_vis.extend([(torch.tensor(shared_dict['J_seq']).mean() + torch.tensor(shared_dict['F_seq']).mean()) / 2.0,
-                                     torch.tensor(shared_dict['J_seq']).mean(),
-                                     torch.tensor(shared_dict['J_recall_seq']).mean(),
-                                     torch.tensor(shared_dict['J_decay_seq']).mean(),
-                                     torch.tensor(shared_dict['F_seq']).mean(),
-                                     torch.tensor(shared_dict['F_recall_seq']).mean(),
-                                     torch.tensor(shared_dict['F_decay_seq']).mean(),
-                                     torch.tensor(shared_dict['init_J_seq']).mean()])
+                eval_seq_vis.extend([(
+                    torch.tensor(shared_dict['J_seq']).mean() + torch.tensor(shared_dict['F_seq']).mean()) / 2.0,
+                    torch.tensor(shared_dict['J_seq']).mean(),
+                    torch.tensor(shared_dict['J_recall_seq']).mean(),
+                    torch.tensor(shared_dict['J_decay_seq']).mean(),
+                    torch.tensor(shared_dict['F_seq']).mean(),
+                    torch.tensor(shared_dict['F_recall_seq']).mean(),
+                    torch.tensor(shared_dict['F_decay_seq']).mean(),
+                    torch.tensor(shared_dict['init_J_seq']).mean()])
                 eval_seq_vis.extend(shared_dict['init_J_seq'])
                 eval_seq_vis.extend(shared_dict['J_seq'])
 
                 if not no_vis:
                     vis_dict[f"{p['dataset_key']}_eval_seq_vis"].plot(
                         eval_seq_vis, shared_dict['meta_iter'])
+
+                _log.info(f"{p['dataset_key']}: J mean {torch.tensor(shared_dict['J_seq']).mean():.1%}")
 
                 # evalutate only once if in eval mode
                 if not num_meta_processes:
