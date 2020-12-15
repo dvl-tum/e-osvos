@@ -13,11 +13,6 @@ import torch.nn as nn
 import torch.optim as optim
 from data import DAVIS, VOC2012, YouTube
 from data import custom_transforms as tr
-from mypath import Path
-from networks.drn_seg import DRNSeg
-from networks.fpn import FPN
-from networks.unet import Unet
-from networks.vgg_osvos import OSVOSVgg
 from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
 from networks.mask_rcnn import MaskRCNN
@@ -27,6 +22,21 @@ from torch.utils.data import DataLoader, ConcatDataset
 from torchvision import transforms
 from util import visualize as viz
 from util.helper_func import eval_loader, run_loader, compute_loss
+
+
+class Path(PathAbstract):
+    @staticmethod
+    def db_root_dir():
+        return './data/DAVIS-2016'
+
+    @staticmethod
+    def save_root_dir():
+        return './models'
+
+    @staticmethod
+    def models_dir():
+        return './models'
+
 
 # Select which GPU, -1 if CPU
 gpu_id = 0
@@ -94,55 +104,7 @@ model_name = 'MaskRCNN_ResNet50_YouTube-VOS-DAVIS-17_ABLATION'
 # loss_func = 'class_balanced_cross_entropy'
 loss_func = 'dice'
 
-if 'VGG' in model_name:
-    load_caffe_vgg = True
-    num_losses = 5
-    lr = 1e-8
-
-    if not resume_epoch:
-        if load_caffe_vgg:
-            net = OSVOSVgg(pretrained=2)
-        else:
-            net = OSVOSVgg(pretrained=1)
-    else:
-        net = OSVOSVgg(pretrained=0)
-        file_name = f'{model_name}_epoch-{resume_epoch - 1}.pth'
-        print("Updating weights from: {}".format(os.path.join(save_dir, file_name)))
-        net.load_state_dict(torch.load(os.path.join(save_dir, file_name),
-                            map_location=lambda storage, loc: storage))
-elif 'DRN_D_22' in model_name:
-    num_losses = 1
-    lr = 1e-6
-
-    net = DRNSeg('DRN_D_22', 1, pretrained=True, use_torch_up=False)
-elif 'UNET_ResNet18' in model_name:
-    num_losses = 1
-    lr = 1e-3
-
-    net = Unet('resnet18', classes=1, activation=None)
-elif 'UNET_ResNet34' in model_name:
-    num_losses = 1
-    lr = 1e-7
-
-    net = Unet('resnet34', classes=1, activation=None)
-elif 'FPN_efficientnet-b3' in model_name:
-    num_losses = 1
-    lr = 1e-5
-
-    net = FPN('efficientnet-b3', classes=1, activation=None)
-elif 'FPN_ResNet34' in model_name:
-    num_losses = 1
-    lr = 1e-5
-
-    net = FPN('resnet34', classes=1, activation=None, decoder_norm_layer='BatchNorm2d')
-    # net = FPN('resnet34-group-norm', classes=1, activation='softmax')
-    # net = FPN('resnet34', classes=1, activation=None)
-elif 'FPN_ResNet101' in model_name:
-    num_losses = 1
-    lr = 1e-5
-
-    net = FPN('resnet101', classes=1, activation=None)
-elif 'DeepLabV3_ResNet50' in model_name:
+if 'DeepLabV3_ResNet50' in model_name:
     num_losses = 1
     lr = 1e-5
 

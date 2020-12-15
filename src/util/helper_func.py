@@ -1,5 +1,6 @@
 import collections
 import os
+import random
 import shutil
 import tempfile
 from itertools import count, product, zip_longest
@@ -12,20 +13,15 @@ import torch.nn as nn
 from data import DAVIS, YouTube, custom_transforms
 from davis import (Annotation, DAVISLoader, Segmentation, db_eval,
                    db_eval_sequence)
-from layers.osvos_layers import class_balanced_cross_entropy_loss, dice_loss
 from meta_optim.meta_optim import MetaOptimizer
-from networks.drn_seg import DRNSeg
-from networks.fpn import FPN
-from networks.unet import Unet
-from networks.vgg_osvos import OSVOSVgg
 from networks.deeplabv3 import DeepLabV3
 from networks.deeplabv3plus import DeepLabV3Plus
+from networks.loss_ce import class_balanced_cross_entropy_loss
+from networks.loss_dice import dice_loss
 from networks.mask_rcnn import MaskRCNN
 from prettytable import PrettyTable
-from pytorch_tools.data import EpochSampler
-from pytorch_tools.ingredients import set_random_seeds
 from torch.utils.data import DataLoader
-from torch.utils.data.sampler import Sampler
+from torch.utils.data.sampler import RandomSampler, Sampler, SequentialSampler
 from torchvision import transforms
 
 
@@ -344,11 +340,7 @@ def init_parent_model(architecture, encoder, train_encoder, decoder_norm_layer,
                       replace_batch_with_group_norms, batch_norm,
                       roi_pool_output_sizes, eval_augment_rpn_proposals_mode,
                       box_nms_thresh, maskrcnn_loss, **datasets):
-    if architecture == 'FPN':
-        model = FPN(encoder, classes=1, activation=None, decoder_dropout=0.0,
-                    batch_norm=batch_norm, train_encoder=train_encoder,
-                    decoder_norm_layer=decoder_norm_layer)
-    elif architecture == 'DeepLabV3':
+    if architecture == 'DeepLabV3':
         model = DeepLabV3(encoder, num_classes=1, batch_norm=batch_norm, train_encoder=train_encoder)
     elif architecture == 'DeepLabV3Plus':
         model = DeepLabV3Plus(
@@ -486,3 +478,69 @@ class SequentialSubsetSampler(Sampler):
         if self.indices is None:
             return len(self.dataset)
         return len(self.indices)
+
+
+def load_state_dict(model, seq_name, parent_states):
+    """
+    If multiple train splits return parent model state dictionary with seq_name
+    not in the training but validation split.
+    """
+    if parent_states['states']:
+        state_dict = None
+        for state, split in zip(parent_states['states'], parent_states['splits']):
+            if seq_name in split:
+                state_dict = state
+                break
+        assert state_dict is not None, \
+            f'No parent model with {seq_name} in corresponding val_split_file.'
+        model.load_state_dict(state_dict)
+
+
+def device_for_process(rank: int,
+                       eval_datasets: bool,
+                       num_meta_processes_per_gpu: int,
+                       num_eval_gpus: int):
+    if eval_datasets:
+        gpu_rank = (rank // num_meta_processes_per_gpu)
+        gpu_rank += num_eval_gpus
+    else:
+        gpu_rank = rank // num_meta_processes_per_gpu
+
+    device = torch.device(f'cuda:{gpu_rank}')
+    meta_device = torch.device(f'cuda:{gpu_rank}')
+
+    return device, meta_device
+
+
+def set_random_seeds(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
+class EpochSampler(Sampler):
+    """Sample multiple epochs of dataset into one batch.
+
+        If dataset for example len(dataset) == 1 but we want to train with batch_size > 1
+        then batch_size becomes num_epochs.
+    """
+
+    def __init__(self, dataset, shuffle, num_epochs, sampler=None):
+        if sampler is None:
+            if shuffle:
+                sampler = RandomSampler(dataset)
+            else:
+                sampler = SequentialSampler(dataset)
+        self.sampler = sampler
+        self.num_epochs = num_epochs
+
+    def __iter__(self):
+        batch = []
+        for _ in range(self.num_epochs):
+            for idx in self.sampler:
+                batch.append(idx)
+        yield batch
+
+    def __len__(self):
+        return 1
+

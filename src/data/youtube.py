@@ -7,9 +7,10 @@ from collections import OrderedDict
 import cv2
 import numpy as np
 import torch
+
 from davis import cfg as eval_cfg
 
-from .helpers import *
+from .helpers import listdir_nohidden
 from .vos_dataset import VOSDataset
 
 
@@ -35,10 +36,6 @@ class YouTube(VOSDataset):
                 seqs_keys = [seq.strip() for seq in f.readlines()]
         else:
             raise NotImplementedError
-
-        # if not os.path.exists(seqs_dir):
-        #     raise NotImplementedError
-        #     # seqs_keys = [self.seqs_key]
 
         # # Initialize the per sequence images for online training
 
@@ -124,29 +121,7 @@ class YouTube(VOSDataset):
 
         return len(self._meta_data['videos'][self.seq_key]['objects'])
 
-    # def set_seq(self, seq_name):
-    #     self.imgs = self.seqs[seq_name]['imgs']
-    #     self.labels = self.seqs[seq_name]['labels']
-    #     self.seq_key = seq_name
-
     def set_seq(self, seq_name):
-        # seqs_dir = os.path.join(self.root_dir, self._split)
-        # img_names = np.sort(listdir_nohidden(
-        #     os.path.join(seqs_dir, 'JPEGImages', seq_name)))
-        # img_paths = list(map(lambda x: os.path.join(
-        #     seqs_dir, 'JPEGImages', seq_name, x), img_names))
-
-        # label_names = np.sort(listdir_nohidden(
-        #     os.path.join(seqs_dir, 'Annotations', seq_name)))
-        # label_paths = list(map(lambda x: os.path.join(
-        #     seqs_dir, 'Annotations', seq_name, x), label_names))
-
-        # self.seqs[seq_name]['imgs'] = img_paths
-        # self.seqs[seq_name]['labels'] = label_paths
-
-        # if not self.test_mode and len(label_names) != len(img_names):
-        #     print(f'failure in: {self.seqs_key}/{seq_name}')
-
         super(YouTube, self).set_seq(seq_name)
         self._multi_object_id_to_label = [
             int(k) for k in sorted(self._meta_data['videos'][self.seq_key]['objects'].keys())]
@@ -206,36 +181,11 @@ class YouTube(VOSDataset):
                 self.multi_object_id].item()
             obj_frame = obj_frames[[f for f, l in obj_frames].index(frame_id)]
             self.frame_id, self._label_id = obj_frame
-            # self.frame_id, self._label_id = self.get_gt_frame_id(self.multi_object_id)
         else:
             self.frame_id, self._label_id = self.get_gt_frame_id(self.multi_object_id)
 
-        # print(self.seq_key, self.multi_object_id, self.frame_id, self._label_id)
-
-    # def get_random_frame_id_with_label(self):
-    #     objects_info = self._meta_data['videos'][self.seq_key]['objects']
-    #     objects_info = [v for k, v in sorted(objects_info.items())]
-    #     objects_info = objects_info[self.multi_object_id]["frames"]
-
-    #     random_frame_object = objects_info[torch.randint(len(objects_info), (1,)).item()]
-
-    #     frame_ids = [i for i, path in enumerate(self.imgs) if random_frame_object in path]
-    #     assert len(frame_ids) == 1
-
-    #     # print(random_frame_object)
-    #     # print(objects_info)
-    #     # print(self.imgs, len(self.imgs))
-    #     # print(frame_ids[0])
-    #     # exit()
-
-    #     return frame_ids[0]
-
     def setup_davis_eval(self):
         eval_cfg.MULTIOBJECT = bool(self.multi_object)
-        # if self._full_resolution:
-        #     eval_cfg.RESOLUTION = '1080p'
-        # if self.test_mode:
-        #     eval_cfg.PHASE = 'test-dev'
         eval_cfg.YEAR = 2017
         eval_cfg.PATH.ROOT = os.path.abspath(
             os.path.join(os.path.dirname(__file__), '../..'))
@@ -245,8 +195,6 @@ class YouTube(VOSDataset):
             eval_cfg.PATH.DATA, "JPEGImages")
         eval_cfg.PATH.ANNOTATIONS = os.path.join(
             eval_cfg.PATH.DATA, "Annotations")
-        # eval_cfg.PATH.PALETTE = os.path.abspath(
-        #     os.path.join(eval_cfg.PATH.ROOT, 'data/palette.txt'))
 
         eval_cfg.SEQUENCES = {n: {'name': n, 'attributes': [], 'set': 'train', 'eval_t': False, 'year': 2017, 'num_frames': len(set(v['labels']))}
                               for n, v in self.seqs.items()}

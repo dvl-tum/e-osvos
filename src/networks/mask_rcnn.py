@@ -7,256 +7,18 @@ from torch import nn
 from torch.nn import functional as F
 from torchvision.models.detection import MaskRCNN as _MaskRCNN
 from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
+from torchvision.models.detection.roi_heads import (fastrcnn_loss,
+                                                    keypointrcnn_inference,
+                                                    keypointrcnn_loss,
+                                                    maskrcnn_inference,
+                                                    project_masks_on_boxes)
 from torchvision.models.detection.rpn import concat_box_prediction_layers
-from torchvision.models.detection.roi_heads import project_masks_on_boxes, maskrcnn_inference, fastrcnn_loss, keypointrcnn_loss, keypointrcnn_inference
 from torchvision.models.utils import load_state_dict_from_url
 from torchvision.ops import MultiScaleRoIAlign
-from torchvision.ops.misc import FrozenBatchNorm2d
 from torchvision.ops import boxes as box_ops
-from .lovasz_losses import lovasz_hinge
+from torchvision.ops.misc import FrozenBatchNorm2d
 
-# from .efficient_det.models.bifpn import BIFPN as _BIFPN
-# from .efficient_det.models.efficientnet import EfficientNet
-
-from .efficient_det_v2.efficientdet.model import BiFPN as _BiFPN
-from .efficient_det_v2.efficientdet.model import EfficientNet as _EfficientNet
-from .efficient_det_v2.efficientnet.utils_extra import Conv2dStaticSamePadding
-
-
-class EfficientNet(_EfficientNet):
-
-    def forward(self, x):
-        feature_maps = super(EfficientNet, self).forward(x)
-        return feature_maps[-3:]
-        # print([f.shape for f in feature_maps])
-        # return feature_maps
-
-
-class EfficientNetAndBiFPN(nn.Sequential):
-
-    def __init__(self, efficient_net, bifpn):
-        super(EfficientNetAndBiFPN, self).__init__(
-            efficient_net,
-            bifpn)
-
-    def forward(self, x):
-        outs = super(EfficientNetAndBiFPN, self).forward(x)
-        names = [0, 1, 2, 3, 'pool']
-        return OrderedDict([(n, o) for n, o in zip(names, outs)])
-
-
-class BiFPN(_BiFPN):
-
-#     def __init__(self, num_channels, conv_channels, first_time=False, epsilon=1e-4, onnx_export=False, attention=True):
-#         super(BiFPN, self).__init__(num_channels, conv_channels, first_time, epsilon, onnx_export, attention)
-
-#         if self.first_time:
-#             del self.p5_to_p6
-
-#             self.p6_down_channel = nn.Sequential(
-#                 Conv2dStaticSamePadding(conv_channels[3], num_channels, 1),
-#                 nn.BatchNorm2d(num_channels, momentum=0.01, eps=1e-3),
-#             )
-
-    def _forward_fast_attention(self, inputs):
-        if self.first_time:
-            p3, p4, p5 = inputs
-
-            p6_in = self.p5_to_p6(p5)
-            p7_in = self.p6_to_p7(p6_in)
-
-            p3_in = self.p3_down_channel(p3)
-            p4_in = self.p4_down_channel(p4)
-            p5_in = self.p5_down_channel(p5)
-
-            # p3, p4, p5, p6 = inputs
-
-            # p6_in = self.p5_to_p6(p5)
-
-
-            # p3_in = self.p3_down_channel(p3)
-            # p4_in = self.p4_down_channel(p4)
-            # p5_in = self.p5_down_channel(p5)
-            # p6_in = self.p6_down_channel(p6)
-
-            # p7_in = self.p6_to_p7(p6_in)
-
-        else:
-            # P3_0, P4_0, P5_0, P6_0 and P7_0
-            p3_in, p4_in, p5_in, p6_in, p7_in = inputs
-
-        # P7_0 to P7_2
-
-        # Weights for P6_0 and P7_0 to P6_1
-        p6_w1 = self.p6_w1_relu(self.p6_w1)
-        weight = p6_w1 / (torch.sum(p6_w1, dim=0) + self.epsilon)
-        # Connections for P6_0 and P7_0 to P6_1 respectively
-        # p6_up = self.conv6_up(self.swish(weight[0] * p6_in + weight[1] * self.p6_upsample(p7_in)))
-
-        scale_factor = [p6_in.shape[2] / p7_in.shape[2],
-                        p6_in.shape[3] / p7_in.shape[3]]
-        p6_up = self.conv6_up(self.swish(weight[0] * p6_in + weight[1] * F.interpolate(p7_in, scale_factor=scale_factor, mode='nearest')))
-
-        # Weights for P5_0 and P6_0 to P5_1
-        p5_w1 = self.p5_w1_relu(self.p5_w1)
-        weight = p5_w1 / (torch.sum(p5_w1, dim=0) + self.epsilon)
-        # Connections for P5_0 and P6_0 to P5_1 respectively
-        scale_factor = [p5_in.shape[2] / p6_up.shape[2],
-                        p5_in.shape[3] / p6_up.shape[3]]
-        p5_up = self.conv5_up(self.swish(weight[0] * p5_in + weight[1] * F.interpolate(p6_up, scale_factor=scale_factor, mode='nearest')))
-
-        # Weights for P4_0 and P5_0 to P4_1
-        p4_w1 = self.p4_w1_relu(self.p4_w1)
-        weight = p4_w1 / (torch.sum(p4_w1, dim=0) + self.epsilon)
-        # Connections for P4_0 and P5_0 to P4_1 respectively
-        scale_factor = [p4_in.shape[2] / p5_up.shape[2],
-                        p4_in.shape[3] / p5_up.shape[3]]
-        p4_up = self.conv4_up(self.swish(weight[0] * p4_in + weight[1] * F.interpolate(p5_up, scale_factor=scale_factor, mode='nearest')))
-
-        # Weights for P3_0 and P4_1 to P3_2
-        p3_w1 = self.p3_w1_relu(self.p3_w1)
-        weight = p3_w1 / (torch.sum(p3_w1, dim=0) + self.epsilon)
-        # Connections for P3_0 and P4_1 to P3_2 respectively
-        scale_factor = [p3_in.shape[2] / p4_up.shape[2],
-                        p3_in.shape[3] / p4_up.shape[3]]
-        p3_out = self.conv3_up(self.swish(weight[0] * p3_in + weight[1] * F.interpolate(p4_up, scale_factor=scale_factor, mode='nearest')))
-
-        if self.first_time:
-            p4_in = self.p4_down_channel_2(p4)
-            p5_in = self.p5_down_channel_2(p5)
-
-        # Weights for P4_0, P4_1 and P3_2 to P4_2
-        p4_w2 = self.p4_w2_relu(self.p4_w2)
-        weight = p4_w2 / (torch.sum(p4_w2, dim=0) + self.epsilon)
-        # Connections for P4_0, P4_1 and P3_2 to P4_2 respectively
-        p4_out = self.conv4_down(
-            self.swish(weight[0] * p4_in + weight[1] * p4_up + weight[2] * self.p4_downsample(p3_out)))
-
-        # Weights for P5_0, P5_1 and P4_2 to P5_2
-        p5_w2 = self.p5_w2_relu(self.p5_w2)
-        weight = p5_w2 / (torch.sum(p5_w2, dim=0) + self.epsilon)
-        # Connections for P5_0, P5_1 and P4_2 to P5_2 respectively
-        p5_out = self.conv5_down(
-            self.swish(weight[0] * p5_in + weight[1] * p5_up + weight[2] * self.p5_downsample(p4_out)))
-
-        # Weights for P6_0, P6_1 and P5_2 to P6_2
-        p6_w2 = self.p6_w2_relu(self.p6_w2)
-        weight = p6_w2 / (torch.sum(p6_w2, dim=0) + self.epsilon)
-        # Connections for P6_0, P6_1 and P5_2 to P6_2 respectively
-        p6_out = self.conv6_down(
-            self.swish(weight[0] * p6_in + weight[1] * p6_up + weight[2] * self.p6_downsample(p5_out)))
-
-        # Weights for P7_0 and P6_2 to P7_2
-        p7_w2 = self.p7_w2_relu(self.p7_w2)
-        weight = p7_w2 / (torch.sum(p7_w2, dim=0) + self.epsilon)
-        # Connections for P7_0 and P6_2 to P7_2
-        p7_out = self.conv7_down(self.swish(weight[0] * p7_in + weight[1] * self.p7_downsample(p6_out)))
-
-        return p3_out, p4_out, p5_out, p6_out, p7_out
-
-
-# class BIFPN(_BIFPN):
-
-#     def forward(self, inputs):
-#         assert len(inputs) == len(self.in_channels)
-
-#         # build laterals
-#         laterals = [
-#             lateral_conv(inputs[i + self.start_level])
-#             for i, lateral_conv in enumerate(self.lateral_convs)
-#         ]
-
-#         # part 1: build top-down and down-top path with stack
-#         used_backbone_levels = len(laterals)
-#         for bifpn_module in self.stack_bifpn_convs:
-#             laterals = bifpn_module(laterals)
-#         outs = laterals
-#         # part 2: add extra levels
-#         if self.num_outs > len(outs):
-#             # use max pool to get more levels on top of outputs
-#             # (e.g., Faster R-CNN, Mask R-CNN)
-#             if not self.add_extra_convs:
-#                 for i in range(self.num_outs - used_backbone_levels):
-#                     outs.append(F.max_pool2d(outs[-1], 1, stride=2))
-#             # add conv layers on top of original feature maps (RetinaNet)
-#             else:
-#                 if self.extra_convs_on_inputs:
-#                     orig = inputs[self.backbone_end_level - 1]
-#                     outs.append(self.fpn_convs[0](orig))
-#                 else:
-#                     outs.append(self.fpn_convs[0](outs[-1]))
-#                 for i in range(1, self.num_outs - used_backbone_levels):
-#                     if self.relu_before_extra_convs:
-#                         outs.append(self.fpn_convs[i](F.relu(outs[-1])))
-#                     else:
-#                         outs.append(self.fpn_convs[i](outs[-1]))
-
-#         names = [0, 1, 2, 3, 'pool']
-#         return OrderedDict([(n, o) for n, o in zip(names, outs)])
-
-
-class ASPPConv(nn.Sequential):
-    def __init__(self, in_channels, out_channels, dilation):
-        modules = [
-            nn.Conv2d(in_channels, out_channels, 3, padding=dilation,
-                      dilation=dilation, bias=False),
-            nn.GroupNorm(32, out_channels),
-            nn.ReLU()
-        ]
-        super(ASPPConv, self).__init__(*modules)
-
-
-class ASPPPooling(nn.Sequential):
-    def __init__(self, in_channels, out_channels):
-        super(ASPPPooling, self).__init__(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_channels, out_channels, 1, bias=False),
-            nn.GroupNorm(32, out_channels),
-            nn.ReLU())
-
-    def forward(self, x):
-        size = x.shape[-2:]
-        for mod in self:
-            x = mod(x)
-        return F.interpolate(x, size=size, mode='bilinear', align_corners=False)
-
-
-class ASPP(nn.Module):
-    def __init__(self, in_channels, atrous_rates):
-        super(ASPP, self).__init__()
-        out_channels = 256
-        modules = []
-        modules.append(nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, 1, bias=False),
-            nn.GroupNorm(32, out_channels),
-            nn.ReLU()))
-
-        rate1, rate2, rate3 = tuple(atrous_rates)
-        modules.append(ASPPConv(in_channels, out_channels, rate1))
-        modules.append(ASPPConv(in_channels, out_channels, rate2))
-        modules.append(ASPPConv(in_channels, out_channels, rate3))
-        modules.append(ASPPPooling(in_channels, out_channels))
-
-        self.convs = nn.ModuleList(modules)
-
-        self.project = nn.Sequential(
-            nn.Conv2d(5 * out_channels, out_channels, 1, bias=False),
-            nn.GroupNorm(32, out_channels),
-            nn.ReLU(),
-            nn.Dropout(0.5))
-
-    def forward(self, x):
-        # initial_shape = x.shape
-        res = []
-        for conv in self.convs:
-            res.append(conv(x))
-            # try:
-            #     res.append(conv(x))
-            # except RuntimeError:
-            #     print(initial_shape, x.shape)
-            #     raise
-        res = torch.cat(res, dim=1)
-        return self.project(res)
+from .loss_lovasz import lovasz_hinge
 
 
 def maskrcnn_loss(mask_logits, proposals, gt_masks, gt_labels, mask_matched_idxs, gt_proposal_ids):
@@ -355,7 +117,7 @@ def roi_heads_forward(self, features, proposals, image_shapes, targets=None, box
     result, losses = [], {}
     if self.training:
         loss_classifier, loss_box_reg = fastrcnn_loss(
-            class_logits, box_regression, labels, regression_targets, box_coord_perm)
+            class_logits, box_regression, labels, regression_targets)#, box_coord_perm)
         losses = dict(loss_classifier=loss_classifier, loss_box_reg=loss_box_reg)
     else:
         boxes, scores, labels = self.postprocess_detections(class_logits, box_regression, proposals, image_shapes)
@@ -730,34 +492,16 @@ class MaskRCNN(_MaskRCNN):
                 output_size=roi_pool_output_sizes['mask'],
                 sampling_ratio=2)
 
-        # rpn_pre_nms_top_n_train = 200
-        # rpn_pre_nms_top_n_test = 100
-        # rpn_post_nms_top_n_train = 1000
-        # rpn_post_nms_top_n_test = 1000
-
-        # large to include all proposals
-        # box_batch_size_per_image = 10000
-
-        # bbox_reg_weights = [10.0, 10.0, 10.0, 10.0]
-
-        # mask_head = ASPP(256, [12, 24, 36])
         mask_head = None
 
-        super(MaskRCNN, self).__init__(backbone_model,
-                                       num_classes,
-                                       box_roi_pool=box_roi_pool,
-                                       mask_roi_pool=mask_roi_pool,
-                                       mask_head=mask_head,
-                                       box_score_thresh=box_nms_thresh,)
-                                    #    box_detections_per_img=1,
-                                    #    box_nms_thresh=0.95)
-                                    #    bbox_reg_weights=bbox_reg_weights)
-                                    #    box_batch_size_per_image=box_batch_size_per_image,)
-                                    #    rpn_pre_nms_top_n_train=rpn_pre_nms_top_n_train,
-                                    #    rpn_pre_nms_top_n_test=rpn_pre_nms_top_n_test,
-                                    #    rpn_post_nms_top_n_train=rpn_post_nms_top_n_train)
-                                    #    rpn_post_nms_top_n_test=rpn_post_nms_top_n_test,)
-                                    #    box_positive_fraction=0.25)
+        super(MaskRCNN, self).__init__(
+            backbone_model,
+            num_classes,
+            box_roi_pool=box_roi_pool,
+            mask_roi_pool=mask_roi_pool,
+            mask_head=mask_head,
+            box_score_thresh=box_nms_thresh,
+        )
 
         self.num_classes = num_classes
         self.rpn._eval_augment_proposals_mode = eval_augment_rpn_proposals_mode
@@ -776,7 +520,6 @@ class MaskRCNN(_MaskRCNN):
         state_dict = self.state_dict()
 
         if 'resnet50' in backbone:
-
             for k in state_dict.keys():
                 if k in pretrained_state_dict and state_dict[k].shape == pretrained_state_dict[k].shape:
                     state_dict[k] = pretrained_state_dict[k]
@@ -922,7 +665,9 @@ class MaskRCNN(_MaskRCNN):
 
                 if num_objs == 0:
                     pred = np.transpose(inputs[0].cpu().numpy(), (1, 2, 0))
-                    import os, imageio
+                    import os
+
+                    import imageio
                     pred_path = os.path.join(f"img.png")
                     imageio.imsave(pred_path, pred)
 
@@ -1025,7 +770,7 @@ class MaskRCNN(_MaskRCNN):
                 mask_rcnn_targets.append(mask_rcnn_target)
             targets = mask_rcnn_targets
 
-        outputs_raw = super(MaskRCNN, self).forward([i for i in inputs], targets, box_coord_perm)
+        outputs_raw = super(MaskRCNN, self).forward([i for i in inputs], targets)#, box_coord_perm)
 
         # if crop[0]:
         #     outputs = outputs[..., crop[0]:]

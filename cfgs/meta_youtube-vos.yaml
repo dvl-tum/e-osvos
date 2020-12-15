@@ -1,13 +1,7 @@
-single_obj_seq_mode: KEEP
 data_cfg:
     multi_object: single_id
-    # crop_sizes:
-    #     train: [480, 854]
-    #     meta: [480, 854]
 datasets:
     train:
-        # split: [train_dev_train_seqs, train_seqs, train_seqs]
-        # name: [YouTube-VOS, DAVIS-2017, DAVIS-2016]
         name: [YouTube-VOS, DAVIS-2017]
         split: [train_dev_random_123_train_seqs, train_seqs]
         eval: False
@@ -16,171 +10,28 @@ datasets:
         split: valid-all-frames_seqs
         # split: train_debug_seqs
         eval: False
-    val_split_1_4:
-        name: YouTube-VOS
-        split: valid_split_1_4_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_2_4:
-        name: YouTube-VOS
-        split: valid_split_2_4_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_3_4:
-        name: YouTube-VOS
-        split: valid_split_3_4_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_4_4:
-        name: YouTube-VOS
-        split: valid_split_4_4_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_1_8:
-        name: YouTube-VOS
-        split: valid_split_1_8_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_2_8:
-        name: YouTube-VOS
-        split: valid_split_2_8_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_3_8:
-        name: YouTube-VOS
-        split: valid_split_3_8_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_4_8:
-        name: YouTube-VOS
-        split: valid_split_4_8_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_5_8:
-        name: YouTube-VOS
-        split: valid_split_5_8_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_6_8:
-        name: YouTube-VOS
-        split: valid_split_6_8_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_7_8:
-        name: YouTube-VOS
-        split: valid_split_7_8_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_8_8:
-        name: YouTube-VOS
-        split: valid_split_8_8_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_1_16:
-        name: YouTube-VOS
-        split: valid_split_1_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_2_16:
-        name: YouTube-VOS
-        split: valid_split_2_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_3_16:
-        name: YouTube-VOS
-        split: valid_split_3_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_4_16:
-        name: YouTube-VOS
-        split: valid_split_4_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_5_16:
-        name: YouTube-VOS
-        split: valid_split_5_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_6_16:
-        name: YouTube-VOS
-        split: valid_split_6_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_7_16:
-        name: YouTube-VOS
-        split: valid_split_7_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_8_16:
-        name: YouTube-VOS
-        split: valid_split_8_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_9_16:
-        name: YouTube-VOS
-        split: valid_split_9_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_10_16:
-        name: YouTube-VOS
-        split: valid_split_10_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_11_16:
-        name: YouTube-VOS
-        split: valid_split_11_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_12_16:
-        name: YouTube-VOS
-        split: valid_split_12_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_13_16:
-        name: YouTube-VOS
-        split: valid_split_13_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_14_16:
-        name: YouTube-VOS
-        split: valid_split_14_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_15_16:
-        name: YouTube-VOS
-        split: valid_split_15_16_seqs
-        # split: train_debug_seqs
-        eval: False
-    val_split_16_16:
-        name: YouTube-VOS
-        split: valid_split_16_16_seqs
-        # split: train_debug_seqs
-        eval: False
     test:
         name: YouTube-VOS
         split: null
         eval: False
     train_dev_train_val:
         name: YouTube-VOS
-        # split: train_dev_train_val_seqs
         split: train_dev_random_123_train_val_seqs
         eval: False
     train_dev_val:
         name: YouTube-VOS
-        # split: train_dev_val_seqs
         split: train_dev_random_123_val_seqs
-        eval: True
+        eval: False
     val_davis16:
         name: DAVIS-2016
         split: val_seqs
-        eval: True
+        eval: False
     val_davis17:
         name: DAVIS-2017
         split: val_seqs
         eval: True
 parent_model:
     train:
-        # paths: ['models/MaskRCNN_ResNet50/YouTube-VOS/train_dev_random_123_train_seqs/MaskRCNN_ResNet50_epoch-7.pth']
         paths: []
         val_split_files: []
     val:
@@ -189,7 +40,3 @@ parent_model:
     test:
         paths: []
         val_split_files: []
-    model_init_meta_optim_split:
-        paths: []
-        val_split_files: []
-            # - data/YouTube-VOS/train_dev_model_init_seqs.txt

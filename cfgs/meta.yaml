@@ -1,63 +1,52 @@
 seed: 1
-num_meta_processes_per_gpu: 1
-num_eval_gpus: 1
-vis_interval: 10
 # number of random samples [seq, train_frame_id, meta_frame_id] used for collecting gradients for a single meta update.
-meta_batch_size: 5
+meta_batch_size: 4
+# each sample in the meta batch starts a meta process
+num_meta_processes_per_gpu: 1
+# each dataset with eval=True starts a eval process
+# if null assigns a GPU per eva process
+num_eval_gpus: null
+no_vis: False
+vis_interval: 10
 env_suffix: null
 # saves training in '{save_dir}/{env_suffix}'
-save_dir: null
+save_dir: models
 resume_meta_run_epoch_mode: null        # [None, BEST_VAL, LAST]
 # increases seed random seed after each meta run. supposed to enrich the training and improve generalization.
 increase_seed_per_meta_run: True
-random_frame_transform_per_task: False
-multi_step_bptt_loss: False
+random_frame_transform_per_task: True
+multi_step_bptt_loss: False             # [0.05,0.10,0.2,0.30,0.35]
+# sample random meta frames from epsilon range around train frame
 random_frame_epsilon: null
 random_object_id_sub_group: False
 # if meta_optim_cfg.lr_per_tensor=False meta learning is done for a single epoch and num_epochs is only evaluated
 num_epochs:
     train: 5
-    eval: 5
-bptt_epochs: 10
+    eval: 10
+bptt_epochs: 5
 # number of frames after which the model is fine-tuned (on the first frame) again.
 # only for evaluation.
 # choose uneven frames to have meta matching frame in the middle of eval frame interval.
 eval_online_adapt:
     step: null
-    reset_model_mode: None                  # [None, FIRST_STEP, FULL]
+    reset_model_mode: FIRST_STEP             # [None, FIRST_STEP, FULL]
     num_epochs: 10
     min_prop: 0.5
 meta_optim_model_file: null
 meta_optim_cfg:
-    num_layers: 1
-    lr_hierarchy_level: TENSOR               # [PARAM, NEURON, TENSOR]
-    tensor_rnn_hidden_size: 24
-    global_rnn: False
-    global_rnn_hidden_size: 24
+    lr_hierarchy_level: NEURON               # [PARAM, NEURON, TENSOR]
     init_lr: 0.001
-    learn_model_init: False
-    learn_model_init_last_layer_template: False
-    layer_norm: True
-    train_input: False
-    grad_input: False
-    gt_input: False
-    matching_input: False
+    learn_model_init: True
     second_order_gradients: False
-    learn_scheduler: False
     use_log_init_lr: False
     max_lr: null
-    learn_lr_momentum: False
 meta_optim_optim_cfg:
-    model_init_lr: 0.0000001
-    log_init_lr_lr: 0.0001
-    lr_momentum_lr: 0.0001
+    model_init_lr: 0.00001
+    log_init_lr_lr: 0.00001
     lr: 0.001
     freeze_encoder: False
-    param_group_lstm_init_lr: 0.001
-    step_in_seq: False
     grad_clip: null
-    model_init_weight_decay: 0.0
-loss_func: dice
+    model_init_weight_decay: 0.001
 # evalute all datasets
 eval_datasets: True
 # evaluation is done on all datasets
@@ -75,64 +64,36 @@ datasets:
         name: DAVIS-2016
         split: null
         eval: False
+# DeepLabV3 and DeepLabV3Plus loss function
+loss_func: dice
 parent_model:
-    # architecture: FPN
-    # architecture: DeepLabV3
-    # architecture: DeepLabV3Plus
-    architecture: MaskRCNN
+    architecture: MaskRCNN # ['MaskRCNN', 'DeepLabV3', 'DeepLabV3Plus']
     train_encoder: True
     batch_norm:
         accum_stats: False
         learn_weight: False
         learn_bias: False
-    replace_batch_with_group_norms: False
-    eval_augment_rpn_proposals_mode: null   # [None, EXTEND, REPLACE]
+    replace_batch_with_group_norms: True
+    decoder_norm_layer: GroupNorm   # ['GroupNorm', 'BatchNorm2d']
+    eval_augment_rpn_proposals_mode: EXTEND   # [None, EXTEND, REPLACE]
     roi_pool_output_sizes:
         box: 7
-        mask: 14
-    maskrcnn_loss: LOVASZ         #[BCE, LOVASZ]
+        mask: 28
+    maskrcnn_loss: LOVASZ  #[BCE, LOVASZ]
     box_nms_thresh: 0.5
-    decoder_norm_layer: GroupNorm
-    # decoder_norm_layer: BatchNorm2d
-    # encoder: resnet34
-    # encoder: resnet101
-    encoder: resnet50
-    # encoder: resnet34-group-norm
-    # encoder: resnet101-group-norm
+    encoder: resnet50 # [resnet50, resnet101]
     train:
         paths: []
-        # paths: ['models/MaskRCNN_ResNet50_YouTube-VOS-DAVIS-17_ABLATION/YouTube-VOS/train_dev_random_123_train_seqs/MaskRCNN_ResNet50_YouTube-VOS-DAVIS-17_ABLATION_epoch-3.pth']
-        # paths: ['models/MaskRCNN_ResNet50_train_encoder=False/VOC2012/pascal_voc/MaskRCNN_ResNet50_train_encoder=False_epoch-50.pth']
-        # paths:
-        #     # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
-        #     - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
-        #     # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
         val_split_files:
-            # - data/DAVIS-2016/train_split_balanced_val.txt
-            # - data/DAVIS-2016/val_seqs.txt
-            # - data/DAVIS-2016/train_seqs.txt
             - data/DAVIS-2017/train_val_seqs.txt
-            # - data/YouTube-VOS/train.txt
     val:
         paths: []
-        # paths: ['models/MaskRCNN_ResNet50_train_encoder=False/VOC2012/pascal_voc/MaskRCNN_ResNet50_train_encoder=False_epoch-50.pth']
-        # paths:
-        #     # - models/DeepLabV3Plus2_ResNet101_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_dice_epoch-110.pth
-        #     - models/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_replace_batch_with_group_norms=True_dice_epoch-235.pth
-        #     # - models/DeepLabV3Plus2_ResNet101_FULL_cross_entropy/VOC2012/pascal_voc/DeepLabV3Plus2_ResNet101_FULL_cross_entropy_epoch-15.pth
         val_split_files:
-            # - data/DAVIS-2016/train_seqs.txt
-            # - data/DAVIS-2016/val_seqs.txt
             - data/DAVIS-2017/train_val_seqs.txt
     test:
         paths: []
         val_split_files:
             - data/DAVIS-2017/test-dev_seqs.txt
-    model_init_meta_optim_split:
-        paths: []
-        val_split_files: []
-            # - data/DAVIS-2016/train_split_balanced_val.txt
-
 train_early_stopping_cfg:
     patience: null
     min_loss_improv: 0.001
@@ -141,6 +102,10 @@ random_flip_label: False
 random_no_label: False
 random_box_coord_perm: False
 # [train_seqs, test_seqs, blackswan, ...]
+
+# meta refers to the test frames used to update the
+# model initialization and learning rates. test refers
+# to the frames used for testing during evaluation.
 data_cfg:
     multi_object: False
     random_train_transform: False
@@ -165,7 +130,5 @@ data_cfg:
         meta: False
     crop_sizes:
         train: null
-        # train: [360, 640]
         test: null
         meta: null
-        # meta: [360, 640]

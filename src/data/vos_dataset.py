@@ -5,7 +5,6 @@ import cv2
 import torch
 from PIL import Image
 
-from .helpers import *
 from torch.utils.data import Dataset
 
 
@@ -37,16 +36,13 @@ class VOSDataset(Dataset):
         self._label_id = None
         self._multi_object_id_to_label = []
         self.augment_with_single_obj_seq_dataset = None
-        # self.augment_with_single_obj_seq_frame_mapping = {}
         self.random_frame_id_epsilon = None
         self.random_frame_id_anchor_frame =None
         self._num_objects = None
-        self._preload_buffer = [] #{'imgs': {}, 'labels': {}}
+        self._preload_buffer = []
         self.sub_group_ids = None
         self.all_frames = False
         self.propagate_frame_gt = None
-
-        # self.preloaded_buffer = {}
 
     @property
     def num_seqs(self):
@@ -65,9 +61,6 @@ class VOSDataset(Dataset):
 
         if self._num_objects is None:
             label = np.atleast_3d(Image.open(self.labels[0]))[...,0]
-            # label = cv2.imread(os.path.join(self.root_dir, self.labels[0]), cv2.IMREAD_GRAYSCALE)
-            # label = np.array(label, dtype=np.float32)
-            # label = label / 255.0
 
             unique_labels = [l for l in np.unique(label)
                             #  if l != 0.0 and l != 1.0]
@@ -182,9 +175,6 @@ class VOSDataset(Dataset):
         self._num_objects = None
         self._preload_buffer = []
 
-        # if seq_name not in self.preloaded_buffer:
-        #     self.preloaded_buffer[seq_name] = {}
-
     def set_gt_frame_id(self):
         self.frame_id = 0
 
@@ -241,16 +231,7 @@ class VOSDataset(Dataset):
         else:
             img_path = self.imgs[idx]
             img = cv2.imread(img_path, cv2.IMREAD_COLOR)[..., ::-1]
-            # if img_path in self._preload_buffer['imgs']:
-            #     img = self._preload_buffer['imgs'][img_path]
-            # else:
-            #     img = cv2.imread(img_path, cv2.IMREAD_COLOR)[..., ::-1]
-            #     self._preload_buffer['imgs'][img_path] = img
 
-            # load first frame GT as placeholder for test mode
-            # if self.test_mode:
-            #     label = Image.open(self.labels[0])
-            # else:
             if self._label_id is not None:
                 label = Image.open(self.labels[self._label_id])
             else:
@@ -259,27 +240,12 @@ class VOSDataset(Dataset):
                 else:
                     label_path = self.labels[idx]
                     label = Image.open(label_path)
-            # if label_path in self._preload_buffer['labels']:
-            #     label = self._preload_buffer['labels'][label_path]
-            # else:
-            #     label = Image.open(label_path)
-            #     self._preload_buffer['labels'][label_path] = label
 
             label = np.atleast_3d(label)[..., 0]
 
             if self.crop_size is not None:
                 crop_h, crop_w = self.crop_size
                 img_h, img_w = label.shape
-
-                # if (label != 0).any():
-                #     pos = np.where(label != 0)
-                #     xmin = np.min(pos[1])
-                #     xmax = np.max(pos[1]) + 1
-                #     ymin = np.min(pos[0])
-                #     ymax = np.max(pos[0]) + 1
-
-                #     crop_w = max(crop_w, xmax - xmin)
-                #     crop_h = max(crop_h, ymax - ymin)
 
                 if crop_h != img_h or crop_w != img_w:
                     pad_h = max(crop_h - img_h, 0)
@@ -296,7 +262,6 @@ class VOSDataset(Dataset):
 
                     img_h, img_w = label_pad.shape
 
-                    num_unique_labels = len(np.unique(label))
                     crop_with_all_labels = False
                     while not crop_with_all_labels:
                         h_off = random.randint(0, img_h - crop_h)
@@ -377,18 +342,6 @@ class VOSDataset(Dataset):
                                 (label.shape[0], label.shape[1]), dtype=np.float32)
             else:
                 label = np.where(label != 0.0, 1.0, 0.0).astype(np.float32)
-            # label = np.where(ignore_label_mask, self.ignore_label, label).astype(np.float32)
-
-            # self.preloaded_imgs[self.imgs[idx]] = img
-            # self.preloaded_labels[self.labels[idx]] = label
-
-            # self.preloaded_buffer[self.seq_key] = {}
-
-            # if idx not in self.preloaded_buffer[self.seq_key]:
-            #     self.preloaded_buffer[self.seq_key][idx] = {}
-
-            # self.preloaded_buffer[self.seq_key][idx][self.multi_object_id] = (
-            #     img, label)
 
         if self.augment_with_single_obj_seq_dataset is not None:
             assert self.num_objects_in_group == 1, f'{self.seq_key} is not a single object sequence.'
@@ -399,8 +352,6 @@ class VOSDataset(Dataset):
                 start_h = h // 2 - (crop_h // 2)
                 return img[start_w:start_w + crop_w, start_h:start_h + crop_h]
 
-            # has_object = False
-            # while not has_object:
             aug_img, aug_label = self.augment_with_single_obj_seq_dataset.make_img_label_pair(self.augment_with_single_obj_seq_dataset.frame_id)
 
             w, h, _ = img.shape
@@ -416,20 +367,8 @@ class VOSDataset(Dataset):
             img = np.pad(img, [(0, pad_w), (0, pad_h), (0, 0)], mode='constant')
             label = np.pad(label, [(0, pad_w), (0, pad_h)], mode='constant')
 
-            # aug_img = _crop_center(aug_img, w, h)
-            # aug_label = _crop_center(aug_label, w, h)
-
             aug_obj_mask = aug_label == 1.0
             obj_mask = label == 1.0
-
-            # if self.seq_key == 'b86e50d82d':
-            #     import imageio
-            # #     # pred = np.transpose(img, (1, 2, 0))
-            #     imageio.imsave(f"IMG.png", (img * 255).astype(np.uint8))
-            #     imageio.imsave(f"LABEL.png", (label * 255).astype(np.uint8))
-            #     imageio.imsave(f"AUG_IMG.png", (aug_img * 255).astype(np.uint8))
-            #     imageio.imsave(f"AUG_LABEL.png", (aug_label * 255).astype(np.uint8))
-
 
             ###
             has_label = not (np.any(obj_mask) and np.any(aug_obj_mask))
@@ -437,7 +376,6 @@ class VOSDataset(Dataset):
                 label[...] = 0.0
 
             while not has_label:
-                # if np.any(obj_mask) and np.any(aug_obj_mask):
                 aug_obj_mask_tmp = np.copy(aug_obj_mask)
                 aug_img_tmp = np.copy(aug_img)
 
@@ -479,9 +417,6 @@ class VOSDataset(Dataset):
                 aug_obj_mask_tmp[random_obj_mask_x: random_obj_mask_x + aug_obj_mask_box.shape[0],
                                  random_obj_mask_y: random_obj_mask_y + aug_obj_mask_box.shape[1]] = aug_obj_mask_box
 
-                # aug_label = aug_obj_mask_tmp.astype(np.float32)
-                ###
-
                 aug_label = np.copy(label)
                 aug_label[aug_obj_mask_tmp] = 0
 
@@ -491,24 +426,7 @@ class VOSDataset(Dataset):
                     aug_obj_mask = aug_obj_mask_tmp
                     aug_img = aug_img_tmp
 
-            # if len(np.unique(aug_label)) > 1:
-            #     has_object = True
-
                     img[aug_obj_mask] = aug_img[aug_obj_mask]
                     label = aug_label
-                # self.augment_with_single_obj_seq_frame_mapping[idx] = aug_frame_id
-
-                # self.multi_object_id = 0
-
-            # if len(np.unique(label)) > 1:
-            #     # print(f"{self.seq_key}_{idx}_{self.augment_with_single_obj_seq_dataset.seq_key}_{self.augment_with_single_obj_seq_dataset.frame_id}")
-
-            #     print('AUGMENT')
-            #     import imageio
-            #     # pred = np.transpose(img, (1, 2, 0))
-            #     imageio.imsave(f"{self.seq_key}_{idx}_{self.augment_with_single_obj_seq_dataset.seq_key}_{self.augment_with_single_obj_seq_dataset.frame_id}_img.png", (img * 255).astype(np.uint8))
-            #     imageio.imsave(
-            #         f"{self.seq_key}_{idx}_{self.augment_with_single_obj_seq_dataset.seq_key}_{self.augment_with_single_obj_seq_dataset.frame_id}_label.png", (label * 255).astype(np.uint8))
-            #     # exit()
 
         return img, label

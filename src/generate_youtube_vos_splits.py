@@ -7,6 +7,11 @@ seed = 123
 random.seed(seed)
 data_dir = 'data/YouTube-VOS'
 
+
+#
+# TRAIN
+#
+
 # num_train_dev_train_val_seqs = 100
 # num_train_dev_val_seqs = 100
 

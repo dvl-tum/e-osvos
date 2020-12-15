@@ -1,2 +1,13 @@
-benchmark: False
-print_config: True
+torch_cfg:
+    # print config parameters in command line at beginning of a run
+    print_config: True
+    # compute device. is set automatically if null (default: null)
+    device: null
+    # if True, fast CUDNN is deactivated
+    deterministic: True
+    # if True, CUDNN finds best methods. select if input dims do not change.
+    benchmark: False
+    # Visdom server port and address
+    vis:
+        port: 8090
+        server: 'http://localhost'

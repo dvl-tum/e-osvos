@@ -1,10 +1,6 @@
-from __future__ import division
-
 import numpy as np
 import torch
 import torch.nn as nn
-from PIL import Image
-from torch.autograd import Variable
 from torch.nn import functional as F
 
 
@@ -99,45 +95,6 @@ def class_balanced_cross_entropy_loss_theoretical(output, label, size_average=Tr
     return final_loss
 
 
-def dice_loss(output, label, batch_average=True):
-    pred = torch.sigmoid(output)
-    smooth = 1.
-
-    for l in torch.unique(label):
-        if l not in [0.0, 1.0]:
-            raise NotImplementedError
-    if len(torch.unique(label)) > 2:
-        raise NotImplementedError
-
-    # # label must be foreground/background plus additional non-labeled label
-    # # label must be torch.float and normalized
-    # if len(torch.unique(label)) > 2 or label.gt(1.0).any():
-    #     raise NotImplementedError
-    # elif len(torch.unique(label)) == 3:
-    #     unlabeled_mask = label.eq(1.0)
-    #     label[unlabeled_mask] = 0
-    #     output[unlabeled_mask] = 0
-
-    # TODO: refactor
-    if batch_average:
-        pred_flat = pred.view(-1)
-        label_flat = label.view(-1)
-        intersection = pred_flat * label_flat
-
-        return 1 - ((2. * intersection.sum() + smooth) /
-                    (pred_flat.sum() + label_flat.sum() + smooth))
-    else:
-        batch_dim = pred.size(0)
-
-        pred_flat = pred.view(batch_dim, -1)
-        label_flat = label.view(batch_dim, -1)
-        intersection = pred_flat * label_flat
-
-
-        return 1 - ((2. * intersection.sum(dim=1) + smooth) /
-                    (pred_flat.sum(dim=1) + label_flat.sum(dim=1) + smooth))
-
-
 def center_crop(x, height, width):
     crop_h = torch.FloatTensor([x.size()[2]]).sub(height).div(-2)
     crop_w = torch.FloatTensor([x.size()[3]]).sub(width).div(-2)
@@ -173,21 +130,3 @@ def interp_surgery(lay):
             lay.weight[i, i, :, :].data.copy_(torch.from_numpy(filt))
 
         return lay.weight.data
-
-
-if __name__ == '__main__':
-    import os
-    from mypath import Path
-
-    # Output
-    output = Image.open(os.path.join(Path.db_root_dir(), 'Annotations/480p/blackswan/00000.png'))
-    output = np.asarray(output, dtype=np.float32)/255.0
-    output = logit(output)
-    output = Variable(torch.from_numpy(output)).cuda()
-
-    # GroundTruth
-    label = Image.open(os.path.join(Path.db_root_dir(), 'Annotations/480p/blackswan/00001.png'))
-    label = Variable(torch.from_numpy(np.asarray(label, dtype=np.float32))/255.0).cuda()
-
-    loss = class_balanced_cross_entropy_loss(output, label)
-    print(loss)

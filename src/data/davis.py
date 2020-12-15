@@ -6,7 +6,8 @@ import re
 from collections import OrderedDict
 
 from davis import cfg as eval_cfg
-from .helpers import *
+
+from .helpers import listdir_nohidden
 from .vos_dataset import VOSDataset
 
 
