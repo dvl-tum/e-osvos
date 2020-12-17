@@ -23,6 +23,8 @@ ex.add_config('cfgs/meta.yaml')
 ex.add_config('cfgs/torch.yaml')
 ex.add_named_config('DAVIS-2017', 'cfgs/meta_davis-2017.yaml')
 ex.add_named_config('YouTube-VOS', 'cfgs/meta_youtube-vos.yaml')
+ex.add_named_config('e-OSVOS', 'cfgs/eval_e-osvos.yaml')
+ex.add_named_config('e-OSVOS-OnA', 'cfgs/eval_e-osvos-OnA.yaml')
 
 
 MetaOptimizer = ex.capture(MetaOptimizer, prefix='meta_optim_cfg')
@@ -32,8 +34,9 @@ init_vis = ex.capture(init_vis)
 @ex.capture
 def get_run_name(datasets, env_suffix):
     dataset_name = str(datasets['train']['name']).replace(', ', '+').replace("'", '').replace('[', '').replace(']', '')
+    if env_suffix is None:
+        return dataset_name
     return f"{dataset_name}_{env_suffix}"
-
 
 @ex.automain
 def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
@@ -54,14 +57,15 @@ def main(save_dir: str, resume_meta_run_epoch_mode: str, env_suffix: str,
 
     vis_dict = init_vis(get_run_name())  # pylint: disable=E1120
 
-    if save_dir is not None:
-        save_dir = os.path.join(save_dir, get_run_name())  # pylint: disable=E1120
-        if os.path.exists(save_dir):
-            if resume_meta_run_epoch_mode is None:
-                shutil.rmtree(save_dir)
-                os.makedirs(save_dir)
-        else:
+    assert save_dir is not None
+
+    save_dir = os.path.join(save_dir, get_run_name())  # pylint: disable=E1120
+    if os.path.exists(save_dir):
+        if resume_meta_run_epoch_mode is None:
+            shutil.rmtree(save_dir)
             os.makedirs(save_dir)
+    else:
+        os.makedirs(save_dir)
 
     if resume_meta_run_epoch_mode is not None:
         if resume_meta_run_epoch_mode == 'LAST':

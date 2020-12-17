@@ -8,6 +8,7 @@ num_meta_processes_per_gpu: 1
 num_eval_gpus: null
 no_vis: False
 vis_interval: 10
+# name for the current run. used for model saving, prediction logging and Visdom
 env_suffix: null
 # saves training in '{save_dir}/{env_suffix}'
 save_dir: models
@@ -25,10 +26,9 @@ num_epochs:
     eval: 10
 bptt_epochs: 5
 # number of frames after which the model is fine-tuned (on the first frame) again.
-# only for evaluation.
-# choose uneven frames to have meta matching frame in the middle of eval frame interval.
+# only for evaluation. step=0 deactivates online adapation.
 eval_online_adapt:
-    step: null
+    step: 0
     reset_model_mode: FIRST_STEP             # [None, FIRST_STEP, FULL]
     num_epochs: 10
     min_prop: 0.5

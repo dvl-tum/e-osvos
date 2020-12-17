@@ -79,7 +79,6 @@ def evaluate(rank: int, dataset_key: str,
                 if not os.path.exists(os.path.join(debug_preds_save_dir, seq_name)):
                     os.makedirs(os.path.join(debug_preds_save_dir, seq_name))
 
-            # assert save_dir is not None
             preds_save_dir = os.path.join(save_dir,
                                           'best_eval_preds',
                                           f"{datasets[dataset_key]['name']}",
@@ -152,12 +151,10 @@ def evaluate(rank: int, dataset_key: str,
                 # meta_frame_id might be a str, e.g., 'middle'
                 start_eval = timeit.default_timer()
                 for eval_online_step_count, _ in enumerate(meta_frame_iter):
-                    # print(i, train_loader.dataset.frame_id + 1)
                     # range [min, max[
                     if eval_online_step_count == 0:
                         train_frame = test_loader.dataset[train_loader.dataset.frame_id]
                         train_frame_gt = train_frame['gt']
-                        # train_frame_input = train_frame['image']
 
                         for frame_id in range(len(test_loader.dataset)):
                             if not obj_id:
@@ -231,7 +228,12 @@ def evaluate(rank: int, dataset_key: str,
                                 inputs = inputs[:1]
                                 gts = gts[:1]
 
-                                for propagate_frame_id in range(1, _config['eval_online_adapt']['step']):
+                                num_propagte_frames = min(
+                                    _config['eval_online_adapt']['step'],
+                                    _config['data_cfg']['batch_sizes']['train'])
+                                start_propagate_frame = _config['eval_online_adapt']['step'] - num_propagte_frames + 1
+
+                                for propagate_frame_id in range(start_propagate_frame, _config['eval_online_adapt']['step']):
                                     propagate_frame_gt_numpy = propagate_frame_gts[propagate_frame_id - 1]
 
                                     if (propagate_frame_gt_numpy == 1.0).astype(float).sum().item() != 0:

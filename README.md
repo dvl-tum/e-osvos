@@ -56,9 +56,7 @@ The following command starts an e-OSVOS training with `meta_batch_size=4` on the
 ```
 python src/train_meta.py with \
     YouTube-VOS \
-    env_suffix=some_descriptive_name_for_your_run \
-    torch_cfg.vis.port=8092 \
-    torch_cfg.vis.server=http://localhost
+    env_suffix=some_descriptive_name_for_your_run
 ```
 
 To improve results on DAVIS, we further fine-tune e-OSVOS to each individual dataset, e.g., for DAVIS 2017 by running:
@@ -67,29 +65,21 @@ To improve results on DAVIS, we further fine-tune e-OSVOS to each individual dat
 python src/train_meta.py with \
     DAVIS-2017 \
     env_suffix=some_descriptive_name_for_your_run_DAVIS_2017_TRANSFER \
-    torch_cfg.vis.port=8092 \
-    torch_cfg.vis.server=http://localhost \
     meta_optim_model_file=models/YouTube-VOS+DAVIS-2017_train_dev_random_123/best_val_davis17_meta_iter.model \
     meta_optim_optim_cfg.log_init_lr_lr=0.0
 ```
 
-
 ## Evaluate e-OSVOS
 
-We provide the exemplary evaluation code for e-OSVOS-100-OnA with 100 initial and 10 additional online adaption fine-tuning iterations every 5 frames. We achieve our state-of-the-art results with a fine-tuning batch size of 3 which requires at least a 16 GB GPU:
+We provide the exemplary evaluation code for e-OSVOS-100-OnA with 100 initial and 10 additional online adaption fine-tuning iterations every 5 frames. We achieve our state-of-the-art results with a fine-tuning batch size of 3 and online adaptation which requires at least a 16 GB GPU:
 ```
 python src/train_meta.py with \
     DAVIS-2017 \
-    env_suffix=some_descriptive_name_for_your_run_DAVIS_2017_EVAL_100_OnA \
+    env_suffix=some_descriptive_name_for_your_run_DAVIS_2017_EVAL \
+    e-OSVOS-OnA \
     num_epochs.eval=100 \
-    eval_online_adapt.step=5 \
-    eval_online_adapt.num_epochs=10 \
     datasets.train.eval=False \
-    data_cfg.batch_sizes.train=3 \
-    data_cfg.random_train_transform=True \
-    meta_optim_model_file=models/DAVIS-2017_train_seqs/best_val_meta_iter.model \
-    no_vis=True \
-    num_meta_processes_per_gpu=0
+    meta_optim_model_file=models/DAVIS-2017_train_seqs/best_val_meta_iter.model
 ```
 Adjusting the command above allows for a reproduction of the validation set results reported in the paper. For YouTube-VOS the predicted output files (`best_eval_preds` subdirectory) must be submitted to the official challenge [webpage](https://competitions.codalab.org/competitions/20127).
 

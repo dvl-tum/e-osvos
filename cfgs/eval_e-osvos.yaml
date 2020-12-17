@@ -1,0 +1,6 @@
+no_vis: True
+num_meta_processes_per_gpu: 0
+data_cfg:
+  random_train_transform: True
+  batch_sizes:
+    train: 3
