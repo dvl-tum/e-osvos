@@ -25,12 +25,12 @@ This repository provides the implementation of our **Make One-Shot Video Object 
     1. [DAVIS 2016](https://davischallenge.org/davis2016/code.html):
         ```
         wget https://graphics.ethz.ch/Downloads/Data/Davis/DAVIS-data.zip
-        unzip -d DAVIS-data.zip DAVIS-2016.zip
+        unzip DAVIS-data.zip -d DAVIS-2016
         ```
     2. [DAVIS 2017](https://davischallenge.org/davis2017/code.html):
         ```
         wget https://data.vision.ee.ethz.ch/csergi/share/davis/DAVIS-2017-trainval-480p.zip
-        unzip -d DAVIS-2017-trainval-480p.zip DAVIS-2017.zip
+        unzip DAVIS-2017-trainval-480p.zip -d DAVIS-2017
         ```
     3. For YouTube-VOS register [here](https://competitions.codalab.org/competitions/20127) and download the data into a `data/Youtube-VOS` directory. The `src/generate_youtube_vos_splits.py` script can be used to generate small random validation subsets of the training set.
 
