@@ -88,18 +88,10 @@ db_root_dir = 'data/YouTube-VOS'
 train_dataset = 'train_dev_random_123_train_seqs'
 test_dataset = 'train_dev_random_123_val_seqs'
 
-
 # Network definition
 # model_name = 'VGG'
-# model_name = 'DRN_D_22'
-# model_name = 'UNET_ResNet18_dice_loss'
-# model_name = 'UNET_ResNet34'
 # model_name = 'FPN_ResNet101'
-# model_name = 'FPN_efficientnet-b3'
-# model_name = 'DeepLabV3_ResNet50'
-# model_name = 'DeepLabV3Plus_ResNet50_TEST'
 model_name = 'MaskRCNN_ResNet50_YouTube-VOS-DAVIS-17_ABLATION'
-# model_name = 'MaskRCNN_EfficientNet-b5'
 # loss_func = 'cross_entropy'
 # loss_func = 'class_balanced_cross_entropy'
 loss_func = 'dice'
@@ -131,12 +123,6 @@ elif 'MaskRCNN_ResNet50' in model_name:
     net = MaskRCNN('resnet50', num_classes=2, train_encoder=True,
                    roi_pool_output_sizes={'box': 7, 'mask': 28},
                    replace_batch_with_group_norms=False)
-elif 'MaskRCNN_EfficientNet-b5' in model_name:
-    num_losses = 1
-    lr = 0.0001
-
-    net = MaskRCNN('efficientnet-b5', num_classes=2, train_encoder=True,
-                   roi_pool_output_sizes={'box': 7, 'mask': 28})
 
 log_dir = os.path.join(model_name, db_root_dir.split('/')[-1], train_dataset)
 

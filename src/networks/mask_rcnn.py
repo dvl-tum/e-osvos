@@ -428,58 +428,7 @@ class MaskRCNN(_MaskRCNN):
                  maskrcnn_loss='LOVASZ'):
 
         self._num_groups = 32
-        if 'efficientnet' in backbone:
-            self._num_groups = 8
-
-            compound_coef = int(backbone[-1])
-
-            backbone_compound_coef = [0, 1, 2, 3, 4, 5, 6, 6]
-            fpn_num_filters = [64, 88, 112, 160, 224, 288, 384, 384]
-            fpn_cell_repeats = [3, 4, 5, 6, 7, 7, 8, 8]
-            # fpn_cell_repeats = [2, 2, 2, 2, 2, 2, 2, 2]
-            # conv_channel_coef = {
-            #     # the channels of P3/P4/P5.
-            #     0: [40, 112, 320],
-            #     1: [40, 112, 320],
-            #     2: [48, 120, 352],
-            #     3: [48, 136, 384],
-            #     4: [56, 160, 448],
-            #     5: [64, 176, 512],
-            #     6: [72, 200, 576],
-            #     7: [72, 200, 576],
-            # }
-
-            conv_channel_coef = {
-                # the channels of P3/P4/P5/P6.
-                0: [40, 112, 320],
-                1: [40, 112, 320],
-                2: [48, 120, 352],
-                3: [48, 136, 384],
-                4: [56, 160, 448],
-                5: [64, 176, 512],
-                6: [72, 200, 576],
-                7: [72, 200, 576],
-            }
-
-            backbone_model_encoder = EfficientNet(backbone_compound_coef[compound_coef], False)
-
-            backbone_model_fpn = nn.Sequential(
-                *[BiFPN(fpn_num_filters[compound_coef],
-                        conv_channel_coef[compound_coef],
-                        True if _ == 0 else False,
-                        attention=True if compound_coef < 6 else False)
-                for _ in range(fpn_cell_repeats[compound_coef])])
-
-            model_state_dict = torch.load(f"models/efficientdet-d{compound_coef}.pth")
-            backbone_model_encoder.load_state_dict({k.replace('backbone_net.', ''): v for k, v in model_state_dict.items()
-                                                    if 'backbone_net' in k})
-            backbone_model_fpn.load_state_dict({k.replace('bifpn.', ''): v for k, v in model_state_dict.items()
-                                                if 'bifpn' in k})
-
-            backbone_model = EfficientNetAndBiFPN(backbone_model_encoder, backbone_model_fpn)
-            backbone_model.out_channels = fpn_num_filters[compound_coef]
-        else:
-            backbone_model = resnet_fpn_backbone(backbone, True)
+        backbone_model = resnet_fpn_backbone(backbone, True)
 
         mask_roi_pool, box_roi_pool = None, None
         if roi_pool_output_sizes is not None:
@@ -519,17 +468,11 @@ class MaskRCNN(_MaskRCNN):
                                                   progress=True)
         state_dict = self.state_dict()
 
-        if 'resnet50' in backbone:
-            for k in state_dict.keys():
-                if k in pretrained_state_dict and state_dict[k].shape == pretrained_state_dict[k].shape:
-                    state_dict[k] = pretrained_state_dict[k]
+        for k in state_dict.keys():
+            if k in pretrained_state_dict and state_dict[k].shape == pretrained_state_dict[k].shape:
+                state_dict[k] = pretrained_state_dict[k]
 
-            self.load_state_dict(state_dict)
-        elif 'efficientnet' in backbone:
-            for k in state_dict.keys():
-                if 'backbone' not in k and k in pretrained_state_dict and state_dict[k].shape == pretrained_state_dict[k].shape:
-                    state_dict[k] = pretrained_state_dict[k]
-            self.load_state_dict(state_dict)
+        self.load_state_dict(state_dict)
 
         if replace_batch_with_group_norms:
             self.replace_batch_with_group_norms()
